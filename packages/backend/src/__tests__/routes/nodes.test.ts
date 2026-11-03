@@ -3,11 +3,12 @@ import { createHash } from "node:crypto";
 import { generateNodeKeyPair, NodeRejection, type NodeKey } from "@reins/node-protocol";
 import { logger } from "../../logger.js";
 import { createProject } from "../project-fixture.js";
+import { createSession as insertSession } from "../../session-store.js";
 import { buildRouter } from "../../routes/index.js";
 import { getDb } from "../../app-globals.js";
 import { Nodes } from "../../models/nodes.js";
 import type { NodeView } from "../../models/node.js";
-import { createSource, defaultSource } from "../../node-store.js";
+import { upsertSource, defaultSource } from "../../node-store.js";
 import { createSession, getSession } from "../session-fixture.js";
 import { Sessions } from "../../models/sessions.js";
 import { latestSettlement } from "../../sessions/session-runs.js";
@@ -240,7 +241,7 @@ describe("DELETE /api/nodes/:nodeId", () => {
     const state = createAppState();
     const { nodeId } = await pairNode(state);
     const project = createProject("Website", "/srv/website", "main", nodeId);
-    createSource(project.id, SEEDED_NODE_ID, "/home/me/website");
+    upsertSource(SEEDED_NODE_ID, "/home/me/website");
     createSession("running", project.id, { agentRuntimeType: "pi", sourceId: defaultSource(project.id)!.id });
     // Pi has its run in progress; no runtime drives it.
     getDb().query("INSERT INTO pi_values (session_id, namespace, key, seq, value_json) VALUES ('running', 'pi.lane.state', 'main', 1, ?)")
@@ -253,7 +254,7 @@ describe("DELETE /api/nodes/:nodeId", () => {
     expect(getDb().query("SELECT activity_state, settlement_json FROM sessions WHERE id = 'running'").get()).toEqual({
       activity_state: "finished", settlement_json: JSON.stringify({ operationId: "run-1", source: "reins", status: "failed", error: { message: "The run was interrupted: its node was removed" } }),
     });
-    const moved = await router.handle(makeRequest("POST", "/api/sessions/running/move", { nodeId: SEEDED_NODE_ID }), state);
+    const moved = await router.handle(makeRequest("POST", "/api/sessions/running/move", { nodeId: SEEDED_NODE_ID, path: "/home/me/website" }), state);
     expect(moved!.status).toBe(200);
     await state.nodes.close();
   });
@@ -350,22 +351,27 @@ describe("a node's sources", () => {
   useTestDb();
   const router = buildRouter();
 
-  test("each node lists its projects' sources on it, also while it is offline", async () => {
+  test("each node lists the sources in use on it with the projects using them, also while it is offline", async () => {
     const state = createAppState();
     getDb().exec("INSERT INTO nodes (id, name) VALUES ('remote', 'Remote')");
     const website = createProject("Website", "/srv/website", "main", "remote");
     const api = createProject("Api", "/srv/api", "main", "remote");
     const local = createProject("Local", "/home/me/local");
+    // A session of Api works in Website's home, and one of no project in a scratch directory.
+    createSession("shared", api.id, { agentRuntimeType: "pi", sourceId: defaultSource(website.id)!.id });
+    insertSession("loose", null, { agentRuntimeType: "pi", sourceId: upsertSource("remote", "/tmp/scratch").id });
+    upsertSource("remote", "/srv/unused");
 
     const nodes: NodeView[] = await (await router.handle(makeRequest("GET", "/api/nodes"), state))!.json();
 
     const sourceId = (projectId: number) => defaultSource(projectId)!.id;
     expect(Object.fromEntries(nodes.map(node => [node.id, node.sources]))).toEqual({
       remote: [
-        { path: "/srv/api", project: { id: api.id, name: "Api", sourceId: sourceId(api.id) } },
-        { path: "/srv/website", project: { id: website.id, name: "Website", sourceId: sourceId(website.id) } },
+        { id: sourceId(api.id), path: "/srv/api", projects: [{ id: api.id, name: "Api" }] },
+        { id: sourceId(website.id), path: "/srv/website", projects: [{ id: api.id, name: "Api" }, { id: website.id, name: "Website" }] },
+        { id: upsertSource("remote", "/tmp/scratch").id, path: "/tmp/scratch", projects: [] },
       ],
-      [SEEDED_NODE_ID]: [{ path: "/home/me/local", project: { id: local.id, name: "Local", sourceId: sourceId(local.id) } }],
+      [SEEDED_NODE_ID]: [{ id: sourceId(local.id), path: "/home/me/local", projects: [{ id: local.id, name: "Local" }] }],
     });
     await state.nodes.close();
   });

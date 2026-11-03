@@ -1,45 +1,62 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import { mkdtempSync, rmSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
 import { useTestDb } from "../helpers/test-db.js";
-import { createProject } from "../project-fixture.js";
-import { resolveSource, SourceNotFoundError } from "../../models/sources.js";
-import { createSource, defaultSource, listSources } from "../../node-store.js";
+import { createAppState, type TestAppState } from "../helpers/app-state.js";
+import { connectLoopbackNode, loopbackLink, stopLoopbackNode } from "../helpers/loopback-node.js";
+import { CheckoutNotFoundError, ensureSource } from "../../models/sources.js";
+import { NodeNotFoundError } from "../../models/nodes.js";
+import { Models } from "../../models/models.js";
 import { getDb } from "../../app-globals.js";
 
-describe("resolveSource", () => {
+const sources = () => getDb().query("SELECT node_id, path FROM sources ORDER BY id").all();
+
+describe("ensureSource", () => {
+  let state: TestAppState;
+  let dir: string;
+
   useTestDb();
 
-  test("is the named source of the project, else the project's default source", () => {
-    getDb().exec("INSERT INTO nodes (id, name) VALUES ('remote', 'Remote')");
-    const project = createProject("Test", "/checkouts/test", "main");
-    const remote = createSource(project.id, "remote", "/remote/test");
-
-    expect(resolveSource(project.id, remote.id)).toEqual(remote);
-    expect(resolveSource(project.id)).toEqual(defaultSource(project.id)!);
-    expect(resolveSource(project.id, null)).toEqual(defaultSource(project.id)!);
+  beforeEach(() => {
+    state = createAppState();
+    dir = mkdtempSync(join(tmpdir(), "reins-location-"));
+  });
+  afterEach(async () => {
+    await stopLoopbackNode(state);
+    await state.nodes.close();
+    rmSync(dir, { recursive: true, force: true });
   });
 
-  test("the default source skips sources on removed nodes, which a session naming its source still resolves", () => {
-    getDb().exec("INSERT INTO nodes (id, name, removed_at) VALUES ('gone', 'Gone', '2026-10-11T09:00:00.000Z'), ('remote', 'Remote', NULL)");
-    const project = createProject("Test", "/gone/test", "main", "gone");
-    const remote = createSource(project.id, "remote", "/remote/test");
-    const [gone] = listSources(project.id);
+  test("makes a location the node confirms is a directory, once: the same node and path are the same source", async () => {
+    connectLoopbackNode(state);
+    await loopbackLink(state).ready();
+    const nodes = new Models(state).nodes;
 
-    expect(resolveSource(project.id)).toEqual(remote);
-    expect(resolveSource(project.id, gone!.id)).toEqual(gone!);
+    const made = await ensureSource("internal", dir, nodes);
+    const again = await ensureSource("internal", `${dir}/`, nodes);
+
+    expect(made.record).toEqual({ id: made.id, node_id: "internal", path: dir });
+    expect(again.id).toBe(made.id);
+    expect(sources()).toEqual([{ node_id: "internal", path: dir }]);
   });
 
-  test("a project whose only source is on a removed node has no default source", () => {
+  test("a known location is returned without its node, which may be offline", async () => {
+    getDb().query("INSERT INTO sources (node_id, path) VALUES ('internal', ?)").run(dir);
+
+    expect((await ensureSource("internal", dir, new Models(state).nodes)).path).toBe(dir);
+  });
+
+  test("refuses a new location that is relative, on a removed or unknown node, or not a directory there, keeping nothing", async () => {
     getDb().exec("INSERT INTO nodes (id, name, removed_at) VALUES ('gone', 'Gone', '2026-10-11T09:00:00.000Z')");
-    const project = createProject("Test", "/gone/test", "main", "gone");
+    connectLoopbackNode(state);
+    await loopbackLink(state).ready();
+    const nodes = new Models(state).nodes;
 
-    expect(() => resolveSource(project.id)).toThrow("Project has no source");
-  });
-
-  test("refuses a source of another project, or none", () => {
-    const project = createProject("Test", "/checkouts/test", "main");
-    const other = createProject("Other", "/checkouts/other", "main");
-
-    expect(() => resolveSource(project.id, defaultSource(other.id)!.id)).toThrow(SourceNotFoundError);
-    expect(() => resolveSource(project.id, 99_999)).toThrow(SourceNotFoundError);
+    await expect(ensureSource("internal", "relative/path", nodes)).rejects.toThrow(CheckoutNotFoundError);
+    await expect(ensureSource("gone", dir, nodes)).rejects.toThrow(NodeNotFoundError);
+    await expect(ensureSource("nowhere", dir, nodes)).rejects.toThrow(NodeNotFoundError);
+    await expect(ensureSource("internal", join(dir, "missing"), nodes)).rejects.toThrow(CheckoutNotFoundError);
+    expect(sources()).toEqual([]);
   });
 });

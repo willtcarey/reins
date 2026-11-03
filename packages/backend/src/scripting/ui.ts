@@ -25,7 +25,7 @@ export const UI_FUNCTIONS: ApiFunctionDef[] = [
     returns: Type.String({ description: "Confirmation message." }),
     tags: ["ui", "broadcast", "websocket", "event", "debug"],
     execute: (params, ctx) => {
-      ctx.broadcast(params.message);
+      ctx.models.broadcast(params.message);
       return "Broadcast sent";
     },
   }),
@@ -47,10 +47,10 @@ export const UI_FUNCTIONS: ApiFunctionDef[] = [
     async: true,
     tags: ["ui", "file", "open", "browser", "viewer", "display"],
     execute: (params, ctx) => {
-      ctx.broadcast({
+      ctx.models.broadcast({
         type: "open_file",
-        sessionId: ctx.sessionId,
-        projectId: ctx.projectId,
+        sessionId: ctx.session.id,
+        projectId: ctx.session.projectId,
         path: params.path,
         startLine: params.startLine,
         endLine: params.endLine,

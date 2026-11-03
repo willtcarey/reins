@@ -7,11 +7,12 @@ import { createAppState, useLoopbackState } from "../helpers/app-state.js";
 import { useTestRepo, commitFile, git } from "../helpers/test-repo.js";
 import { buildRouter } from "../../routes/index.js";
 import { createProject } from "../project-fixture.js";
+import { createSession } from "../session-fixture.js";
 
 describe("diff routes", () => {
   let state: ReturnType<typeof createAppState>;
   let router: ReturnType<typeof buildRouter>;
-  let projectId: number;
+  let sessionId: string;
 
   useTestDb();
   const repo = useTestRepo();
@@ -21,13 +22,13 @@ describe("diff routes", () => {
     state = loopback.state;
     router = buildRouter();
     const p = createProject("Test Project", repo.dir);
-    projectId = p.id;
+    sessionId = createSession("viewed", p.id, { agentRuntimeType: "pi" }).id;
   });
 
-  describe("GET /api/projects/:id/diff/files", () => {
+  describe("GET /api/sessions/:sessionId/diff/files", () => {
     test("returns empty files when no changes (branch mode)", async () => {
       const res = await router.handle(
-        makeRequest("GET", `/api/projects/${projectId}/diff/files?mode=branch`),
+        makeRequest("GET", `/api/sessions/${sessionId}/diff/files?mode=branch`),
         state,
       );
       expect(res!.status).toBe(200);
@@ -43,7 +44,7 @@ describe("diff routes", () => {
       await commitFile(repo.dir, "new-file.txt", "hello world", "Add new file");
 
       const res = await router.handle(
-        makeRequest("GET", `/api/projects/${projectId}/diff/files?mode=branch&branch=feature/test`),
+        makeRequest("GET", `/api/sessions/${sessionId}/diff/files?mode=branch&branch=feature/test`),
         state,
       );
       expect(res!.status).toBe(200);
@@ -60,7 +61,7 @@ describe("diff routes", () => {
       await proc.exited;
 
       const res = await router.handle(
-        makeRequest("GET", `/api/projects/${projectId}/diff/files?mode=uncommitted`),
+        makeRequest("GET", `/api/sessions/${sessionId}/diff/files?mode=uncommitted`),
         state,
       );
       expect(res!.status).toBe(200);
@@ -69,24 +70,24 @@ describe("diff routes", () => {
     });
   });
 
-  describe("GET /api/projects/:id/diff", () => {
+  describe("GET /api/sessions/:sessionId/diff", () => {
     test("does not expose the retired parsed diff endpoint", async () => {
       const res = await router.handle(
-        makeRequest("GET", `/api/projects/${projectId}/diff?mode=branch`),
+        makeRequest("GET", `/api/sessions/${sessionId}/diff?mode=branch`),
         state,
       );
       expect(res).toBeNull();
     });
   });
 
-  describe("GET /api/projects/:id/diff/patch", () => {
+  describe("GET /api/sessions/:sessionId/diff/patch", () => {
     test("returns raw patch text with a diff content type", async () => {
       await git(repo.dir, ["checkout", "-b", "feature/raw-patch"]);
       await commitFile(repo.dir, "patch-file.txt", "line 1\nline 2\n", "Add patch file");
       await git(repo.dir, ["checkout", "main"]);
 
       const res = await router.handle(
-        makeRequest("GET", `/api/projects/${projectId}/diff/patch?mode=branch&branch=feature/raw-patch`),
+        makeRequest("GET", `/api/sessions/${sessionId}/diff/patch?mode=branch&branch=feature/raw-patch`),
         state,
       );
 
@@ -101,10 +102,10 @@ describe("diff routes", () => {
       // Latin-1 "café": not valid UTF-8, so only a byte-exact stream keeps it.
       writeFileSync(join(repo.dir, "latin1.txt"), Buffer.from([0x63, 0x61, 0x66, 0xe9, 0x0a]));
 
-      const files = await router.handle(makeRequest("GET", `/api/projects/${projectId}/diff/files?mode=uncommitted`), state);
+      const files = await router.handle(makeRequest("GET", `/api/sessions/${sessionId}/diff/files?mode=uncommitted`), state);
       expect((await files!.json()).files.map((file: { path: string }) => file.path)).toEqual(["latin1.txt"]);
 
-      const res = await router.handle(makeRequest("GET", `/api/projects/${projectId}/diff/patch?mode=uncommitted`), state);
+      const res = await router.handle(makeRequest("GET", `/api/sessions/${sessionId}/diff/patch?mode=uncommitted`), state);
       const patch = Buffer.from(await res!.arrayBuffer());
       expect(patch.toString("latin1")).toContain("new file mode");
       expect(patch.includes(Buffer.from([0x2b, 0x63, 0x61, 0x66, 0xe9, 0x0a]))).toBe(true);

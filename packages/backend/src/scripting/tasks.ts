@@ -27,8 +27,11 @@ export const TaskSchema = Type.Object({
 // Helpers
 // ---------------------------------------------------------------------------
 
+/** The caller's project; throws for a session of no project: tasks belong to projects. */
 function projectModel(ctx: ApiContext) {
-  return ctx.models.project(ctx.projectId, ctx.sourceId);
+  const { projectId } = ctx.session;
+  if (projectId === null) throw new Error("This session has no project, and tasks belong to projects");
+  return ctx.models.project(projectId);
 }
 
 // ---------------------------------------------------------------------------
@@ -54,7 +57,7 @@ export const TASK_FUNCTIONS: ApiFunctionDef[] = [
     parameters: Type.Object({}),
     returns: Type.Union([TaskSchema, Type.Null()]),
     tags: ["tasks", "current", "read", "self", "context"],
-    execute: (_params, ctx) => (ctx.taskId ? projectModel(ctx).tasks().get(ctx.taskId) : null),
+    execute: (_params, ctx) => (ctx.session.taskId ? projectModel(ctx).tasks().get(ctx.session.taskId) : null),
   }),
   defineFunction({
     name: "tasks.get",
@@ -70,7 +73,7 @@ export const TASK_FUNCTIONS: ApiFunctionDef[] = [
   }),
   defineFunction({
     name: "tasks.create",
-    description: "Create a new task with a dedicated git branch. Derives branch name from title if not provided.",
+    description: "Create a new task with a dedicated git branch. Derives branch name from title if not provided. No checkout is touched: its sessions' runs make the branch where they work, adopting one that exists there or on origin.",
     parameters: Type.Object({
       title: Type.String(),
       description: Type.String(),

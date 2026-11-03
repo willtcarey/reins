@@ -7,7 +7,10 @@ import { createAppState, useLoopbackState } from "../helpers/app-state.js";
 import { WRITE_CHUNK_BYTES } from "@reins/node-protocol";
 import { useTestRepo } from "../helpers/test-repo.js";
 import { buildRouter } from "../../routes/index.js";
-import { createProject } from "../project-fixture.js";
+import { mkdtempSync, rmSync } from "fs";
+import { tmpdir } from "os";
+import { createProject, createSourceAt } from "../project-fixture.js";
+import { createSession } from "../session-fixture.js";
 
 function makeUploadRequest(
   path: string,
@@ -28,6 +31,7 @@ describe("upload routes", () => {
   let state: ReturnType<typeof createAppState>;
   let router: ReturnType<typeof buildRouter>;
   let projectId: number;
+  let sessionId: string;
 
   useTestDb();
   const repo = useTestRepo();
@@ -39,12 +43,31 @@ describe("upload routes", () => {
     router = buildRouter();
     const p = createProject("Test Project", repo.dir);
     projectId = p.id;
+    sessionId = createSession("uploading", projectId, { agentRuntimeType: "pi" }).id;
   });
 
-  describe("POST /api/projects/:id/upload", () => {
-    test("uploads a single file to the project root", async () => {
+  describe("POST /api/sessions/:sessionId/upload", () => {
+    test("uploads into the session's own checkout, not its project's home", async () => {
+      const elsewhere = mkdtempSync(join(tmpdir(), "reins-upload-"));
+      try {
+        const moved = createSession("elsewhere", projectId, { agentRuntimeType: "pi", sourceId: createSourceAt(elsewhere).id }).id;
+
+        const res = await router.handle(
+          makeUploadRequest(`/api/sessions/${moved}/upload`, [{ name: "files", filename: "notes.txt", content: "here" }]),
+          state,
+        );
+
+        expect(res!.status).toBe(200);
+        expect(readFileSync(join(elsewhere, "notes.txt"), "utf-8")).toBe("here");
+        expect(existsSync(join(repo.dir, "notes.txt"))).toBe(false);
+      } finally {
+        rmSync(elsewhere, { recursive: true, force: true });
+      }
+    });
+
+    test("uploads a single file to the checkout's root", async () => {
       const res = await router.handle(
-        makeUploadRequest(`/api/projects/${projectId}/upload`, [
+        makeUploadRequest(`/api/sessions/${sessionId}/upload`, [
           { name: "files", filename: "hello.txt", content: "hello world" },
         ]),
         state,
@@ -57,7 +80,7 @@ describe("upload routes", () => {
 
     test("uploads multiple files", async () => {
       const res = await router.handle(
-        makeUploadRequest(`/api/projects/${projectId}/upload`, [
+        makeUploadRequest(`/api/sessions/${sessionId}/upload`, [
           { name: "files", filename: "a.txt", content: "aaa" },
           { name: "files", filename: "b.txt", content: "bbb" },
         ]),
@@ -74,7 +97,7 @@ describe("upload routes", () => {
 
     test("uploads to a subdirectory via ?path= query param", async () => {
       const res = await router.handle(
-        makeUploadRequest(`/api/projects/${projectId}/upload?path=subdir`, [
+        makeUploadRequest(`/api/sessions/${sessionId}/upload?path=subdir`, [
           { name: "files", filename: "nested.txt", content: "nested" },
         ]),
         state,
@@ -87,7 +110,7 @@ describe("upload routes", () => {
 
     test("creates intermediate directories", async () => {
       const res = await router.handle(
-        makeUploadRequest(`/api/projects/${projectId}/upload?path=a/b/c`, [
+        makeUploadRequest(`/api/sessions/${sessionId}/upload?path=a/b/c`, [
           { name: "files", filename: "deep.txt", content: "deep" },
         ]),
         state,
@@ -98,7 +121,7 @@ describe("upload routes", () => {
 
     test("rejects path traversal in query param", async () => {
       const res = await router.handle(
-        makeUploadRequest(`/api/projects/${projectId}/upload?path=../../etc`, [
+        makeUploadRequest(`/api/sessions/${sessionId}/upload?path=../../etc`, [
           { name: "files", filename: "evil.txt", content: "pwned" },
         ]),
         state,
@@ -110,7 +133,7 @@ describe("upload routes", () => {
 
     test("sanitizes path traversal in filename by using basename", async () => {
       const res = await router.handle(
-        makeUploadRequest(`/api/projects/${projectId}/upload`, [
+        makeUploadRequest(`/api/sessions/${sessionId}/upload`, [
           { name: "files", filename: "../../../etc/passwd", content: "safe content" },
         ]),
         state,
@@ -126,7 +149,7 @@ describe("upload routes", () => {
 
     test("returns 400 when no files are provided", async () => {
       const formData = new FormData();
-      const req = makeRequest(`/api/projects/${projectId}/upload`, {
+      const req = makeRequest(`/api/sessions/${sessionId}/upload`, {
         method: "POST",
         body: formData,
       });
@@ -141,7 +164,7 @@ describe("upload routes", () => {
       // (Bun has issues round-tripping Uint8Array through FormData in tests)
       const content = "binary\x01\x02\x03content";
       const res = await router.handle(
-        makeUploadRequest(`/api/projects/${projectId}/upload`, [
+        makeUploadRequest(`/api/sessions/${sessionId}/upload`, [
           { name: "files", filename: "data.bin", content },
         ]),
         state,
@@ -155,7 +178,7 @@ describe("upload routes", () => {
       const content = Array.from({ length: 3 * WRITE_CHUNK_BYTES / 16 }, (_, i) => `line ${String(i).padStart(9, "0")}\n`).join("");
       expect(content.length).toBeGreaterThan(2 * WRITE_CHUNK_BYTES);
       const res = await router.handle(
-        makeUploadRequest(`/api/projects/${projectId}/upload?path=big`, [
+        makeUploadRequest(`/api/sessions/${sessionId}/upload?path=big`, [
           { name: "files", filename: "big.txt", content },
         ]),
         state,
@@ -168,7 +191,7 @@ describe("upload routes", () => {
     test("with the checkout's node offline, answers 503", async () => {
       const offline = createAppState();
       const res = await router.handle(
-        makeUploadRequest(`/api/projects/${projectId}/upload`, [
+        makeUploadRequest(`/api/sessions/${sessionId}/upload`, [
           { name: "files", filename: "test.txt", content: "test" },
         ]),
         offline,
@@ -177,9 +200,9 @@ describe("upload routes", () => {
       offline.nodes.close();
     });
 
-    test("returns 404 for nonexistent project", async () => {
+    test("returns 404 for a nonexistent session", async () => {
       const res = await router.handle(
-        makeUploadRequest(`/api/projects/9999/upload`, [
+        makeUploadRequest(`/api/sessions/missing/upload`, [
           { name: "files", filename: "test.txt", content: "test" },
         ]),
         state,

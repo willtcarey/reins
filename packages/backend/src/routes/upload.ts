@@ -1,15 +1,11 @@
 /**
- * File Upload Route (project-scoped)
- *
- * Accepts multipart/form-data with one or more files under the "files"
- * field name. An optional `?path=` query parameter specifies the target
- * subdirectory within the checkout.
- *
- * Writes into the request's source checkout on its node (`SourceModel.writeFiles`, `fs.write`).
+ * File upload into a session's checkout (the file browser's Upload): multipart/form-data with one or more
+ * files under "files", into the folder `?path=` (the checkout's root without it), on its node
+ * (`SourceModel.writeFiles`, `fs.write`).
  */
 
 import type { RouterGroup } from "../router.js";
-import type { ProjectRouteContext } from "./index.js";
+import type { SessionRouteContext } from "./index.js";
 import { badRequest } from "../errors.js";
 import {
   NoFilesError,
@@ -17,7 +13,7 @@ import {
   FileWriteRefusedError,
 } from "../models/sources.js";
 
-export function registerUploadRoutes(router: RouterGroup<ProjectRouteContext>) {
+export function registerUploadRoutes(router: RouterGroup<SessionRouteContext>) {
   router.post("/upload", async (ctx) => {
     const formData = await ctx.req.formData();
     const files = formData.getAll("files").filter(
@@ -27,7 +23,7 @@ export function registerUploadRoutes(router: RouterGroup<ProjectRouteContext>) {
     const subPath = ctx.url.searchParams.get("path") ?? "";
 
     try {
-      const result = await ctx.project.source.writeFiles(
+      const result = await ctx.session.source.writeFiles(
         files.map((f) => ({ name: f.name, data: f })),
         subPath,
       );

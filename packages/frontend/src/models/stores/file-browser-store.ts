@@ -26,6 +26,8 @@ export class FileBrowserStore {
   expandedDirs = new Set<string>();
   treeLoading = new Set<string>();
   treeError: string | null = null;
+  /** How much of an upload is sent (0–100), or null when none is in progress. */
+  uploadProgress: number | null = null;
 
   // Responses for an earlier source are dropped by comparing generations.
   private generation = 0;
@@ -117,6 +119,32 @@ export class FileBrowserStore {
 
   setQuery(query: string): void {
     this.query = query;
+    this.notify();
+  }
+
+  /** Where an upload goes: the open file's folder, else the checkout's root (`.`). */
+  get uploadFolder(): string {
+    const path = this.path;
+    const slash = path?.lastIndexOf("/") ?? -1;
+    return path && slash > 0 ? path.slice(0, slash) : ".";
+  }
+
+  /** Writes files into `uploadFolder`; the tree lists them once its source announces its files changed. */
+  async upload(files: FileList | readonly File[]): Promise<{ uploaded: string[] } | { error: string }> {
+    const source = this.source;
+    if (!source) return { error: "No checkout is open" };
+    this.setUploadProgress(0);
+    try {
+      return { uploaded: await this.reins.files.upload(source, files, { folder: this.uploadFolder, onProgress: percent => this.setUploadProgress(percent) }) };
+    } catch (error) {
+      return { error: error instanceof Error ? error.message : "Upload failed" };
+    } finally {
+      this.setUploadProgress(null);
+    }
+  }
+
+  private setUploadProgress(progress: number | null): void {
+    this.uploadProgress = progress;
     this.notify();
   }
 

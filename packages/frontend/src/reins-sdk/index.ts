@@ -69,6 +69,12 @@ export interface Files {
   listDirectory(source: Source, path: string): Promise<DirectoryEntry[]>;
   /** Where the browser loads a file itself (images, PDFs, downloads); null for an unknown source. */
   contentUrl(source: Source, path: string, options?: { download?: boolean }): string | null;
+  /**
+   * Writes files into `folder` of the source (`.`, its root, by default), replacing files of the same names,
+   * reporting how much is sent (0–100); then announces its files changed. Resolves with the names written.
+   * Rejects with an Error whose message can be shown: an unknown source, an offline node, a folder outside it.
+   */
+  upload(source: Source, files: FileList | readonly File[], options?: { folder?: string; onProgress?: (percent: number) => void }): Promise<string[]>;
 }
 
 // ---------------------------------------------------------------------------
@@ -262,7 +268,8 @@ export interface Messages {
 /** A session, as the agents' `api.sessions.get` gives it, in the SDK's camelCase. */
 export interface Session {
   readonly id: string;
-  readonly projectId: number;
+  /** Its project; null for a session of no project (which has no task). */
+  readonly projectId: number | null;
   /** Its task; null for a conversation of its project's assistant. */
   readonly taskId: number | null;
   /** The session that started it as its child; null for one that is not a child. */

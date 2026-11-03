@@ -44,7 +44,7 @@ test("a node paired with a code from the API and run with `reins node run` conne
 
   const { projectId } = await api.setUp(checkout, nodeId);
   expect((await api.client.nodes.list()).find(entry => entry.id === nodeId)?.sources).toEqual([
-    { path: checkout, project: { id: projectId, name: "processes", sourceId: expect.any(Number) } },
+    { id: expect.any(Number), path: checkout, projects: [{ id: projectId, name: "processes" }] },
   ]);
   const sessionId = await api.createSession(projectId);
   // The faux provider answers `[tool]` with a bash call appending to tool-runs.log in the checkout.

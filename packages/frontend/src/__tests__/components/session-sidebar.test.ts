@@ -37,3 +37,18 @@ describe("SessionSidebar viewport behavior", () => {
     expect(Reflect.get(el, "collapsed")).toBe(false);
   });
 });
+
+describe("SessionSidebar: other sessions", () => {
+  test("lists the sessions of no project under Other sessions, only when there is one", () => {
+    installViewportGlobals({ mobile: false, innerWidth: 1024 });
+    const el = new SessionSidebar();
+    const unowned = { id: "loose", projectId: null, name: "Heartbeat", firstMessage: null };
+    const store = { projects: [], sessionId: "", projectsStore: { unownedSessions: [unowned] } };
+    Reflect.set(el, "store", store);
+
+    expect(templateToString(el.render())).toContain("Other sessions");
+
+    store.projectsStore.unownedSessions = [];
+    expect(templateToString(el.render())).not.toContain("Other sessions");
+  });
+});

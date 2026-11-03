@@ -17,7 +17,7 @@ class TestInputElement extends EventTarget {
 const localNode: NodeView = { id: "internal", name: "Internal", connected: true, paired: false, hostname: null, pairedAt: null, revokedAt: null, sources: [], build: null, failure: null };
 const laptop: NodeView = { id: "laptop", name: "Laptop", connected: true, paired: true, hostname: "laptop.local", pairedAt: "2026-10-01T09:00:00.000Z", revokedAt: null, sources: [], build: null, failure: null };
 const build = (status: "current" | "outdated" | "updating") => ({ id: "a".repeat(64), status });
-const source = (id: number) => ({ path: `/srv/project-${id}`, project: { id, name: `Project ${id}`, sourceId: id } });
+const source = (id: number) => ({ id, path: `/srv/project-${id}`, projects: [{ id, name: `Project ${id}` }] });
 const pairingCode = { id: 7, code: "single-use-code", expiresAt: "2026-10-08T12:10:00.000Z" };
 
 afterEach(() => {

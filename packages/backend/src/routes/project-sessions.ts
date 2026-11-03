@@ -9,33 +9,24 @@ import { Type, type Static } from "@sinclair/typebox";
 import type { RouterGroup } from "../router.js";
 import type { SessionListView } from "../models/sessions.js";
 import type { ProjectRouteContext } from "./index.js";
-import { createSession } from "../sessions/create-session.js";
-import { touchProject } from "../project-store.js";
-import { getTask } from "../task-store.js";
-import { listSources } from "../node-store.js";
 import { badRequest } from "../errors.js";
-import { ThinkingLevelSchema } from "../models/model-settings.js";
-import { findPiModel } from "../pi/model-catalog.js";
-import { createDbCredentialStore } from "../pi/credential-store.js";
 import { parseCollectionPage, parseOptionalBody } from "./validate.js";
+import { SessionLocationSchema, SessionModelChoiceSchema } from "../sessions/create-session.js";
 
 export type ArchivedSessionHistoryItem = SessionListView & { taskTitle: string | null };
 export interface ArchivedSessionPage { items: ArchivedSessionHistoryItem[]; hasMore: boolean }
 
-/** A new session's options, all optional: without them, a conversation of the project's assistant on its
+/** A new session's options, all optional: without them, a conversation of the project's assistant in its
  * default source with the `default_model` setting's model. */
 const SessionCreateBody = Type.Object({
   /** A task of the project; null or left out: a conversation of the project's assistant. */
   taskId: Type.Optional(Type.Union([Type.Integer(), Type.Null()])),
-  /** A source of the project, by its node and path. */
-  source: Type.Optional(Type.Object({ nodeId: Type.String({ minLength: 1 }), path: Type.String({ minLength: 1 }) })),
+  /** Where it works, a node and a path (a directory not known yet is checked on its node); left out, as
+   * `createSession` inherits: the task's latest session's, else the project's default source. */
+  source: Type.Optional(SessionLocationSchema),
   /** Its name, trimmed; left out, the session is named as any is. */
   title: Type.Optional(Type.String()),
-  model: Type.Optional(Type.Object({
-    provider: Type.String({ minLength: 1 }),
-    modelId: Type.String({ minLength: 1 }),
-    thinkingLevel: Type.Optional(ThinkingLevelSchema),
-  })),
+  model: Type.Optional(SessionModelChoiceSchema),
 });
 export type SessionCreateRequest = Static<typeof SessionCreateBody>;
 
@@ -66,28 +57,26 @@ export function registerProjectSessionRoutes(router: RouterGroup<ProjectRouteCon
     return Response.json(sessions.listByProject(ctx.project.projectId));
   });
 
+  // Where a new session (of `?taskId=`, a task of the project) can work, and works by default.
+  router.get("/locations", async (ctx) => {
+    const taskParam = ctx.url.searchParams.get("taskId");
+    const taskId = taskParam === null ? undefined : Number(taskParam);
+    if (taskId !== undefined && !Number.isInteger(taskId)) badRequest(`taskId must be an integer: ${taskParam}`);
+    return Response.json(ctx.models.sessions.locations(ctx.project.projectId, taskId));
+  });
+
   // Create a new session
   router.post("/sessions", async (ctx) => {
-    const { taskId, source: place, title, model } = await parseOptionalBody(SessionCreateBody, ctx.req);
+    const { taskId, source, title, model } = await parseOptionalBody(SessionCreateBody, ctx.req);
     const projectId = ctx.project.projectId;
-    if (taskId != null && getTask(taskId)?.project_id !== projectId) badRequest(`Task ${taskId} is not a task of this project`);
-    const source = place && listSources(projectId).find((candidate) => candidate.node_id === place.nodeId && candidate.path === place.path);
-    if (place && !source) badRequest(`This project has no source at ${place.path} on node ${place.nodeId}`);
-    if (title !== undefined && !title.trim()) badRequest("The title must not be blank");
-    if (model && !await findPiModel(createDbCredentialStore(ctx.state.process), model.provider, model.modelId)) {
-      badRequest(`Model '${model.modelId}' not found for provider '${model.provider}'`);
-    }
-
-    touchProject(projectId);
-    const managed = createSession(ctx.state, projectId, {
-      taskId: taskId ?? undefined,
-      sourceId: source?.id,
-      title: title?.trim(),
-      model: model && { provider: model.provider, modelId: model.modelId },
-      thinkingLevel: model?.thinkingLevel,
+    const managed = await ctx.models.sessions.create({
+      projectId,
+      ...(taskId == null ? {} : { taskId }),
+      ...(source ? { source } : {}),
+      ...(title === undefined ? {} : { title }),
+      ...(model ? { model } : {}),
     });
-    const sessions = ctx.models.sessions;
-    const data = sessions.getDetail(managed.id);
+    const data = ctx.models.sessions.getDetail(managed.id);
     if (!data) throw new Error(`Failed to load created session: ${managed.id}`);
     return Response.json(data, { status: 201 });
   });

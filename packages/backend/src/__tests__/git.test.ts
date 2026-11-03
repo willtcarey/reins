@@ -404,3 +404,41 @@ describe("trackBranch", () => {
     expect(await localGit(repo.dir).revParse("feat-remote")).toBe(pushedSha);
   });
 });
+
+// ---------------------------------------------------------------------------
+// ensureBranch — a task's branch, made where its session works
+// ---------------------------------------------------------------------------
+
+describe("ensureBranch", () => {
+  const repo = useTestRepo({ withRemote: true });
+
+  test("keeps a local branch as it is", async () => {
+    await localGit(repo.dir).createBranch("task/existing", "main");
+    const tip = await localGit(repo.dir).revParse("task/existing");
+    await commitFile(repo.dir, "advance.txt", "advance", "advance main");
+
+    expect(await localGit(repo.dir).ensureBranch("task/existing", "main")).toBe("existing");
+    expect(await localGit(repo.dir).revParse("task/existing")).toBe(tip);
+  });
+
+  test("tracks origin's branch when only origin has it", async () => {
+    await localGit(repo.dir).createBranch("task/pushed", "main");
+    await localGit(repo.dir).checkoutBranch("task/pushed");
+    await commitFile(repo.dir, "pushed.txt", "pushed", "pushed work");
+    const pushed = await localGit(repo.dir).revParse("HEAD");
+    await Bun.spawn(["git", "push", "origin", "task/pushed"], { cwd: repo.dir, stdout: "pipe", stderr: "pipe" }).exited;
+    await localGit(repo.dir).checkoutBranch("main");
+    await localGit(repo.dir).deleteBranch("task/pushed");
+    await Bun.spawn(["git", "update-ref", "-d", "refs/remotes/origin/task/pushed"], { cwd: repo.dir }).exited;
+
+    expect(await localGit(repo.dir).ensureBranch("task/pushed", "main")).toBe("tracked");
+    expect(await localGit(repo.dir).revParse("task/pushed")).toBe(pushed);
+  });
+
+  test("makes a new branch from the base branch when nobody has it", async () => {
+    const base = await localGit(repo.dir).revParse("main");
+
+    expect(await localGit(repo.dir).ensureBranch("task/new", "main")).toBe("created");
+    expect(await localGit(repo.dir).revParse("task/new")).toBe(base);
+  });
+});

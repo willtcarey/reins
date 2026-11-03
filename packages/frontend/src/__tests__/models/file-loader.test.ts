@@ -40,7 +40,7 @@ describe("FileLoader", () => {
     loader.show({ ...source }, "src/index.ts");
 
     expect(loader.content).toEqual({ loading: false, text: "hello world", isBinary: false, error: null });
-    expect(requests).toEqual(["/api/projects/3/files/content?path=src%2Findex.ts"]);
+    expect(requests).toEqual(["/api/sessions/placed/files/content?path=src%2Findex.ts"]);
   });
 
   test("a reload keeps showing the file until its new content arrives", async () => {

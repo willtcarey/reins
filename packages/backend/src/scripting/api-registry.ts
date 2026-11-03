@@ -40,7 +40,7 @@ import { PROJECT_FUNCTIONS, ProjectSchema } from "./projects.js";
 import { UI_FUNCTIONS } from "./ui.js";
 import { MODEL_FUNCTIONS, ProviderInfoSchema, ModelInfoSchema } from "./models.js";
 import { REVIEW_FUNCTIONS } from "./reviews.js";
-import { NODE_FUNCTIONS, NodeCopyResultSchema, NodeDetailSchema, NodeReloadSchema, NodeRunResultSchema, NodeSchema, NodeSourceSchema } from "./nodes.js";
+import { NODE_FUNCTIONS, NodeCopyResultSchema, NodeDetailSchema, NodeReloadSchema, NodeRunResultSchema, NodeSchema, NodeSourceSchema, ProjectRefSchema, LocationSchema } from "./nodes.js";
 import { TOOLS_FUNCTIONS } from "./tools.js";
 import { ToolResultSchema } from "../extensions/tool-docs.js";
 import { rankByTerms } from "./term-search.js";
@@ -96,6 +96,8 @@ export const DOMAIN_TYPES: NamedType[] = [
   { name: "Node", schema: NodeSchema },
   { name: "NodeDetail", schema: NodeDetailSchema },
   { name: "NodeSource", schema: NodeSourceSchema },
+  { name: "ProjectRef", schema: ProjectRefSchema },
+  { name: "Location", schema: LocationSchema },
   { name: "NodeReload", schema: NodeReloadSchema },
   { name: "NodeRunResult", schema: NodeRunResultSchema },
   { name: "NodeCopyResult", schema: NodeCopyResultSchema },

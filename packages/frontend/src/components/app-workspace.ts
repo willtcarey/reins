@@ -269,6 +269,7 @@ export class AppWorkspace extends LitElement {
         .parentSession=${parentSession}
         .runningChildSessions=${store.activeProjectStore?.runningChildSessionsFor(store.sessionId) ?? []}
         .source=${store.source}
+        .skills=${store.app.locationSkills}
         .decorators=${store.app.decorators}
         .commands=${store.app.commands}
         .sendHandoff=${store.app.sendHandoff}

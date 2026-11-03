@@ -3,10 +3,10 @@ import {
   withAbortSignal,
 } from "@earendil-works/pi-agent-core";
 import { createReinsTools } from "../../session-runtime/reins-tools.js";
-import { serverToolCalls, type ServerToolScope } from "../../tools/index.js";
+import { serverToolCalls } from "../../tools/index.js";
 import { createAppState, type TestAppState } from "./app-state.js";
 import { Models } from "../../models/models.js";
-import { defaultSource } from "../../node-store.js";
+import { callingSession, type ScriptCaller } from "./script-context.js";
 
 type ReinsApplicationTool = ReturnType<typeof createReinsTools>[number];
 
@@ -35,20 +35,19 @@ export function executeTool<TTool extends ReinsApplicationTool>(
   );
 }
 
-/** A Reins application tool (a session runtime's definition) over the server's tool calls, with the models of `state`
- * (its broadcasts reach its clients). Without `state`, no node is connected: a call that reaches the
- * project's checkout fails. The session's source defaults to the project's default source. */
+/** A Reins application tool (a session runtime's definition) over the server's tool calls of the calling
+ * session `caller` (`callingSession`: its row made when the test has none, if it names a project), with
+ * the models of `state` (its broadcasts reach its clients). Without `state`, no node is connected: a call
+ * that reaches the checkout fails. */
 export function reinsTool(
   name: "create_task" | "search" | "execute",
-  { state = createAppState(), ...scope }: Partial<Omit<ServerToolScope, "broadcast" | "nodes" | "models">> & { state?: TestAppState } = {},
+  { state = createAppState(), ...caller }: Omit<ScriptCaller, "signal"> & { state?: TestAppState } = {},
 ): ReinsApplicationTool {
-  const projectId = scope.projectId ?? 0;
-  // Only a test with a project has a database to find its default source in.
-  const sourceId = scope.sourceId ?? (scope.projectId === undefined ? 0 : defaultSource(projectId)?.id ?? 0);
+  // Only a test with a project has a database to keep the calling session in.
+  const sessionId = caller.projectId === undefined ? caller.sessionId ?? "test-session" : callingSession(caller);
   const models = new Models(state);
   const tool = createReinsTools(serverToolCalls({
-    projectId, sessionId: "test-session", taskId: null, sourceId, ...scope,
-    broadcast: models.broadcast, nodes: state.nodes, models,
+    sessionId, models, ...(caller.instance ? { instance: caller.instance } : {}),
   })).find(item => item.name === name);
   if (!tool) throw new Error(`Missing Reins tool: ${name}`);
   return tool;

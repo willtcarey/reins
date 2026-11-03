@@ -158,6 +158,9 @@ export class NodeDirClient {
     throw new NodeFileError(answer.error.code, answer.error.message, answer.error.path);
   }
 
+  /** The node the directory is on. */
+  get nodeId(): string { return this.node.id; }
+
   private at(path: string) { return { cwd: this.cwd, path }; }
 
   /** Resolves `~` too; the path need not exist. */

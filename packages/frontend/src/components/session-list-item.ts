@@ -40,6 +40,10 @@ export class SessionListItem extends LitElement {
   @property({ attribute: false })
   onSetSessionUnread: ((sessionId: string, unread: boolean) => Promise<unknown>) | null = null;
 
+  /** Whether it offers Move (whoever lists it handles `move-session`). */
+  @property({ type: Boolean })
+  movable = true;
+
   @property({ attribute: false })
   onUpdateMetadata: ((sessionId: string, updates: { name?: string | null; pinned?: boolean; archived?: boolean }) => Promise<unknown>) | null = null;
 
@@ -60,7 +64,7 @@ export class SessionListItem extends LitElement {
         run: () => this.onSetSessionUnread?.(this.session.id, !unread),
       });
     }
-    actions.push(this.moveAction());
+    if (this.movable) actions.push(this.moveAction());
     if (this.onUpdateMetadata) {
       actions.push({
         label: "Rename",
@@ -83,7 +87,7 @@ export class SessionListItem extends LitElement {
     const { placement, activityState } = this.session;
     const unavailable = activityState === "running" ? "Unavailable while the session is running" : null;
     return {
-      label: "Move to node…",
+      label: "Move session…",
       detail: unavailable ?? `Node: ${placement.nodeName}${placement.removed ? " (removed)" : ""}`,
       disabled: unavailable !== null,
       run: () => this.dispatchEvent(moveSessionEvent(this.session.id)),
@@ -119,7 +123,7 @@ export class SessionListItem extends LitElement {
             class="pointer-events-none block text-zinc-600"
           >${pinIcon("", 10)}</span>
         ` : nothing}
-        .subtitle=${`${date} · ${s.messageCount} messages`}
+        .subtitle=${`${date} · ${s.messageCount} messages${s.sourceExtension ? ` · from ${s.sourceExtension}` : ""}`}
         .active=${this.active}
         .primaryLabel=${`Open session: ${label}`}
         .actions=${this.cardActions(pinned)}

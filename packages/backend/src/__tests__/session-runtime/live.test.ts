@@ -12,7 +12,7 @@ import { runMigrations } from "../../migrations.js";
 import { registerPiProvider, unregisterPiProvider } from "../../pi/factory.js";
 import { suspendSessions } from "../../process-state.js";
 import { getSession } from "../../session-store.js";
-import { createTask } from "../../task-store.js";
+import { createTask, getTask } from "../../task-store.js";
 import { createSession } from "../../sessions/create-session.js";
 import { latestSettlement } from "../../sessions/session-runs.js";
 import { closeSessionRuntime, openSessionRuntime } from "../../session-runtime/live.js";
@@ -65,7 +65,7 @@ afterEach(async () => {
 /** A session of the project on the test repo, on the faux model; `taskId` makes it a task session. */
 function newSession(options: { taskId?: number; modelId?: string } = {}): string {
   const project = createProject("Runtime", repo.dir);
-  return createSession(state, project.id, { model: { provider: provider.provider.id, modelId: options.modelId ?? "fake" }, ...(options.taskId === undefined ? {} : { taskId: options.taskId }) }).id;
+  return createSession(state, { projectId: project.id, model: { provider: provider.provider.id, modelId: options.modelId ?? "fake" }, ...(options.taskId === undefined ? {} : { taskId: options.taskId }) }).id;
 }
 
 /** Prompts the session's runtime on the server and waits for its run to settle on the session row. */
@@ -121,7 +121,7 @@ describe("a session running on the server", () => {
     await git(repo.dir, ["branch", "task/environment"]);
     const project = createProject("Environment", repo.dir);
     const task = createTask(project.id, "Environment", null, "task/environment");
-    const sessionId = createSession(state, project.id, { model: { provider: provider.provider.id, modelId: "fake" }, taskId: task.id }).id;
+    const sessionId = createSession(state, { projectId: project.id, model: { provider: provider.provider.id, modelId: "fake" }, taskId: task.id }).id;
 
     const seen: Context[] = [];
     await promptAndSettle(sessionId, "Use /repo-skill and /server-skill", [context => { seen.push(context); return fauxAssistantMessage("ok"); }]);
@@ -204,10 +204,37 @@ describe("a session running on the server", () => {
     expect(toolResults(sessionId)).toMatchObject([{ isError: false, content: [{ type: "text", text: "started\ndone\n" }] }]);
   });
 
+  test("a run makes its task's branch where its session works when the checkout does not have it, from the base branch, and records where it begins", async () => {
+    const project = createProject("New branch", repo.dir);
+    const task = createTask(project.id, "New", null, "task/new-here");
+    const base = await git(repo.dir, ["rev-parse", "main"]);
+    const sessionId = createSession(state, { projectId: project.id, model: { provider: provider.provider.id, modelId: "fake" }, taskId: task.id }).id;
+
+    await promptAndSettle(sessionId, "Hello", [() => fauxAssistantMessage("ok")]);
+
+    expect(latestSettlement(sessionId)).toMatchObject({ status: "completed" });
+    expect(await git(repo.dir, ["rev-parse", "--abbrev-ref", "HEAD"])).toBe("task/new-here");
+    expect(await git(repo.dir, ["rev-parse", "task/new-here"])).toBe(base);
+    expect(getTask(task.id)?.base_commit).toBe(base);
+  });
+
+  test("two runs of a task starting at once in one checkout both prepare it: one makes the branch, both are on it", async () => {
+    const project = createProject("Together", repo.dir);
+    const task = createTask(project.id, "Together", null, "task/together");
+    const sessions = [0, 1].map(() => createSession(state, { projectId: project.id, model: { provider: provider.provider.id, modelId: "fake" }, taskId: task.id }).id);
+    provider.setResponses(sessions.map(() => () => fauxAssistantMessage("ok")));
+
+    for (const sessionId of sessions) await (await openSessionRuntime(host, sessionId)).prompt([{ type: "text", text: "Hello" }], { reinsId: crypto.randomUUID() });
+    await until(() => sessions.every(sessionId => latestSettlement(sessionId) !== null), "both runs settled");
+
+    for (const sessionId of sessions) expect(latestSettlement(sessionId)).toMatchObject({ status: "completed" });
+    expect(await git(repo.dir, ["rev-parse", "--abbrev-ref", "HEAD"])).toBe("task/together");
+  });
+
   test("a run whose checkout cannot be prepared fails, without asking the model", async () => {
-    const project = createProject("Missing branch", repo.dir);
+    const project = createProject("Missing base", repo.dir, "no-such-base");
     const task = createTask(project.id, "Missing", null, "task/missing");
-    const sessionId = createSession(state, project.id, { model: { provider: provider.provider.id, modelId: "fake" }, taskId: task.id }).id;
+    const sessionId = createSession(state, { projectId: project.id, model: { provider: provider.provider.id, modelId: "fake" }, taskId: task.id }).id;
     const runtime = await openSessionRuntime(host, sessionId);
     await runtime.prompt([{ type: "text", text: "Hello" }], { reinsId: "missing" });
     await until(() => latestSettlement(sessionId) !== null, "the run settled");

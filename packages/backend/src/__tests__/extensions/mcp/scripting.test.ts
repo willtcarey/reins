@@ -1,11 +1,10 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { runScript } from "../../../tools/execute.js";
-import type { ApiContext } from "../../../scripting/define-function.js";
-import { Models } from "../../../models/models.js";
 import { createAppState } from "../../helpers/app-state.js";
 import { startFakeMcpServer, type FakeMcpServer } from "../../helpers/fake-mcp-server.js";
 import { useTestDb } from "../../helpers/test-db.js";
 import { getDb } from "../../../app-globals.js";
+import { scriptContext } from "../../helpers/script-context.js";
 
 const fakes: FakeMcpServer[] = [];
 
@@ -16,9 +15,7 @@ afterEach(async () => {
 /** Runs `code` as an `execute` script of a session; its result or its error. */
 function scripting() {
   const state = createAppState();
-  const models = new Models(state);
-  const ctx: ApiContext = { projectId: 1, sessionId: "caller", taskId: null, broadcast: models.broadcast, sourceId: 0, nodes: state.nodes, models };
-  return (code: string) => runScript(ctx, code);
+  return (code: string) => runScript(scriptContext(state, { sessionId: "caller" }), code);
 }
 
 describe("api.mcp", () => {

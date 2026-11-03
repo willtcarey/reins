@@ -1,13 +1,13 @@
 /**
  * Which node a session belongs to, and moving it (ADR-015). The server's storage is the session's only
  * copy, so a session has no placement to track: its tools run on the node of its source (`source_id`).
- * Moving an idle session is one `UPDATE` of its source (the caller closes its live runtime, bound to the
- * source it left).
+ * Moving an idle session to a node and path is one `UPDATE` of its source (the caller makes the source,
+ * `ensureSource`, and closes its live runtime, bound to the source it left).
  */
 import { getDb } from "../app-globals.js";
 import type { OpenSessions } from "../state.js";
 import { getSession, type SessionRow } from "../session-store.js";
-import { getSource, listNodesForProject, type Source } from "../node-store.js";
+import { getSource, listNodePathsForProject } from "../node-store.js";
 import { sessionActivity } from "../models/session-activity.js";
 
 /** A move's preconditions do not hold (an active run or submission). */
@@ -25,30 +25,14 @@ export function sessionNode(row: Pick<SessionRow, "source_id">): string | null {
   return nodeOf(row.source_id);
 }
 
-/**
- * A node, and whether the session can move there: not to the node it is on (`current`), nor to one
- * with no source for its project (`no_source`).
- */
-export type SessionMoveTarget = { nodeId: string; name: string } & (
-  | { eligible: true }
-  | { eligible: false; reason: "current" | "no_source" }
-);
+/** A node a session can move to (one not removed): `current` when it is on it, with the paths its project's
+ * sessions used there, the most recently used first (where it could go; another path can be typed). */
+export interface SessionMoveTarget { nodeId: string; name: string; current: boolean; paths: string[] }
 
-/** Every node, eligible move targets first, each group in name order. */
+/** Every node not removed, in name order, with its project's paths on each. */
 export function sessionMoveTargets(row: Pick<SessionRow, "project_id" | "source_id">): SessionMoveTarget[] {
   const currentNode = sessionNode(row);
-  const targets = listNodesForProject(row.project_id).map((node): SessionMoveTarget => {
-    const target = { nodeId: node.id, name: node.name };
-    if (node.id === currentNode) return { ...target, eligible: false, reason: "current" };
-    if (!node.hasSource) return { ...target, eligible: false, reason: "no_source" };
-    return { ...target, eligible: true };
-  });
-  return [...targets.filter(target => target.eligible), ...targets.filter(target => !target.eligible)];
-}
-
-/** A source of the session's project on `nodeId`: where a move onto that node binds the session. */
-function projectSourceOn(projectId: number, nodeId: string): Source | null {
-  return getDb().query<Source, [number, string]>("SELECT * FROM sources WHERE project_id = ? AND node_id = ? ORDER BY id LIMIT 1").get(projectId, nodeId) ?? null;
+  return listNodePathsForProject(row.project_id).map(node => ({ nodeId: node.id, name: node.name, current: node.id === currentNode, paths: node.paths }));
 }
 
 /** A session moves only when idle (`sessionActivity`): no active run and no submission in progress. */
@@ -57,23 +41,19 @@ function assertIdleForMove(row: SessionRow, sessions: OpenSessions): void {
 }
 
 /**
- * The explicit move (`POST /api/sessions/:id/move`) to a node: in one transaction, checks the session is
- * idle and re-points it at the target node's source; from then on its tools run on that node. Returns the
- * node it left (null when it was already on the target: nothing changes), or undefined when there is no
- * such session; the caller closes its live runtime. Throws `SessionMoveConflict` when the session is busy
- * or the node has no source for its project.
+ * The explicit move (`POST /api/sessions/:id/move`) to source `sourceId`: in one transaction, checks the
+ * session is idle and re-points it; from then on its tools run there. Returns whether it moved (false when
+ * it was already there: nothing changes), or undefined when there is no such session; the caller closes
+ * its live runtime. Throws `SessionMoveConflict` when the session is busy.
  */
-export function requestSessionMove(sessionId: string, nodeId: string, sessions: OpenSessions): { previousNodeId: string | null } | undefined {
+export function requestSessionMove(sessionId: string, sourceId: number, sessions: OpenSessions): { moved: boolean } | undefined {
   return getDb().transaction(() => {
     const row = getSession(sessionId);
     if (!row) return undefined;
-    const target = projectSourceOn(row.project_id, nodeId);
-    if (!target) throw new SessionMoveConflict(`Node ${nodeId} has no source for this session's project`);
-    const previousNodeId = sessionNode(row);
-    if (previousNodeId === nodeId) return { previousNodeId: null };
+    if (row.source_id === sourceId) return { moved: false };
     assertIdleForMove(row, sessions);
-    getDb().query("UPDATE sessions SET source_id = ? WHERE id = ?").run(target.id, sessionId);
-    return { previousNodeId };
+    getDb().query("UPDATE sessions SET source_id = ? WHERE id = ?").run(sourceId, sessionId);
+    return { moved: true };
   })();
 }
 

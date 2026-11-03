@@ -37,6 +37,12 @@ export function nodeRefusal(error: unknown): NodeError | undefined {
 }
 
 /**
+ * A model's refusal of what its caller asked (a blank title, a task of another project, …): its message
+ * says why, to whoever asked. Models throw their own subclasses; the router answers them 400.
+ */
+export class RequestRefused extends Error {}
+
+/**
  * Throw a 400 Bad Request.
  */
 export function badRequest(message: string): never {

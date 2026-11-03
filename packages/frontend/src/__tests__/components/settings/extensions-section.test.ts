@@ -29,7 +29,7 @@ function backendExtension(name: string, overrides: Partial<ExtensionView> = {}):
     status: "loaded",
     failure: null,
     errors: [],
-    registrations: { tools: null, promptSections: 0, scriptFunctions: [], httpMethods: [], pages: [] },
+    registrations: { tools: null, promptSections: 0, settlementListeners: 0, scriptFunctions: [], httpMethods: [], pages: [] },
     services: [],
     storage: null,
     ...overrides,
@@ -80,7 +80,7 @@ describe("SettingsExtensionDetails", () => {
   test("shows what it gives agents, and what it keeps: its directory, its database's size and how many secrets", () => {
     const details = new SettingsExtensionDetails();
     details.store = loadedStore([backendExtension("notes", {
-      registrations: { tools: { title: "Notes tools" }, promptSections: 1, scriptFunctions: ["notes.list"], httpMethods: ["list"], pages: [] },
+      registrations: { tools: { title: "Notes tools" }, promptSections: 1, settlementListeners: 0, scriptFunctions: ["notes.list"], httpMethods: ["list"], pages: [] },
       storage: {
         dataDir: "/data/extensions/notes",
         databaseBytes: 4096,
@@ -114,6 +114,16 @@ describe("SettingsExtensionDetails", () => {
 
     expect(text).toContain(`Services poll running since ${since}`);
     expect(text).toContain(`sync restarting since ${since}, 2 restarts, next attempt ${nextAttempt} Last error: offline`);
+  });
+
+  test("shows how many listeners of its sessions' run ends it has, when it has any", () => {
+    const details = new SettingsExtensionDetails();
+    details.store = loadedStore([backendExtension("automation", {
+      registrations: { tools: null, promptSections: 0, settlementListeners: 1, scriptFunctions: [], httpMethods: [], pages: [] },
+    })]);
+    details.name = "automation";
+
+    expect(visibleText(details)).toContain("Sessions Run ends heard 1 listener");
   });
 
   test("shows what stopped a failed extension", () => {

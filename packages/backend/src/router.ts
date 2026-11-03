@@ -17,7 +17,7 @@
 import type { AppState, UpgradeServer } from "./state.js";
 import { Models } from "./models/models.js";
 import { logger } from "./logger.js";
-import { HttpError, isNodeUnavailable } from "./errors.js";
+import { HttpError, isNodeUnavailable, RequestRefused } from "./errors.js";
 
 // ---- Types -----------------------------------------------------------------
 
@@ -134,6 +134,9 @@ export function createRouter(): Router {
       } catch (err: any) {
         if (err instanceof HttpError) {
           return Response.json({ error: err.message }, { status: err.status });
+        }
+        if (err instanceof RequestRefused) {
+          return Response.json({ error: err.message }, { status: 400 });
         }
         if (isNodeUnavailable(err)) {
           return Response.json({ error: err.message }, { status: 503 });

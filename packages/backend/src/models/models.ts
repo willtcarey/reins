@@ -12,7 +12,7 @@ import { createDbCredentialStore } from "../pi/credential-store.js";
 import { createBroadcast, type Broadcast } from "./broadcast.js";
 import type { ExtensionHost } from "../extensions/host.js";
 import { Nodes } from "./nodes.js";
-import { ProjectModel } from "./projects.js";
+import { ProjectModel, Projects } from "./projects.js";
 import { Sessions } from "./sessions.js";
 import { resolveSource, SourceModel } from "./sources.js";
 
@@ -41,13 +41,22 @@ export class Models {
     return this.built.nodes ??= new Nodes(this.state, this.broadcast);
   }
 
+  /** Making, changing and deleting projects. */
+  get projects(): Projects {
+    return new Projects(this.nodes);
+  }
+
   get sessions(): Sessions {
     return this.built.sessions ??= new Sessions(this.state, this.broadcast);
   }
 
-  /** The project working in source `sourceId` (`resolveSource`: by default, the project's default source);
-   * throws `SourceNotFoundError` when there is no such source. */
-  project(projectId: number, sourceId?: number | null): ProjectModel {
-    return new ProjectModel(projectId, this.broadcast, new SourceModel(this.state.nodes, resolveSource(projectId, sourceId)));
+  /** Project `projectId` (`ProjectModel`); throws `SourceNotFoundError` when it has no default source. */
+  project(projectId: number): ProjectModel {
+    return new ProjectModel(projectId, this.nodes);
+  }
+
+  /** Source `sourceId` (`resolveSource`; throws `SourceNotFoundError`), on this app's nodes. */
+  source(sourceId: number): SourceModel {
+    return new SourceModel(this.state.nodes, resolveSource(sourceId));
   }
 }

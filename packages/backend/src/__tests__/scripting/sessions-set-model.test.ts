@@ -7,7 +7,6 @@ import { useTestDb } from "../helpers/test-db.js";
 import { getDb } from "../../app-globals.js";
 import { type Project } from "../../project-store.js";
 import { createProject } from "../project-fixture.js";
-import { defaultSource } from "../../node-store.js";
 import { createSession, getSession } from "../session-fixture.js";
 import { SESSION_FUNCTIONS, sessionsSetModelFunction } from "../../scripting/sessions.js";
 import type { ApiContext } from "../../scripting/define-function.js";
@@ -17,6 +16,7 @@ import { Models } from "../../models/models.js";
 import { createAppState } from "../helpers/app-state.js";
 import { PiStorageAdapter } from "../../pi-storage.js";
 import { storedLaneModel } from "../../session-runtime/lane.js";
+import { scriptContext } from "../helpers/script-context.js";
 
 /** Pi's main lane's model selection, as stored. */
 const lane = (sessionId: string) => storedLaneModel(new PiStorageAdapter(getDb(), sessionId));
@@ -36,18 +36,12 @@ describe("sessions.setModel", () => {
   function contextState() {
     const state = createAppState({ clients: new Set([{ ws: { send: data => { broadcastMessages.push(JSON.parse(data)); return 0; } } }]) });
     const models = new Models(state);
-    return { broadcast: models.broadcast, nodes: state.nodes, models, instance: new SessionInstance(state, "ctx-session") };
+    return { state, models };
   }
 
-  function makeCtx(overrides?: Partial<ApiContext>): ApiContext {
-    return {
-      projectId: project.id,
-      sessionId: "ctx-session",
-      taskId: null,
-      sourceId: defaultSource(project.id)!.id,
-      ...contextState(),
-      ...overrides,
-    };
+  function makeCtx(): ApiContext {
+    const { state } = contextState();
+    return scriptContext(state, { sessionId: "ctx-session", projectId: project.id, instance: new SessionInstance(new Models(state), "ctx-session") });
   }
 
   test("updates DB row with new model", async () => {
@@ -184,18 +178,16 @@ describe("sessions.setModel", () => {
     ).rejects.toThrow(/not found for provider/);
   });
 
-  test("throws when session not in this project", async () => {
-    // Create session in a different project
+  test("sets the model of a session of another project", async () => {
     const otherProject = createProject("Other Project", "/tmp/other-project", "main");
     createSession("sess-8", otherProject.id, { agentRuntimeType: "pi" });
 
-    const ctx = makeCtx(); // ctx.projectId = project.id (different from otherProject)
-    await expect(
-      sessionsSetModelFunction.execute(
-        { sessionId: "sess-8", provider: "anthropic", modelId: "claude-sonnet-4-5" },
-        ctx,
-      ),
-    ).rejects.toThrow(/not found/);
+    const result = await sessionsSetModelFunction.execute(
+      { sessionId: "sess-8", provider: "anthropic", modelId: "claude-sonnet-4-5" },
+      makeCtx(),
+    );
+
+    expect(result).toMatchObject({ id: "sess-8", model_id: "claude-sonnet-4-5" });
   });
 
   test("updates inactive sessions without calling the pi SDK", async () => {

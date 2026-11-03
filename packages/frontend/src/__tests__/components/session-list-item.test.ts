@@ -18,6 +18,7 @@ function session(activityState: SessionListItemData["activityState"]): SessionLi
     activityState,
     pinnedAt: null,
     archivedAt: null,
+    sourceExtension: null,
     placement: { available: true, removed: false, nodeId: "laptop", nodeName: "Laptop", path: "" },
   };
 }
@@ -78,7 +79,7 @@ describe("SessionListItem", () => {
     expect(finishedActions.map((action) => action.label)).toEqual([
       "Copy session ID",
       "Mark as read",
-      "Move to node…",
+      "Move session…",
     ]);
     const markRead = finishedActions.find((action) => action.label === "Mark as read");
     await markRead?.run();
@@ -89,7 +90,7 @@ describe("SessionListItem", () => {
     expect(idleActions.map((action) => action.label)).toEqual([
       "Copy session ID",
       "Mark as unread",
-      "Move to node…",
+      "Move session…",
     ]);
     const markUnread = idleActions.find((action) => action.label === "Mark as unread");
     await markUnread?.run();
@@ -106,7 +107,7 @@ describe("SessionListItem", () => {
 
     expect(infoCardActions(item).map((action) => action.label)).toEqual([
       "Copy session ID",
-      "Move to node…",
+      "Move session…",
       "Rename",
       "Pin",
       "Archive",
@@ -121,7 +122,7 @@ describe("SessionListItem", () => {
     item.session = { ...session(null), pinnedAt: "2026-01-02T00:00:00Z", archivedAt: "2026-01-03T00:00:00Z" };
     expect(infoCardActions(item).map((action) => action.label)).toEqual([
       "Copy session ID",
-      "Move to node…",
+      "Move session…",
       "Rename",
       "Unpin",
       "Unarchive",
@@ -134,7 +135,7 @@ describe("SessionListItem", () => {
     item.addEventListener("move-session", (event) => moveRequests.push(event.detail.sessionId));
     item.session = { ...session(null), placement: { available: true, removed: false, nodeId: "internal", nodeName: "Internal", path: "" } };
 
-    const move = infoCardActions(item).find((action) => action.label === "Move to node…");
+    const move = infoCardActions(item).find((action) => action.label === "Move session…");
     expect(move).toMatchObject({ detail: "Node: Internal", disabled: false });
     await move?.run();
     expect(moveRequests).toEqual(["session-1"]);
@@ -145,12 +146,12 @@ describe("SessionListItem", () => {
     const item = new SessionListItem();
     item.session = { ...session(null), placement: { available: false, removed: true, nodeId: "laptop", nodeName: "Laptop", path: "" } };
 
-    expect(infoCardActions(item).find((action) => action.label === "Move to node…")).toMatchObject({ detail: "Node: Laptop (removed)", disabled: false });
+    expect(infoCardActions(item).find((action) => action.label === "Move session…")).toMatchObject({ detail: "Node: Laptop (removed)", disabled: false });
   });
 
   test("disables the move only while the session runs", () => {
     const item = new SessionListItem();
-    const moveAction = () => infoCardActions(item).find((action) => action.label === "Move to node…");
+    const moveAction = () => infoCardActions(item).find((action) => action.label === "Move session…");
 
     item.session = session("running");
     expect(moveAction()).toMatchObject({ disabled: true, detail: "Unavailable while the session is running" });
@@ -167,7 +168,7 @@ describe("SessionListItem", () => {
 
     expect(infoCardActions(item).map((action) => action.label)).toEqual([
       "Copy session ID",
-      "Move to node…",
+      "Move session…",
       "Rename",
       "Pin",
       "Archive",

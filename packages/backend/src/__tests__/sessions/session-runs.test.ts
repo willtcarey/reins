@@ -184,22 +184,25 @@ describe("a child's report to its parent", () => {
     } finally { errors.mockRestore(); }
   });
 
-  test("a parent that cannot receive the report (its model is gone, or it is outside the child's project) leaves the child finished, with nothing reported", async () => {
+  test("a parent that cannot receive the report (its model is gone) leaves the child finished, with nothing reported", async () => {
     const errors = spyOn(console, "error").mockImplementation(() => {});
     try {
       getDb().query("UPDATE sessions SET model_id = 'missing' WHERE id = 'parent'").run();
       await runs.runSettled(settled("child", "run-1"));
       expect(getSession("child")?.activity_state).toBe("finished");
       expect(latestSettlement("child")).toMatchObject({ operationId: "run-1", status: "completed" });
-
-      const other = createProject("Other", `${repo.dir}/other`);
-      createSession("stranger", other.id, { agentRuntimeType: "pi", parentSessionId: "parent", ...modelOf() });
-      getDb().query("UPDATE sessions SET model_id = 'fake' WHERE id = 'parent'").run();
-      await runs.runSettled(settled("stranger", "run-1"));
-      expect(getSession("stranger")?.activity_state).toBe("finished");
       expect(inputsOf("parent")).toEqual([]);
-      expect(errors).toHaveBeenCalledTimes(2);
+      expect(errors).toHaveBeenCalledTimes(1);
     } finally { errors.mockRestore(); }
+  });
+
+  test("a child in another task or project still reports to its parent", async () => {
+    const other = createProject("Other", `${repo.dir}/other`);
+    createSession("stranger", other.id, { agentRuntimeType: "pi", parentSessionId: "parent", ...modelOf() });
+
+    await runs.runSettled(settled("stranger", "run-1"));
+
+    expect(inputsOf("parent").map(input => input.reinsId)).toEqual(["child-report:stranger:run-1"]);
   });
 });
 

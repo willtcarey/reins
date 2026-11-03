@@ -1,5 +1,5 @@
 /**
- * Git Diff Routes (project-scoped)
+ * Git Diff Routes (session-scoped: the session's checkout)
  *
  * Endpoints:
  *   GET /diff/files — lightweight file listing with +/− counts (for polling)
@@ -13,7 +13,7 @@
  */
 
 import type { RouterGroup } from "../router.js";
-import type { ProjectRouteContext } from "./index.js";
+import type { SessionRouteContext } from "./index.js";
 import type { DiffFileSummary } from "../models/diff-parser.js";
 import type { DiffMode } from "../models/workspace.js";
 
@@ -37,7 +37,7 @@ function parseDiffParams(url: URL): { contextLines: number; mode: DiffMode; bran
   return { contextLines, mode, branch };
 }
 
-export function registerDiffRoutes(router: RouterGroup<ProjectRouteContext>) {
+export function registerDiffRoutes(router: RouterGroup<SessionRouteContext>) {
   /**
    * Lightweight file listing — cheap enough to poll every few seconds.
    * Returns file paths and +/− counts but no hunk/line data.
@@ -46,20 +46,20 @@ export function registerDiffRoutes(router: RouterGroup<ProjectRouteContext>) {
     const { mode, branch } = parseDiffParams(ctx.url);
 
     const [files, currentBranch] = await Promise.all([
-      ctx.project.workspace.getChangedFiles(mode, branch),
-      ctx.project.source.git.getCurrentBranch(),
+      ctx.session.workspace.getChangedFiles(mode, branch),
+      ctx.session.source.git.getCurrentBranch(),
     ]);
     return Response.json({
       files,
       branch: branch ?? currentBranch,
-      baseBranch: ctx.project.baseBranch,
+      baseBranch: ctx.session.baseBranch,
     } satisfies DiffFileResponse);
   });
 
   /** Raw unified patch text for patch-backed diff consumers. */
   router.get("/diff/patch", async (ctx) => {
     const { contextLines, mode, branch } = parseDiffParams(ctx.url);
-    const patch = ctx.project.workspace.getDiffPatchStream(contextLines, mode, branch);
+    const patch = ctx.session.workspace.getDiffPatchStream(contextLines, mode, branch);
 
     // Bun accepts async iterables as response bodies; the cast bridges the DOM
     // Response type used by TypeScript in this package.

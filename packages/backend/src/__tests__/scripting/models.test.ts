@@ -8,22 +8,11 @@ import { createAppState } from "../helpers/app-state.js";
 import { setApiKeyCredential } from "../../auth-credentials-store.js";
 import { modelsListFunction, modelsListProvidersFunction } from "../../scripting/models.js";
 import type { ApiContext } from "../../scripting/define-function.js";
-import { Models } from "../../models/models.js";
+import { scriptContext } from "../helpers/script-context.js";
 
-function noop() {}
 
-function makeCtx(overrides?: Partial<ApiContext>): ApiContext {
-  const state = createAppState();
-  return {
-    projectId: 1,
-    sessionId: "test-session",
-    taskId: null,
-    broadcast: noop,
-    sourceId: 0,
-    nodes: state.nodes,
-    models: new Models(state),
-    ...overrides,
-  };
+function makeCtx(): ApiContext {
+  return scriptContext(createAppState());
 }
 
 describe("models.list", () => {

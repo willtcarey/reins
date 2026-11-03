@@ -56,7 +56,7 @@ describe("the file viewer", () => {
     element.willUpdate(new Map<string, unknown>([["view", null], ["files", null]]));
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    expect(requests).toEqual(["/api/projects/3/files/content?path=docs%2Fplan.md"]);
+    expect(requests).toEqual(["/api/sessions/placed/files/content?path=docs%2Fplan.md"]);
     expect(collectTemplateProperties(element.render(), "file")).toEqual([{ loading: false, text: "line\n".repeat(20), isBinary: false, error: null }]);
     expect(collectTemplateProperties(element.render(), "highlightRequest")).toEqual([{ startLine: 4, endLine: 6 }]);
     expect(collectTemplateProperties(element.render(), "initialMode")).toEqual(["code"]);
@@ -110,7 +110,7 @@ describe("the file viewer", () => {
     const element = viewerOf({ view: "file", source, path: "docs/report.pdf" }, files);
 
     const output = templateToString(element.render());
-    expect(output).toContain("/api/projects/7/files/content?path=docs%2Freport.pdf&download=1");
+    expect(output).toContain("/api/sessions/placed/files/content?path=docs%2Freport.pdf&download=1");
     expect(output).toContain("Download docs/report.pdf");
   });
 });

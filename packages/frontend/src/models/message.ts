@@ -46,6 +46,12 @@ function userMessageMarkdown(message: AgentUserMessage): string | null {
 export class UserMessage extends MessageBase<AgentUserMessage> {
   readonly role = "user" as const;
 
+  /** The backend extension it comes from (`reins.sessions`), or null for a message typed in the app. */
+  get sourceExtension(): string | null {
+    const value = this.raw.metadata?.sourceExtension;
+    return typeof value === "string" && value.length > 0 ? value : null;
+  }
+
   toMarkdown(): string | null {
     return userMessageMarkdown(this.raw);
   }

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, jest, test } from "bun:test";
 import { FileBrowserStore } from "../../../models/stores/file-browser-store.js";
+import { fakeXhr } from "../../helpers/fake-xhr.js";
 import { mockFetch, restoreFetch } from "../../helpers/mock-fetch.js";
 import { testSdk } from "../../helpers/reins-sdk.js";
 
@@ -45,9 +46,9 @@ describe("FileBrowserStore opening", () => {
     expect(store.view).toEqual({ view: "file", source, path: "src/components/app.ts", startLine: 3, endLine: 5, mode: "preview" });
     expect([...store.expandedDirs]).toEqual([".", "src", "src/components"]);
     expect(requests.toSorted()).toEqual([
-      "/api/projects/1/files/tree?path=.",
-      "/api/projects/1/files/tree?path=src",
-      "/api/projects/1/files/tree?path=src%2Fcomponents",
+      "/api/sessions/placed/files/tree?path=.",
+      "/api/sessions/placed/files/tree?path=src",
+      "/api/sessions/placed/files/tree?path=src%2Fcomponents",
     ]);
   });
 
@@ -85,7 +86,7 @@ describe("FileBrowserStore opening", () => {
     const oldTree = deferred();
     let oldTreeAsked = false;
     mockFetch((url) => {
-      if (url === "/api/projects/1/files/tree?path=." && !oldTreeAsked) {
+      if (url === "/api/sessions/placed/files/tree?path=." && !oldTreeAsked) {
         oldTreeAsked = true;
         return oldTree.promise;
       }
@@ -116,7 +117,7 @@ describe("FileBrowserStore directory tree", () => {
 
     await store.fetchDirectory(".");
 
-    expect(requests.filter((url) => url.includes("/files/tree"))).toEqual(["/api/projects/1/files/tree?path=."]);
+    expect(requests.filter((url) => url.includes("/files/tree"))).toEqual(["/api/sessions/placed/files/tree?path=."]);
     expect(store.directoryEntries.get(".")).toEqual([{ name: "src", type: "directory" }]);
   });
 
@@ -156,7 +157,7 @@ describe("FileBrowserStore directory tree", () => {
     jest.useRealTimers();
     await settle();
 
-    expect(requests).toEqual(["/api/projects/1/files/tree?path=."]);
+    expect(requests).toEqual(["/api/sessions/placed/files/tree?path=."]);
   });
 });
 
@@ -224,5 +225,66 @@ describe("FileBrowserStore search", () => {
     expect(store.searchOpen).toBe(false);
     expect(store.browserOpen).toBe(true);
     expect(store.path).toBe("README.md");
+  });
+});
+
+function someFiles(...names: string[]) {
+  return names.map(name => new File([name], name));
+}
+
+describe("FileBrowserStore upload", () => {
+  test("uploads into the open file's folder through a session on its source, shows its progress, then lists its directories again", async () => {
+    const requests = serveFiles();
+    const xhr = fakeXhr(({ files: names }) => ({ status: 200, body: { uploaded: names } }));
+    try {
+      const { store } = browser();
+      store.open(source, { path: "docs/plan.md" });
+      await settle();
+      requests.length = 0;
+      const progress: Array<number | null> = [];
+      store.subscribe(() => progress.push(store.uploadProgress));
+
+      expect(store.uploadFolder).toBe("docs");
+      const result = await store.upload(someFiles("a.txt", "b.png"));
+
+      expect(result).toEqual({ uploaded: ["a.txt", "b.png"] });
+      expect(xhr.uploads).toEqual([{ method: "POST", url: "/api/sessions/placed/upload?path=docs", files: ["a.txt", "b.png"] }]);
+      expect(progress).toContain(50);
+      expect(store.uploadProgress).toBeNull();
+      await settle();
+      expect(requests).toContain("/api/sessions/placed/files/tree?path=.");
+    } finally {
+      xhr.restore();
+    }
+  });
+
+  test("with no file open, uploads into the checkout's root", async () => {
+    serveFiles();
+    const xhr = fakeXhr(({ files: names }) => ({ status: 200, body: { uploaded: names } }));
+    try {
+      const { store } = browser();
+      store.open(source);
+
+      expect(store.uploadFolder).toBe(".");
+      await store.upload(someFiles("a.txt"));
+
+      expect(xhr.uploads.map(upload => upload.url)).toEqual(["/api/sessions/placed/upload"]);
+    } finally {
+      xhr.restore();
+    }
+  });
+
+  test("a refused upload gives the server's reason", async () => {
+    serveFiles();
+    const xhr = fakeXhr(() => ({ status: 400, body: { error: "Path escapes the checkout" } }));
+    try {
+      const { store } = browser();
+      store.open(source);
+
+      expect(await store.upload(someFiles("a.txt"))).toEqual({ error: "Path escapes the checkout" });
+      expect(store.uploadProgress).toBeNull();
+    } finally {
+      xhr.restore();
+    }
   });
 });

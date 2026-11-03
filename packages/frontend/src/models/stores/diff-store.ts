@@ -40,7 +40,6 @@ export type DiffRefreshTrigger =
   | "poll-summary-changed"
   | "websocket"
   | "route"
-  | "upload"
   | "mode-change"
   | "branch-change"
   | "rebase";
@@ -87,6 +86,9 @@ export class DiffStore {
 
   // ---- Private state --------------------------------------------------------
 
+  /** The session whose checkout (its source) is diffed. */
+  private _sessionId: string | null = null;
+  /** Its project, which keys what the review remembers (reviewed files); null without one. */
   private _projectId: number | null = null;
 
   /**
@@ -109,11 +111,15 @@ export class DiffStore {
 
   // ---- Accessors ------------------------------------------------------------
 
+  get sessionId(): string | null {
+    return this._sessionId;
+  }
+
   get projectId(): number | null {
     return this._projectId;
   }
 
-  /** The branch being viewed: selected open-task branch, or the current project branch. */
+  /** The branch being viewed: selected open-task branch, or the checkout's current branch. */
   get branch(): string | null {
     return this._branch ?? this.fileData.data?.branch ?? null;
   }
@@ -130,37 +136,30 @@ export class DiffStore {
     for (const fn of this._listeners) fn();
   }
 
-  // ---- Project management ---------------------------------------------------
-
-  /** Set the active project. Resets all state and restarts polling. */
-  setProject(id: number | null) {
-    if (id === this._projectId) return;
-    this.setScope(id, null);
-  }
-
   // ---- Branch management -----------------------------------------------------
 
   /**
    * Set the task branch to diff. When an open-task session is selected, pass
    * its branch_name. Pass null for scratch sessions and completed-task history
-   * to show the current project HEAD rather than reconstructing old filesystem state.
+   * to show the checkout's HEAD rather than reconstructing old filesystem state.
    */
   setBranch(branch: string | null) {
     if (branch === this._branch) return;
-    this.setScope(this._projectId, branch);
+    this.setScope(this._sessionId, branch, this._projectId);
   }
 
   /**
-   * Apply route-derived project and branch state atomically. Project switches
+   * Apply route-derived session and branch state atomically. Session switches
    * otherwise fetch once for HEAD and again after WorkspaceStore resolves the
    * selected task branch.
    */
-  setScope(projectId: number | null, branch: string | null) {
-    const projectChanged = projectId !== this._projectId;
+  setScope(sessionId: string | null, branch: string | null, projectId: number | null = null) {
+    const sessionChanged = sessionId !== this._sessionId;
+    this._projectId = projectId;
     const branchChanged = branch !== this._branch;
 
-    if (projectChanged) {
-      this._projectId = projectId;
+    if (sessionChanged) {
+      this._sessionId = sessionId;
       this.fileData = this.fileData.asLoaded({ files: [], branch: null, baseBranch: null });
       this.lastFilesRefreshAt = null;
       this.lastPayloadRefreshAt = null;
@@ -172,7 +171,7 @@ export class DiffStore {
       this.activeFile = null;
     }
 
-    if (projectChanged || branchChanged) {
+    if (sessionChanged || branchChanged) {
       this._branch = branch;
       this.patchData = Loadable.idle();
       this._patchDiffVersion = 0;
@@ -183,7 +182,7 @@ export class DiffStore {
       this.notify();
     }
 
-    if (projectChanged) {
+    if (sessionChanged) {
       this._restartPolling();
     } else {
       void this.refresh({
@@ -192,7 +191,7 @@ export class DiffStore {
       });
     }
 
-    if (projectChanged || branchChanged) this._restartSpreadPolling();
+    if (sessionChanged || branchChanged) this._restartSpreadPolling();
   }
 
   setActiveFile(path: string | null) {
@@ -223,9 +222,9 @@ export class DiffStore {
   async refresh(options: DiffRefreshOptions = {}) {
     const requestGeneration = ++this._filesRequestGeneration;
     const trigger = options.trigger ?? "manual";
-    const projectId = this._projectId;
+    const sessionId = this._sessionId;
     const mode = this.diffMode;
-    if (projectId == null) {
+    if (sessionId == null) {
       this.fileData = this.fileData.asLoaded({ files: [], branch: null, baseBranch: null });
       this.notify();
       return;
@@ -235,7 +234,7 @@ export class DiffStore {
     this.notify();
 
     try {
-      const json = await api.diff.files(projectId, {
+      const json = await api.diff.files(sessionId, {
         mode,
         ...(this._branch ? { branch: this._branch } : {}),
       });
@@ -279,7 +278,7 @@ export class DiffStore {
   /** Fetch the raw patch diff for patch-backed renderers. */
   async fetchPatchDiff(trigger: DiffRefreshTrigger = "manual") {
     const requestGeneration = ++this._patchRequestGeneration;
-    if (this._projectId == null) {
+    if (this._sessionId == null) {
       this.patchData = Loadable.idle();
       this.notify();
       return;
@@ -289,7 +288,7 @@ export class DiffStore {
     this.notify();
 
     try {
-      const patch = await api.diff.patch(this._projectId, {
+      const patch = await api.diff.patch(this._sessionId, {
         context: this.contextLines,
         mode: this.diffMode,
         ...(this._branch ? { branch: this._branch } : {}),
@@ -300,7 +299,7 @@ export class DiffStore {
       this._patchDiffVersion = version;
       this.patchData = this.patchData.asLoaded({
         patch,
-        cacheKeyPrefix: `project-${this._projectId}-${this.diffMode}-${this.contextLines}-${this._branch ?? "HEAD"}-v${version}`,
+        cacheKeyPrefix: `session-${this._sessionId}-${this.diffMode}-${this.contextLines}-${this._branch ?? "HEAD"}-v${version}`,
         version,
         branch: this.branch,
         baseBranch: this.fileData.data?.baseBranch ?? null,
@@ -331,12 +330,12 @@ export class DiffStore {
   /** Fetch spread, optionally with a remote git fetch first. */
   async fetchSpread(remote = false) {
     const requestGeneration = ++this._spreadRequestGeneration;
-    const projectId = this._projectId;
+    const sessionId = this._sessionId;
     const branch = this.branch;
-    if (projectId == null || !branch) return;
+    if (sessionId == null || !branch) return;
 
     try {
-      const spread = await api.git.spread(projectId, branch, remote);
+      const spread = await api.git.spread(sessionId, branch, remote);
       if (requestGeneration !== this._spreadRequestGeneration) return;
       if (requestGeneration !== this._spreadRequestGeneration) return;
       this.spread = spread;
@@ -351,14 +350,14 @@ export class DiffStore {
   /** Push the viewed branch to origin. */
   async push() {
     const branch = this.branch;
-    if (this._projectId == null || !branch || this.syncAction !== "idle") return;
+    if (this._sessionId == null || !branch || this.syncAction !== "idle") return;
 
     this.syncAction = "pushing";
     this.syncResult = null;
     this.notify();
 
     try {
-      await api.git.push(this._projectId, branch);
+      await api.git.push(this._sessionId, branch);
       this.syncResult = { ok: true };
     } catch (err: any) {
       this.syncResult = { error: err.message ?? "Network error" };
@@ -374,14 +373,14 @@ export class DiffStore {
   /** Rebase the viewed branch onto the base branch. */
   async rebase() {
     const branch = this.branch;
-    if (this._projectId == null || !branch || this.syncAction !== "idle") return;
+    if (this._sessionId == null || !branch || this.syncAction !== "idle") return;
 
     this.syncAction = "rebasing";
     this.syncResult = null;
     this.notify();
 
     try {
-      await api.git.rebase(this._projectId, branch);
+      await api.git.rebase(this._sessionId, branch);
       this.syncResult = { ok: true };
     } catch (err: any) {
       this.syncResult = { error: err.message ?? "Network error" };
@@ -406,10 +405,10 @@ export class DiffStore {
 
   private _restartSpreadPolling() {
     this._stopSpreadPolling();
-    if (this._projectId == null) return;
+    if (this._sessionId == null) return;
 
     // Show local spread immediately without putting a remote fetch and task
-    // reconciliation on the project-switch request burst. The first interval
+    // reconciliation on the session-switch request burst. The first interval
     // refreshes remote refs, then subsequent remote refreshes stay sparse.
     this._spreadTickCount = 0;
     void this.fetchSpread(false);
@@ -433,7 +432,7 @@ export class DiffStore {
 
   private _restartPolling() {
     this._stopPolling();
-    if (this._projectId != null) {
+    if (this._sessionId != null) {
       void this.refresh({ onlyFetchDiffIfNeeded: true, trigger: "poll" });
       this._pollTimer = setInterval(
         () => void this.refresh({ onlyFetchDiffIfNeeded: true, trigger: "poll" }),

@@ -1,7 +1,8 @@
 import type { SessionAttachmentInfo as AttachmentInfo } from "@backend/session-attachments-store.js";
 import { LitElement, html, nothing } from "lit";
 import { customElement, property, query, state } from "lit/decorators.js";
-import type { ProjectStore } from "../models/stores/project-store.js";
+import type { Source } from "@reins/sdk";
+import type { LocationSkills } from "../models/stores/location-skills.js";
 import {
   normalizeImageSizeHint,
   type ClientPromptContent,
@@ -155,7 +156,9 @@ export class ChatComposer extends LitElement {
     return this;
   }
 
-  @property({ attribute: false }) projectStore: ProjectStore | null = null;
+  /** Where its message's session works, whose skills it suggests (`/name`). */
+  @property({ attribute: false }) skills: LocationSkills | null = null;
+  @property({ attribute: false }) location: Source | null = null;
   @property({ attribute: false }) uploadAttachments: ChatAttachmentUploader | null = null;
   /** The registered commands: a message that starts with one runs it instead of being sent. */
   @property({ attribute: false }) commands: CommandRegistry | null = null;
@@ -197,6 +200,8 @@ export class ChatComposer extends LitElement {
 
   override updated(changed: Map<string, unknown>) {
     if (changed.has("inputText")) this.syncTextareaHeight();
+    // Asked for now, so they are there by the time `/` is typed.
+    if (changed.has("skills") || changed.has("location")) this.skills?.get(this.location);
   }
 
   focusInput() {
@@ -511,7 +516,8 @@ export class ChatComposer extends LitElement {
         @drop=${this.handleDrop}
       >
         <slash-suggest
-          .store=${this.projectStore}
+          .skills=${this.skills}
+          .location=${this.location}
           .commands=${this.commands}
           @slash-insert=${this.handleSlashInsert}
         ></slash-suggest>

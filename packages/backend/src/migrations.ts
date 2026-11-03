@@ -2,10 +2,11 @@ import type { Database } from "bun:sqlite";
 import { logger } from "./logger.js";
 import { canonicalizeMessageContentMigration } from "./migrations/canonicalize-message-content.js";
 import { moveMcpServersToExtension } from "./migrations/move-mcp-servers.js";
+import { sourcesWithoutProjects } from "./migrations/sources-without-projects.js";
 
-type Migration = [name: string, migration: string | ((db: Database) => void)];
+export type Migration = [name: string, migration: string | ((db: Database) => void)];
 
-const MIGRATIONS: Migration[] = [
+export const MIGRATIONS: Migration[] = [
   [
     "001_create_projects",
     `CREATE TABLE IF NOT EXISTS projects (
@@ -800,9 +801,27 @@ const MIGRATIONS: Migration[] = [
        PRIMARY KEY (extension, key)
      );`,
   ],
+  [
+    // A source is a location any session uses, belonging to no project; a project has a home source and a
+    // session optionally a project (ADR-034).
+    "062_sources_without_projects",
+    sourcesWithoutProjects,
+  ],
+  [
+    // The backend extension that started a session (`reins.sessions.start`): where it came from, and whose
+    // settlement listeners hear of its runs.
+    "063_session_source_extension",
+    "ALTER TABLE sessions ADD COLUMN source_extension TEXT",
+  ],
+  [
+    // Where a project's new sessions work unless they inherit better: a default, not a limit.
+    "064_project_default_source",
+    "ALTER TABLE projects RENAME COLUMN home_source_id TO default_source_id",
+  ],
 ];
 
-export function runMigrations(db: Database): void {
+/** Applies those of `migrations` (all of them by default; a test may stop earlier) not applied yet, in order. */
+export function runMigrations(db: Database, migrations: readonly Migration[] = MIGRATIONS): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS migrations (
       name TEXT PRIMARY KEY,
@@ -815,7 +834,7 @@ export function runMigrations(db: Database): void {
       .map((row) => row.name),
   );
 
-  for (const [name, migration] of MIGRATIONS) {
+  for (const [name, migration] of migrations) {
     if (applied.has(name)) continue;
     if (typeof migration === "string") {
       db.exec(migration);

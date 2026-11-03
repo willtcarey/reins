@@ -2,7 +2,24 @@ import { afterEach, describe, expect, test } from "bun:test";
 import type { PropertyValues } from "lit";
 import { NewSessionPage, type NewSessionView } from "../../components/new-session-page.js";
 import { SendHandoff } from "../../models/send-handoff.js";
-import { templateToString } from "../helpers/lit-template.js";
+import { collectTemplateProperties, collectTemplateValues, templateToString } from "../helpers/lit-template.js";
+
+/** The location choice's menu: its items, and choosing one by ID. */
+function locationMenu(page: NewSessionPage): { items: unknown; choose: (id: number) => void } {
+  for (const content of collectTemplateProperties(page.render(), "content")) {
+    if (typeof content !== "function") continue;
+    const menu: unknown = content();
+    if (!templateToString(menu).includes('data-role="location-menu"')) continue;
+    const choose = collectTemplateProperties(menu, "choose")[0];
+    if (typeof choose !== "function") break;
+    return { items: collectTemplateProperties(menu, "items")[0], choose: id => { choose(id); } };
+  }
+  throw new Error("No location menu");
+}
+
+function fullOutput(value: unknown): string {
+  return `${templateToString(value)}\n${templateToString(collectTemplateValues(value))}`;
+}
 import { mockFetch, restoreFetch } from "../helpers/mock-fetch.js";
 
 const originals = {
@@ -67,6 +84,7 @@ function pageFor(view: NewSessionView, fail: { create?: string; prompt?: boolean
       },
     },
     sessionCache: { set() {}, fetchDetail: async () => {} },
+    locationSkills: { get: () => [], subscribe: () => () => {} },
   };
   const page = new NewSessionPage();
   Reflect.set(page, "app", app);
@@ -178,6 +196,47 @@ describe("NewSessionPage", () => {
     await expect(submit({ content, source })).rejects.toThrow("Task 3 is not a task of this project");
     expect(calls).toEqual([]);
     expect(entries).toEqual(["#/new?project=7&task=3"]);
+  });
+
+  test("offers where the session works: the default, the project's other paths, or another directory, and creates it there", async () => {
+    installBrowser("#/new?project=7");
+    const requests: string[] = [];
+    mockFetch((url) => {
+      requests.push(url);
+      return Response.json({
+        default: { nodeId: "internal", path: "/home/me/app" },
+        nodes: [
+          { nodeId: "internal", name: "Internal", connected: true, paths: ["/home/me/app"] },
+          { nodeId: "laptop", name: "Laptop", connected: false, paths: ["/work/app"] },
+        ],
+      });
+    });
+    const { page, calls, submit } = pageFor({ view: "new-session", projectId: 7, taskId: null });
+    await Bun.sleep(0);
+
+    expect(requests).toEqual(["/api/projects/7/locations"]);
+    let output = fullOutput(page.render());
+    expect(output).toContain('data-role="location-choice"');
+    expect(output).toContain("label=app · Internal");
+    expect(collectTemplateProperties(page.render(), "location")).toEqual([{ nodeId: "internal", path: "/home/me/app" }]);
+
+    expect(locationMenu(page).items).toEqual([
+      { id: 0, label: "/home/me/app", detail: "Internal" },
+      { id: 1, label: "/work/app", detail: "Laptop (offline)" },
+      { id: -1, label: "Another directory…", detail: "Any directory on a node" },
+    ]);
+    locationMenu(page).choose(1);
+    output = fullOutput(page.render());
+    expect(output).toContain("label=app · Laptop");
+    await submit({ content, source });
+    expect(calls[0]).toEqual({ create: 7, source: { nodeId: "laptop", path: "/work/app" } });
+
+    const opened: Array<{ initial?: unknown; choose: (nodeId: string, path: string) => Promise<unknown> }> = [];
+    Object.defineProperty(page, "locationDialog", { value: { open: (options: (typeof opened)[number]) => { opened.push(options); } } });
+    locationMenu(page).choose(-1);
+    expect(opened[0]?.initial).toEqual({ nodeId: "laptop", path: "/work/app" });
+    await opened[0]!.choose("laptop", "/srv/scratch");
+    expect(fullOutput(page.render())).toContain("label=scratch · Laptop");
   });
 
   test("shows its choices under the composer, not in it", () => {

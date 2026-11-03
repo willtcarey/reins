@@ -20,7 +20,7 @@ Messages you send are accepted in the order you send them, and so are model chan
 
 ## Where a session lives
 
-Each session belongs to a node. The session action menu shows it as "Node: <name>" and offers "Move to node…" (see [projects](projects.md)). Every session's durable state and its agent live on the server; its tools run on the selected node. Reading history never starts a runtime or moves a session.
+Each session belongs to a node. The session action menu shows it as "Node: <name>" and offers "Move session…", to another node and directory (see [projects](projects.md)). Every session's durable state and its agent live on the server; its tools run on the selected node. Reading history never starts a runtime or moves a session.
 
 ## Storage
 

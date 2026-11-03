@@ -1,4 +1,4 @@
-import { createSource, defaultSource } from "../../node-store.js";
+import { upsertSource, defaultSource } from "../../node-store.js";
 import { setSetting, deleteSetting } from "../../settings-store.js";
 import { Sessions } from "../../models/sessions.js";
 import { describe, test, expect } from "bun:test";
@@ -7,6 +7,7 @@ import { storedInput } from "../../pi-session-store.js";
 import { createProject } from "../project-fixture.js";
 import { getSession } from "../session-fixture.js";
 import { createTask, getTask } from "../../task-store.js";
+import { getProject } from "../../project-store.js";
 import { useTestDb } from "../helpers/test-db.js";
 import { createAppState, type TestAppState } from "../helpers/app-state.js";
 import { useTestRepo } from "../helpers/test-repo.js";
@@ -30,7 +31,8 @@ describe("createSession", () => {
     const state = createAppState();
     const project = createProject("Reins", repo.dir);
 
-    const managed = createNewSession(state, project.id, {
+    const managed = createNewSession(state, {
+      projectId: project.id,
       model: { provider: "anthropic", modelId: "claude-sonnet-4-5" },
       thinkingLevel: "high",
     });
@@ -38,31 +40,49 @@ describe("createSession", () => {
     expect(getSession(managed.id)).toMatchObject({ agent_runtime_type: "pi", model_provider: "anthropic", model_id: "claude-sonnet-4-5", thinking_level: "high" });
     expect(state.process.sessions.live.size).toBe(0);
   });
-  test("a new session is placed on its project's default source (its first) unless the caller names one; input for a node that is not connected is admitted", async () => {
+  test("a new session works where it is told, else in its parent's source, its task's latest session's, or its project's home; input for a node that is not connected is admitted", async () => {
     const project = createProject("a", "/tmp/a");
-    // The source the project was created with.
-    const first = defaultSource(project.id)!;
-    expect(first).toMatchObject({ project_id: project.id, path: "/tmp/a" });
+    const home = defaultSource(project.id)!;
     getDb().exec("INSERT INTO nodes (id, name) VALUES ('remote', 'Remote')");
-    const remote = createSource(project.id, "remote", "/remote/a");
-    expect(defaultSource(project.id)).toEqual(first);
-    const other = createProject("b", "/tmp/b");
+    const remote = upsertSource("remote", "/remote/a");
+    const elsewhere = upsertSource("remote", "/remote/elsewhere");
+    const task = createTask(project.id, "T", null, "task/t");
     const state = createAppState();
-    expect(() => createNewSession(state, project.id, { sourceId: defaultSource(other.id)!.id })).toThrow("Source not found");
+    const sourceOf = (created: { id: string }) => getSession(created.id)?.source_id;
 
-    expect(getSession(createNewSession(state, project.id).id)?.source_id).toBe(first.id);
-    const far = createNewSession(state, project.id, { sourceId: remote.id, model: { provider: "anthropic", modelId: "claude-sonnet-4-5" } });
-    expect(getSession(far.id)?.source_id).toBe(remote.id);
+    expect(sourceOf(createNewSession(state, { projectId: project.id }))).toBe(home.id);
+    const far = createNewSession(state, { projectId: project.id, sourceId: remote.id, model: { provider: "anthropic", modelId: "claude-sonnet-4-5" } });
+    expect(sourceOf(far)).toBe(remote.id);
+    expect(sourceOf(createNewSession(state, { projectId: project.id, parentSessionId: far.id }))).toBe(remote.id);
+    expect(sourceOf(createNewSession(state, { projectId: project.id, taskId: task.id }))).toBe(home.id);
+    createNewSession(state, { projectId: project.id, taskId: task.id, sourceId: elsewhere.id });
+    expect(sourceOf(createNewSession(state, { projectId: project.id, taskId: task.id }))).toBe(elsewhere.id);
+    expect(() => createNewSession(state, { projectId: project.id, sourceId: 9999 })).toThrow("Source not found: 9999");
     // Admitted while the remote node is offline (its run waits for it), not rejected.
     await new Sessions(state, () => {}).submit(far.id, { op: "steer", content: [{ type: "text", text: "hi" }], clientId: "c" });
     expect(storedInput(far.id, "c")).not.toBeNull();
+  });
+
+  test("a session of no project works in the source it names, and has no task", () => {
+    const project = createProject("a", "/tmp/a");
+    const task = createTask(project.id, "T", null, "task/t");
+    const scratch = upsertSource("internal", "/tmp/scratch");
+    const state = createAppState();
+    const sessions = () => getDb().query("SELECT id FROM sessions").all();
+
+    const loose = createNewSession(state, { sourceId: scratch.id, background: true });
+
+    expect(getSession(loose.id)).toMatchObject({ project_id: null, task_id: null, source_id: scratch.id, background: 1 });
+    expect(() => createNewSession(state, {})).toThrow("A session of no project needs a source");
+    expect(() => createNewSession(state, { sourceId: scratch.id, taskId: task.id })).toThrow("A session of no project has no task");
+    expect(sessions()).toEqual([{ id: loose.id }]);
   });
 
   test("requires an explicit configured model for a new session", async () => {
     deleteSetting("default_model");
     const state = createAppState();
     const project = createProject("Test Project", repo.dir, "main");
-    const created = createNewSession(state, project.id);
+    const created = createNewSession(state, { projectId: project.id });
     await expect(openRuntime(state, created.id)).rejects.toThrow("requires an explicit model");
   });
 
@@ -75,14 +95,14 @@ describe("createSession", () => {
     });
     const state = createAppState();
     const project = createProject("Test Project", repo.dir, "main");
-    expect(() => createNewSession(state, project.id)).toThrow("Configured default_model uses unavailable runtime 'claude_agent_sdk'");
+    expect(() => createNewSession(state, { projectId: project.id })).toThrow("Configured default_model uses unavailable runtime 'claude_agent_sdk'");
   });
 
   test("applies configured model and thinking to a new session", async () => {
     setSetting("default_model", { provider: "anthropic", modelId: "claude-sonnet-4-5", runtimeType: "pi", thinkingLevel: "high" });
     const state = createAppState();
     const project = createProject("Test Project", repo.dir, "main");
-    const managed = createNewSession(state, project.id);
+    const managed = createNewSession(state, { projectId: project.id });
     const opened = await openRuntime(state, managed.id);
     expect(opened.getSessionMetadata()).toEqual({ model: { provider: "anthropic", modelId: "claude-sonnet-4-5" }, thinkingLevel: "high" });
     expect(getSession(managed.id)).toMatchObject({ agent_runtime_type: "pi", model_provider: "anthropic", model_id: "claude-sonnet-4-5", thinking_level: "high" });
@@ -92,26 +112,29 @@ describe("createSession", () => {
     setSetting("default_model", { provider: "anthropic", modelId: "does-not-exist", runtimeType: "pi", thinkingLevel: "high" });
     const state = createAppState();
     const project = createProject("Test Project", repo.dir, "main");
-    const created = createNewSession(state, project.id);
+    const created = createNewSession(state, { projectId: project.id });
     // The runtime does not open: Pi cannot create its lane with a model the server's catalog does not have.
     await expect(openRuntime(state, created.id)).rejects.toThrow("Model not found: anthropic/does-not-exist");
   });
 
-  test("a background session is stored as one, is not announced to browsers and leaves its task's place in the task list alone", () => {
+  test("a background session is stored as one, is not announced to browsers and leaves its task's and project's places in their lists alone", () => {
     const sent: Array<{ type: string; sessionId: string }> = [];
     const state = createAppState({ clients: new Set([{ ws: { send(payload: string) { sent.push(JSON.parse(payload)); return payload.length; } } }]) });
     const project = createProject("Reins", repo.dir);
     const task = createTask(project.id, "Task", null, "task/t");
     getDb().query("UPDATE tasks SET updated_at = '2025-01-01T00:00:00.000Z' WHERE id = ?").run(task.id);
+    getDb().query("UPDATE projects SET last_opened_at = '2025-01-01T00:00:00.000Z' WHERE id = ?").run(project.id);
     const model = { provider: "anthropic", modelId: "claude-sonnet-4-5" };
 
-    const hidden = createNewSession(state, project.id, { taskId: task.id, model, thinkingLevel: "high", background: true });
+    const hidden = createNewSession(state, { projectId: project.id, taskId: task.id, model, thinkingLevel: "high", background: true });
     expect(getSession(hidden.id)).toMatchObject({ task_id: task.id, background: 1 });
     expect(getTask(task.id)!.updated_at).toBe("2025-01-01T00:00:00.000Z");
+    expect(getProject(project.id)!.last_opened_at).toBe("2025-01-01T00:00:00.000Z");
 
-    const visible = createNewSession(state, project.id, { taskId: task.id, model, thinkingLevel: "high" });
+    const visible = createNewSession(state, { projectId: project.id, taskId: task.id, model, thinkingLevel: "high" });
     expect(getSession(visible.id)).toMatchObject({ background: 0 });
     expect(getTask(task.id)!.updated_at).not.toBe("2025-01-01T00:00:00.000Z");
+    expect(getProject(project.id)!.last_opened_at).not.toBe("2025-01-01T00:00:00.000Z");
     expect(sent.map(message => [message.type, message.sessionId])).toEqual([["session_created", visible.id]]);
   });
 
@@ -121,12 +144,12 @@ describe("createSession", () => {
     const model = { provider: "anthropic", modelId: "claude-sonnet-4-5" };
     const unregister = registerSessionKind("test-sorter", () => ({ systemPrompt: "Sort these.", tools: [], environment: false }));
     try {
-      const agent = createNewSession(state, project.id, { model, thinkingLevel: "high" });
-      const sorter = createNewSession(state, project.id, { model, thinkingLevel: "high", kind: "test-sorter", background: true });
+      const agent = createNewSession(state, { projectId: project.id, model, thinkingLevel: "high" });
+      const sorter = createNewSession(state, { projectId: project.id, model, thinkingLevel: "high", kind: "test-sorter", background: true });
       expect(getSession(agent.id)).toMatchObject({ kind: "agent" });
       expect(getSession(sorter.id)).toMatchObject({ kind: "test-sorter", background: 1 });
 
-      expect(() => createNewSession(state, project.id, { model, thinkingLevel: "high", kind: "nonexistent" })).toThrow("Unknown session kind: nonexistent");
+      expect(() => createNewSession(state, { projectId: project.id, model, thinkingLevel: "high", kind: "nonexistent" })).toThrow("Unknown session kind: nonexistent");
       expect(getDb().query("SELECT id FROM sessions ORDER BY created_at").all()).toEqual([{ id: agent.id }, { id: sorter.id }]);
     } finally { unregister(); }
   });

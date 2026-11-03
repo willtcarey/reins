@@ -11,14 +11,14 @@
  * or any child store changes (notifications bubble up).
  */
 
-import type { Project as ProjectInfo } from "@backend/project-store.js";
+import type { ProjectView as ProjectInfo } from "@backend/routes/projects.js";
 import type { NodeView } from "@backend/models/node.js";
-import type { SourceView } from "@backend/models/sources.js";
 import type { SessionCreateRequest } from "@backend/routes/project-sessions.js";
 import type { InboundEventSource } from "../ws-client.js";
 import { ReinsHttpError } from "@reins/client";
 import { api } from "../api.js";
-import { ProjectStore } from "./project-store.js";
+import { compareSessionListItems, isSessionListItem, ProjectStore } from "./project-store.js";
+import type { SessionListView } from "@backend/models/sessions.js";
 import { SessionCache, type ActivityState } from "./session-cache.js";
 
 type ProjectsStoreListener = () => void;
@@ -27,6 +27,10 @@ export class ProjectsStore {
   // ---- Public reactive state ------------------------------------------------
 
   projects: ProjectInfo[] = [];
+
+  /** The sessions of no project the browser shows, by activity (`GET /api/sessions`): the sidebar's
+   * "Other sessions". The browser creates none; Reins features may (extensions). */
+  unownedSessionIds: string[] = [];
 
   // ---- Private state --------------------------------------------------------
 
@@ -47,7 +51,7 @@ export class ProjectsStore {
         session_updated: (message) => {
           void Promise.all([
             this._sessionCache.fetchDetail(message.sessionId),
-            this.refresh(message.projectId),
+            message.projectId === null ? this.fetchUnowned() : this.refresh(message.projectId),
           ]);
         },
       }));
@@ -71,6 +75,26 @@ export class ProjectsStore {
   async fetchProjects(): Promise<void> {
     try {
       this.projects = await api.projects.list();
+      this.notify();
+    } catch {
+      // silent
+    }
+  }
+
+  /** The sessions of no project to list, from the cache: not archived, pinned first, then by activity. */
+  get unownedSessions(): SessionListView[] {
+    return this.unownedSessionIds.flatMap((sessionId) => {
+      const session = this._sessionCache.get(sessionId);
+      return session && isSessionListItem(session) && session.archivedAt === null && session.projectId === null ? [session] : [];
+    }).toSorted(compareSessionListItems);
+  }
+
+  /** Fetch the sessions of no project the browser shows. */
+  async fetchUnowned(): Promise<void> {
+    try {
+      const sessions = await api.sessions.listUnowned();
+      this._sessionCache.setMany(sessions);
+      this.unownedSessionIds = sessions.map((session) => session.id);
       this.notify();
     } catch {
       // silent
@@ -113,43 +137,14 @@ export class ProjectsStore {
     }
   }
 
-  /** Update a project's properties. */
+  /** Update a project's properties; `defaultSource` changes it (a directory not known yet is checked on its node). */
   async updateProject(
     projectId: number,
-    data: { name: string; base_branch: string },
+    data: { name: string; base_branch: string; defaultSource?: { nodeId: string; path: string } },
   ): Promise<{ ok: true } | { error: string }> {
     try {
       await api.projects.update(projectId, data);
       await this.fetchProjects();
-      return { ok: true };
-    } catch (error) {
-      return { error: error instanceof ReinsHttpError ? error.message : "Network error" };
-    }
-  }
-
-  /** The project's sources (its checkouts on nodes), its default one first. */
-  async listSources(projectId: number): Promise<SourceView[] | { error: string }> {
-    try {
-      return await api.projects.sources(projectId);
-    } catch (error) {
-      return { error: error instanceof ReinsHttpError ? error.message : "Network error" };
-    }
-  }
-
-  /** Add a checkout of the project: `path` on node `nodeId`, which must confirm the directory (refused for a
-   * checkout another project has, a second one on the node, or an offline node). Returns the new source. */
-  async addSource(projectId: number, nodeId: string, path: string): Promise<SourceView | { error: string }> {
-    try {
-      return await api.projects.addSource(projectId, { nodeId, path });
-    } catch (error) {
-      return { error: error instanceof ReinsHttpError ? error.message : "Network error" };
-    }
-  }
-
-  /** Move one of the project's sources to another path on its node (the node must confirm it). */
-  async moveSource(projectId: number, sourceId: number, path: string): Promise<{ ok: true } | { error: string }> {
-    try {
-      await api.projects.updateSource(projectId, sourceId, { path });
       return { ok: true };
     } catch (error) {
       return { error: error instanceof ReinsHttpError ? error.message : "Network error" };
@@ -251,6 +246,7 @@ export class ProjectsStore {
   async refreshFromServer(): Promise<void> {
     await Promise.allSettled([
       this.fetchProjects(),
+      this.fetchUnowned(),
       this.fetchActivitySnapshot(),
       this.refreshAll(),
     ]);
@@ -264,11 +260,16 @@ export class ProjectsStore {
   }
 
   async handleSessionCreated(event: {
-    projectId: number;
+    projectId: number | null;
     sessionId: string;
     taskId: number | null;
     parentSessionId: string | null;
   }): Promise<void> {
+    if (event.projectId === null) {
+      this._sessionCache.set(event.sessionId, { projectId: null, taskId: null, parentSessionId: event.parentSessionId });
+      await this.fetchUnowned();
+      return;
+    }
     const projectStore = event.parentSessionId
       ? this.getStore(event.projectId)
       : this.peekStore(event.projectId);
@@ -354,28 +355,6 @@ export class ProjectsStore {
     for (const child of this._stores.values()) child.dispose();
     this._stores.clear();
     this._listeners.clear();
-  }
-
-  // ---- File upload ------------------------------------------------------------
-
-  /**
-   * Upload files to a project directory via multipart form upload.
-   * Uses XHR for progress tracking. Returns a promise that resolves with
-   * the list of uploaded filenames on success or an error message on failure.
-   */
-  async uploadFiles(
-    projectId: number,
-    files: FileList,
-    onProgress?: (percent: number) => void,
-  ): Promise<{ uploaded: string[] } | { error: string }> {
-    try {
-      return await api.projects.upload(projectId, files, { onProgress });
-    } catch (error) {
-      if (error instanceof ReinsHttpError) {
-        return { error: `Upload failed (${error.status}): ${error.message}` };
-      }
-      return { error: "Upload failed (network error)." };
-    }
   }
 
   /**

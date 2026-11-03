@@ -129,6 +129,21 @@ describe("ChatMessage", () => {
     expect(output).not.toContain("bg-blue-600");
   });
 
+  test("names the extension a user message comes from", () => {
+    const fromExtension = templateToString(displayMessage({
+      role: "user",
+      timestamp: 2,
+      metadata: { sourceExtension: "automation" },
+      content: [{ type: "text", text: "Morning heartbeat" }],
+    }).render());
+    const typed = templateToString(displayMessage({ role: "user", timestamp: 2, content: [{ type: "text", text: "Hello" }] }).render());
+
+    expect(fromExtension).toContain('data-role="message-origin"');
+    expect(fromExtension).toContain("from automation");
+    expect(fromExtension).toContain("Morning heartbeat");
+    expect(typed).not.toContain('data-role="message-origin"');
+  });
+
   test("renders assistant text and associated tool results in native content order", () => {
     const assistant: AgentAssistantMessage = {
       role: "assistant",

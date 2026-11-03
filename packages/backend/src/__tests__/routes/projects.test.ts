@@ -6,7 +6,8 @@ import { useTestDb } from "../helpers/test-db.js";
 import { makeRequest } from "../helpers/request.js";
 import { createAppState, useLoopbackState } from "../helpers/app-state.js";
 import { connectLoopbackNode, loopbackLink, SEEDED_NODE_ID, stopLoopbackNode } from "../helpers/loopback-node.js";
-import { defaultSource } from "../../node-store.js";
+import { defaultSource, upsertSource } from "../../node-store.js";
+import { createTask } from "../../task-store.js";
 import { listProjects } from "../../project-store.js";
 import { getDb } from "../../app-globals.js";
 import { createTestRepo, git } from "../helpers/test-repo.js";
@@ -53,14 +54,14 @@ describe("project routes", () => {
   describe("POST /api/projects", () => {
     const create = (body: Record<string, unknown>, on = state) => router.handle(makeRequest("POST", "/api/projects", body), on);
 
-    test("creates a project and its first source, the checkout on the chosen node", async () => {
+    test("creates a project with its default source in the checkout on the chosen node", async () => {
       getDb().exec("INSERT INTO nodes (id, name) VALUES ('remote', 'Remote')");
       connectLoopbackNode(state, { nodeId: "remote" });
       await loopbackLink(state, "remote").ready();
       const res = await create({ name: "Test", path: tempDir, nodeId: "remote" });
       expect(res!.status).toBe(201);
       const body = await res!.json();
-      expect(body).toEqual(expect.objectContaining({ name: "Test", base_branch: "main" }));
+      expect(body).toEqual(expect.objectContaining({ name: "Test", base_branch: "main", defaultSource: { nodeId: "remote", path: tempDir } }));
       expect(body).not.toHaveProperty("path");
       expect(defaultSource(body.id)).toMatchObject({ node_id: "remote", path: tempDir });
       await stopLoopbackNode(state, "remote");
@@ -104,16 +105,34 @@ describe("project routes", () => {
       }
     });
 
-    test("returns 409 on duplicate path", async () => {
-      createProject("First", tempDir);
+    test("a project may have its default source where another project's is", async () => {
+      const first = createProject("First", tempDir);
       const res = await create({ name: "Second", path: tempDir, nodeId: SEEDED_NODE_ID });
-      expect(res!.status).toBe(409);
-      const body = await res!.json();
-      expect(body.error).toBe("That path is already a source of another project");
+      expect(res!.status).toBe(201);
+      expect((await res!.json()).default_source_id).toBe(first.default_source_id);
     });
   });
 
   describe("PATCH /api/projects/:id", () => {
+    test("changes a project's default source to another checkout, leaving its sessions where they are", async () => {
+      const p = createProject("Moving", tempDir);
+      createSession("stays", p.id, { agentRuntimeType: "pi" });
+      const elsewhere = mkdtempSync(join(tmpdir(), "reins-test-home-"));
+      try {
+        const res = await router.handle(makeRequest("PATCH", `/api/projects/${p.id}`, { defaultSource: { nodeId: SEEDED_NODE_ID, path: elsewhere } }), state);
+        expect(res!.status).toBe(200);
+        expect((await res!.json()).defaultSource).toEqual({ nodeId: SEEDED_NODE_ID, path: elsewhere });
+        expect(defaultSource(p.id)).toMatchObject({ path: elsewhere });
+        expect(getSession("stays")?.source_id).toBe(p.default_source_id!);
+
+        const missing = await router.handle(makeRequest("PATCH", `/api/projects/${p.id}`, { defaultSource: { nodeId: SEEDED_NODE_ID, path: join(elsewhere, "missing") } }), state);
+        expect(missing!.status).toBe(400);
+        expect(defaultSource(p.id)).toMatchObject({ path: elsewhere });
+      } finally {
+        rmSync(elsewhere, { recursive: true, force: true });
+      }
+    });
+
     test("updates a project name", async () => {
       const p = createProject("Original", tempDir);
       const res = await router.handle(
@@ -140,6 +159,39 @@ describe("project routes", () => {
         state,
       );
       expect(res!.status).toBe(400);
+    });
+  });
+
+  describe("GET /api/projects/:id/locations", () => {
+    const locations = async (projectId: number, query = "") => {
+      const res = await router.handle(makeRequest("GET", `/api/projects/${projectId}/locations${query}`), state);
+      return { status: res!.status, body: await res!.json() };
+    };
+
+    test("lists every node with the project's paths there, and where a new session works by default: its task's latest session's location, else the default source", async () => {
+      const p = createProject("Placed", tempDir);
+      getDb().query("INSERT INTO nodes (id, name) VALUES ('laptop', 'Laptop')").run();
+      const away = upsertSource("laptop", "/work/placed");
+      const task = createTask(p.id, "Away", null, "task/away");
+      createSession("away", p.id, { agentRuntimeType: "pi", taskId: task.id, sourceId: away.id });
+
+      expect(await locations(p.id)).toEqual({ status: 200, body: {
+        default: { nodeId: SEEDED_NODE_ID, path: tempDir },
+        nodes: [
+          { nodeId: SEEDED_NODE_ID, name: "Internal", connected: true, paths: [tempDir] },
+          { nodeId: "laptop", name: "Laptop", connected: false, paths: ["/work/placed"] },
+        ],
+      } });
+      expect((await locations(p.id, `?taskId=${task.id}`)).body.default).toEqual({ nodeId: "laptop", path: "/work/placed" });
+    });
+
+    test("an unknown project is 404, and a task of another project 400", async () => {
+      const p = createProject("Mine", tempDir);
+      const other = createProject("Theirs", tempDir);
+      const theirs = createTask(other.id, "Theirs", null, "task/theirs");
+
+      expect((await locations(9999)).status).toBe(404);
+      expect(await locations(p.id, `?taskId=${theirs.id}`)).toEqual({ status: 400, body: { error: `Task ${theirs.id} is not a task of project ${p.id}` } });
     });
   });
 

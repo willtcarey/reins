@@ -230,6 +230,7 @@ describe("ChatPanel conversation orchestration", () => {
       activityState: null,
       pinnedAt: null,
       archivedAt: null,
+      sourceExtension: null,
       background: false,
       placement: null,
       pendingOperation: null,
@@ -268,6 +269,7 @@ describe("ChatPanel conversation orchestration", () => {
       activityState: null,
       pinnedAt: null,
       archivedAt: null,
+      sourceExtension: null,
       background: false,
       placement: null,
       pendingOperation: null,
@@ -304,6 +306,7 @@ describe("ChatPanel conversation orchestration", () => {
       activityState: "running",
       pinnedAt: null,
       archivedAt: null,
+      sourceExtension: null,
       placement: { available: true, removed: false, nodeId: "internal", nodeName: "Internal", path: "" },
     };
     const sessionCache = new SessionCache();

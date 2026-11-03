@@ -29,8 +29,8 @@ export const DEFAULT_SESSION_KIND = "agent";
 
 /** The Reins agent: the server's Reins prompt for the session's task (or the project assistant's, for a
  * scratch session) with the extensions' sections, every tool, the environment, and its task's branch checked out. */
-const agent: SessionKind = async ({ task, promptSections }) => ({
-  systemPrompt: reinsSystemPrompt({ task: task && { title: task.title, description: task.description }, sections: await promptSections(null) }),
+const agent: SessionKind = async ({ session, task, promptSections }) => ({
+  systemPrompt: reinsSystemPrompt({ task: task && { title: task.title, description: task.description }, project: session.project_id !== null, sections: await promptSections(null) }),
   environment: true,
   ...(task ? { branch: task.branch_name } : {}),
 });

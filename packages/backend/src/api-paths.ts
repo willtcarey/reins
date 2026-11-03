@@ -6,7 +6,6 @@ export const API = {
   sessions: "/api/sessions",
   tasks: "/api/tasks",
   palette: "/api/palette",
-  upload: "/api/projects/:id/upload",
   settings: "/api/settings",
   models: "/api/models",
   auth: "/api/auth",

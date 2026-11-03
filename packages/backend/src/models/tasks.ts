@@ -2,8 +2,9 @@
  * Project Tasks
  *
  * Business logic for task lifecycle: creation, listing, update, and deletion.
- * Orchestrates store calls, git operations, branch-name derivation, and
- * WebSocket broadcasts.
+ * Orchestrates store calls, branch-name derivation, the checkout's git (diff stats, deleting a branch)
+ * and WebSocket broadcasts. A task's branch is made where its sessions work, by their runs
+ * (`prepareCheckout`), not here.
  *
  * Accessed via `ProjectModel.tasks()` — not constructed directly by callers.
  */
@@ -16,6 +17,7 @@ import {
   setTaskStatus,
   deleteTask as storeDeleteTask,
   getTaskSessionIds,
+  projectHasTaskBranch,
   type TaskRow,
   type TaskListItem,
   type TaskListOptions,
@@ -25,6 +27,7 @@ import { clearFinishedActivityForTasks, getSession } from "../session-store.js";
 import { slugifyBranchName } from "../branch-name.js";
 import type { Git, DiffStats } from "../git.js";
 import type { Broadcast } from "./broadcast.js";
+import type { Nodes } from "./nodes.js";
 import { logger } from "../logger.js";
 import { sessionActivity } from "./session-activity.js";
 import type { ServerProcess } from "../state.js";
@@ -65,53 +68,22 @@ export class ProjectTasks {
     private projectId: number,
     private git: Git,
     private baseBranch: string,
-    private broadcast: Broadcast,
+    private nodes: Nodes,
   ) {}
 
+  private get broadcast(): Broadcast { return this.nodes.broadcast; }
+
   /**
-   * Create a task with a dedicated git branch and broadcast the result.
-   *
-   * When `branch_name` is explicitly provided and the branch already exists
-   * (locally or on origin), it is adopted — no new branch is created, and the
-   * `base_commit` is set to the merge-base of the base branch and the
-   * existing branch. This supports the "pull someone else's branch" workflow.
-   *
-   * When `branch_name` is derived from the title, collisions get a suffix
-   * (to avoid silently adopting an unrelated branch).
-   *
-   * Throws on failure — callers handle errors in their own way.
+   * Create a task and broadcast it. Touches no checkout: its branch is made by its sessions' runs where
+   * they work (`TaskBranch`), adopting one that exists there or on origin. A name derived from the title
+   * that another of the project's tasks has gets a suffix; a name given is kept, to adopt that branch.
    */
   async create(params: CreateTaskParams): Promise<TaskRow> {
-    const explicitBranch = !!params.branch_name?.trim();
-    let branchName = params.branch_name?.trim() || slugifyBranchName(params.title);
-    let baseCommit: string;
+    const given = params.branch_name?.trim();
+    let branchName = given || slugifyBranchName(params.title);
+    if (!given && projectHasTaskBranch(this.projectId, branchName)) branchName = `${branchName}-${Date.now().toString(36).slice(-4)}`;
 
-    if (explicitBranch && await this.git.branchExists(branchName)) {
-      // Adopt existing local branch
-      baseCommit = await this.git.mergeBase(this.baseBranch, branchName);
-    } else if (explicitBranch && !await this.git.branchExists(branchName)) {
-      // Try fetching from origin
-      await this.git.fetchOrigin(branchName);
-      if (await this.git.remoteBranchExists(branchName)) {
-        // Adopt remote branch
-        await this.git.trackBranch(branchName);
-        baseCommit = await this.git.mergeBase(this.baseBranch, branchName);
-      } else {
-        // Branch doesn't exist anywhere — create it
-        await this.git.createBranch(branchName, this.baseBranch);
-        baseCommit = await this.git.revParse(this.baseBranch);
-      }
-    } else {
-      // Derived branch name — collision suffix behavior
-      if (await this.git.branchExists(branchName)) {
-        const suffix = Date.now().toString(36).slice(-4);
-        branchName = `${branchName}-${suffix}`;
-      }
-      await this.git.createBranch(branchName, this.baseBranch);
-      baseCommit = await this.git.revParse(this.baseBranch);
-    }
-
-    const task = createTask(this.projectId, params.title.trim(), params.description?.trim() || null, branchName, baseCommit);
+    const task = createTask(this.projectId, params.title.trim(), params.description?.trim() || null, branchName);
     this.broadcast({ type: "task_updated", projectId: this.projectId });
     return task;
   }
@@ -195,26 +167,13 @@ export class ProjectTasks {
   }
 
   /**
-   * Reopen a closed task and broadcast the change.
-   * Recreates the git branch if it was cleaned up during close.
-   * Throws if the task doesn't exist.
+   * Reopen a closed task and broadcast the change. A branch deleted meanwhile is made again by its next
+   * session's run. Throws if the task doesn't exist.
    */
-  async reopen(taskId: number): Promise<TaskRow> {
+  reopen(taskId: number): TaskRow {
     if (!this.get(taskId)) throw new TaskNotFoundError();
     const task = setTaskStatus(taskId, "open");
     if (!task) throw new TaskNotFoundError();
-
-    // Recreate the branch if it was deleted during reconciliation,
-    // starting from the current base branch tip and updating base_commit.
-    const exists = await this.git.branchExists(task.branch_name);
-    if (!exists) {
-      await this.git.createBranch(task.branch_name, this.baseBranch);
-      const newBase = await this.git.revParse(this.baseBranch);
-      const updated = storeUpdateTask(taskId, { base_commit: newBase });
-      this.broadcast({ type: "task_updated", projectId: this.projectId });
-      return updated ?? task;
-    }
-
     this.broadcast({ type: "task_updated", projectId: this.projectId });
     return task;
   }
@@ -241,7 +200,9 @@ export class ProjectTasks {
     await closeSessionRuntimes(serverProcess, sessionIds);
 
     // Delete task (cascades sessions + messages in DB)
+    const sources = this.nodes.watchSources();
     storeDeleteTask(taskId);
+    sources.publishChanged();
     this.broadcast({ type: "task_updated", projectId: this.projectId });
 
     // Delete the git branch (best-effort — may fail if checked out)

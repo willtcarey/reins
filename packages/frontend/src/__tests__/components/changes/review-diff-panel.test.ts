@@ -140,14 +140,14 @@ describe("ReviewDiffPanel", () => {
     const store = new DiffStore();
     store.refresh = async () => {};
     try {
-      store.setProject(7);
+      store.setScope("s7", null, 7);
       store.patchData = Loadable.idle<DiffPatchData>().asLoaded(loadedPatch());
       const panel = new ReviewDiffPanel();
       panel.store = store;
       const itemId = panel.itemIdForPath("src/example.ts")!;
       panel.setItemCollapsed(itemId, true);
 
-      store.setProject(8);
+      store.setScope("s8", null, 8);
       store.patchData = Loadable.idle<DiffPatchData>().asLoaded({
         ...loadedPatch(),
         cacheKeyPrefix: "project-8-v1",
@@ -155,7 +155,7 @@ describe("ReviewDiffPanel", () => {
       panel.willUpdate(new Map());
       expect(panel.isItemCollapsed(itemId)).toBe(false);
 
-      store.setProject(7);
+      store.setScope("s7", null, 7);
       store.patchData = Loadable.idle<DiffPatchData>().asLoaded(loadedPatch());
       panel.willUpdate(new Map());
       expect(panel.isItemCollapsed(itemId)).toBe(true);
@@ -271,7 +271,7 @@ describe("ReviewDiffPanel", () => {
   test("expands a collapsed target before file-tree navigation scrolls to it", () => {
     localStorage.clear();
     const store = new DiffStore();
-    store.setProject(7);
+    store.setScope("s7", null, 7);
     store.patchData = Loadable.idle<DiffPatchData>().asLoaded(loadedPatch());
     const panel = new ReviewDiffPanel();
     panel.store = store;
@@ -295,7 +295,7 @@ describe("ReviewDiffPanel", () => {
   test("returns to the file header when collapsing from inside its body", () => {
     localStorage.clear();
     const store = new DiffStore();
-    store.setProject(7);
+    store.setScope("s7", null, 7);
     store.patchData = Loadable.idle<DiffPatchData>().asLoaded(loadedPatch(manyFilePatch(5)));
     const panel = new ReviewDiffPanel();
     panel.store = store;

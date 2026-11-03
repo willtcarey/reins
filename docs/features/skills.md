@@ -23,7 +23,7 @@ my-project/
 
 REINS will include discovered skills in the session's `<available_skills>` block.
 
-A session's skills all come from the machine it runs on, the node of the project's source: that machine's `~/.agents/skills/` and the checkout's `.agents/skills/`. A session on a remote node sees the remote machine's `~/.agents`, not the server's. Typing `/` in the composer suggests both (at the start of a message, after the composer's commands); while the node is offline suggestions keep showing the last list the app received (none if it has none), and invoking a skill needs the node.
+A session's skills all come from the machine it runs on, the node of its source: that machine's `~/.agents/skills/` and the checkout's `.agents/skills/`. A session on a remote node sees the remote machine's `~/.agents`, not the server's. Typing `/` in the composer suggests both (at the start of a message, after the composer's commands): those of the session's own node and directory, or on the new session page those of the location chosen there. Suggestions are loaded once per location; while its node cannot answer there are none, and the app asks again after a while. Invoking a skill needs the node.
 
 ## Minimal skill structure
 

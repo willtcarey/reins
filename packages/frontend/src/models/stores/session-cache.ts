@@ -29,6 +29,8 @@ export interface CachedSession {
   placement: SessionData["placement"] | null;
   pinnedAt: string | null;
   archivedAt: string | null;
+  /** The backend extension that started it, or null. */
+  sourceExtension: string | null;
   background: boolean;
   pendingOperation: SessionData["pendingOperation"];
   runtimeType: string | null;
@@ -55,6 +57,7 @@ function emptyCachedSession(sessionId: string): CachedSession {
     placement: null,
     pinnedAt: null,
     archivedAt: null,
+    sourceExtension: null,
     background: false,
     pendingOperation: null,
     runtimeType: null,
@@ -76,6 +79,7 @@ function withoutUndefined(data: SessionPatch): SessionPatch {
   if (data.placement !== undefined) result.placement = data.placement;
   if (data.pinnedAt !== undefined) result.pinnedAt = data.pinnedAt;
   if (data.archivedAt !== undefined) result.archivedAt = data.archivedAt;
+  if (data.sourceExtension !== undefined) result.sourceExtension = data.sourceExtension;
   if (data.background !== undefined) result.background = data.background;
   if (data.pendingOperation !== undefined) result.pendingOperation = data.pendingOperation;
   if (data.runtimeType !== undefined) result.runtimeType = data.runtimeType;
@@ -101,6 +105,7 @@ function sessionEquals(a: CachedSession, b: CachedSession): boolean {
     placementEquals(a.placement, b.placement) &&
     a.pinnedAt === b.pinnedAt &&
     a.archivedAt === b.archivedAt &&
+    a.sourceExtension === b.sourceExtension &&
     a.background === b.background &&
     a.pendingOperation?.kind === b.pendingOperation?.kind &&
     a.runtimeType === b.runtimeType &&
@@ -154,7 +159,7 @@ export class SessionCache {
   getDetail(sessionId: string): SessionData | null {
     const entry = this._entries.get(sessionId);
     if (!entry) return null;
-    if (entry.projectId == null) return null;
+    if (entry.projectId === undefined) return null;
     if (entry.createdAt == null) return null;
     if (entry.updatedAt == null) return null;
     if (entry.messageCount == null) return null;
@@ -174,6 +179,7 @@ export class SessionCache {
       placement: entry.placement,
       pinnedAt: entry.pinnedAt,
       archivedAt: entry.archivedAt,
+      sourceExtension: entry.sourceExtension,
       background: entry.background,
       pendingOperation: entry.pendingOperation,
       messageCount: entry.messageCount,

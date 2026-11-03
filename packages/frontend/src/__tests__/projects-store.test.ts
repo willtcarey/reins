@@ -102,8 +102,8 @@ describe("ProjectsStore per-project data", () => {
     const p2 = store.ensureLoaded(1);
     await Promise.all([p1, p2]);
 
-    // Only one fetchLists call (3 fetches: tasks + sessions + skills)
-    expect(fetchCount).toBe(3);
+    // Only one fetchLists call (2 fetches: tasks + sessions)
+    expect(fetchCount).toBe(2);
   });
 
   // ---- refresh --------------------------------------------------------------
@@ -153,9 +153,9 @@ describe("ProjectsStore per-project data", () => {
     store.getStore(3);
 
     await store.refreshAll();
-    // Should have fetched for stores 1 and 2 (3 fetches each: tasks + sessions + skills)
+    // Should have fetched for stores 1 and 2 (2 fetches each: tasks + sessions)
     // but NOT for store 3 (not loaded)
-    expect(fetchCount).toBe(countAfterLoad + 6);
+    expect(fetchCount).toBe(countAfterLoad + 4);
   });
 
   test("refreshAll is a no-op when no stores are loaded", async () => {
@@ -407,7 +407,6 @@ describe("ProjectsStore per-project data", () => {
     mockFetch((url) => {
       if (url === "/api/projects/42/tasks") return jsonResponse([]);
       if (url === "/api/projects/42/sessions") return jsonResponse([]);
-      if (url === "/api/projects/42/skills") return jsonResponse({ skills: [] });
       return jsonResponse({}, false);
     });
 

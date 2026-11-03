@@ -5,26 +5,30 @@ import { join, relative } from "node:path";
 import { NodeRejection } from "@reins/node-protocol";
 import { runScript } from "../../tools/execute.js";
 import { getDb } from "../../app-globals.js";
-import { createSource, defaultSource } from "../../node-store.js";
+import { upsertSource, defaultSource } from "../../node-store.js";
 import { nodesGetFunction, nodesListFunction, nodesReloadFunction } from "../../scripting/nodes.js";
 import type { ApiContext } from "../../scripting/define-function.js";
-import { Models } from "../../models/models.js";
 import { createProject } from "../project-fixture.js";
+import { createSession } from "../session-fixture.js";
 import { createAppState } from "../helpers/app-state.js";
 import { useTestDb } from "../helpers/test-db.js";
 import { connectLoopbackNode, connectScriptedNode, loopbackLink, SEEDED_NODE_ID, stopLoopbackNode } from "../helpers/loopback-node.js";
+import { scriptContext } from "../helpers/script-context.js";
 
 describe("nodes.list and nodes.get", () => {
   useTestDb();
 
-  test("lists every node not removed, whether it is connected and the caller's, and how many sources it holds; get lists a node's sources", async () => {
+  test("lists every node not removed, whether it is connected and the caller's, and how many sources are in use on it; get lists them with the projects using them", async () => {
     const state = createAppState();
     const project = createProject("Listed", "/tmp/list-local");
     getDb().exec(`INSERT INTO nodes (id, name, hostname, revoked_at) VALUES ('box', 'Box', 'box.lan', NULL), ('gone', 'Gone', NULL, NULL), ('old', 'Old', NULL, '2026-10-01T00:00:00Z');
       UPDATE nodes SET removed_at = '2026-10-02T00:00:00Z' WHERE id = 'gone'`);
-    const boxSource = createSource(project.id, "box", "/srv/work").id;
+    const boxSource = upsertSource("box", "/srv/work").id;
+    // The caller's session uses the box's source; a source no session uses is not listed.
+    createSession("caller", project.id, { agentRuntimeType: "pi", sourceId: boxSource });
+    upsertSource("box", "/srv/unused");
     const box = connectScriptedNode(state, "box", {});
-    const ctx: ApiContext = { projectId: project.id, sessionId: "caller", taskId: null, broadcast: () => {}, sourceId: boxSource, nodes: state.nodes, models: new Models(state) };
+    const ctx = scriptContext(state, { sessionId: "caller" });
     try {
       await box.ready();
       const boxView = { id: "box", name: "Box", hostname: "box.lan", connected: true, revoked: false, current: true, sourceCount: 1 };
@@ -34,8 +38,8 @@ describe("nodes.list and nodes.get", () => {
         localView,
         { id: "old", name: "Old", hostname: null, connected: false, revoked: true, current: false, sourceCount: 0 },
       ]);
-      expect(nodesGetFunction.execute({}, ctx)).toEqual({ ...boxView, sources: [{ sourceId: boxSource, projectId: project.id, projectName: "Listed", path: "/srv/work" }] });
-      const localDetail = { ...localView, sources: [{ sourceId: defaultSource(project.id)!.id, projectId: project.id, projectName: "Listed", path: "/tmp/list-local" }] };
+      expect(nodesGetFunction.execute({}, ctx)).toEqual({ ...boxView, sources: [{ sourceId: boxSource, path: "/srv/work", projects: [{ id: project.id, name: "Listed" }] }] });
+      const localDetail = { ...localView, sources: [{ sourceId: defaultSource(project.id)!.id, path: "/tmp/list-local", projects: [{ id: project.id, name: "Listed" }] }] };
       expect(nodesGetFunction.execute({ node: SEEDED_NODE_ID }, ctx)).toEqual(localDetail);
       expect(nodesGetFunction.execute({ node: "INTERNAL" }, ctx)).toEqual(localDetail);
       expect(nodesGetFunction.execute({ node: "current" }, ctx)).toEqual(nodesGetFunction.execute({}, ctx));
@@ -59,7 +63,7 @@ describe("nodes.readFile, nodes.writeFile, nodes.copy and nodes.run", () => {
     connectLoopbackNode(state, { nodeId: "mini" });
     await loopbackLink(state).ready();
     await loopbackLink(state, "mini").ready();
-    const ctx: ApiContext = { projectId: project.id, sessionId: "caller", taskId: null, broadcast: () => {}, sourceId: defaultSource(project.id)!.id, nodes: state.nodes, models: new Models(state) };
+    const ctx = scriptContext(state, { sessionId: "caller", projectId: project.id });
     return {
       dir,
       script: (code: string) => runScript(ctx, code),
@@ -178,14 +182,14 @@ describe("nodes.reload", () => {
     const state = createAppState();
     const project = createProject("Reload", "/tmp/reload-script");
     getDb().exec("INSERT INTO nodes (id, name) VALUES ('remote', 'Remote')");
-    const remoteSource = createSource(project.id, "remote", "/tmp/reload-remote").id;
+    const remoteSource = upsertSource("remote", "/tmp/reload-remote").id;
     const requests: Array<{ nodeId: string; force?: boolean }> = [];
     const local = connectScriptedNode(state, SEEDED_NODE_ID, { reload: async input => { requests.push({ nodeId: SEEDED_NODE_ID, ...input }); return { scheduled: true }; } });
     const refusal = "Nothing would restart this node (it is not supervised): restart it to load new code";
     const remote = connectScriptedNode(state, "remote", { reload: async () => {
       throw new NodeRejection("unavailable", refusal);
     } });
-    const ctx = (sourceId: number): ApiContext => ({ projectId: project.id, sessionId: "caller", taskId: null, broadcast: () => {}, sourceId, nodes: state.nodes, models: new Models(state) });
+    const ctx = (sourceId: number): ApiContext => scriptContext(state, { sessionId: `caller-${sourceId}`, projectId: project.id, sourceId });
     try {
       await local.ready();
       await remote.ready();

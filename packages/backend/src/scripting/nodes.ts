@@ -4,16 +4,22 @@
 
 import { types } from "node:util";
 import { Type } from "@sinclair/typebox";
-import { getSource } from "../node-store.js";
 import type { NodeModel, NodeView } from "../models/node.js";
 import { FileTooLargeError } from "../models/node-host.js";
 import { type ApiContext, type ApiFunctionDef, defineFunction } from "./define-function.js";
 
+/** A location sessions work in: a node and an absolute path there. */
+export const LocationSchema = Type.Object({
+  nodeId: Type.String({ minLength: 1, description: "The node's ID." }),
+  path: Type.String({ minLength: 1, description: "An absolute path on the node." }),
+});
+
+export const ProjectRefSchema = Type.Object({ id: Type.Number(), name: Type.String() });
+
 export const NodeSourceSchema = Type.Object({
   sourceId: Type.Number(),
-  projectId: Type.Number(),
-  projectName: Type.String(),
   path: Type.String({ description: "The source's absolute path on the node." }),
+  projects: Type.Array(ProjectRefSchema, { description: "The projects whose sessions work there, or whose default source it is." }),
 });
 
 const nodeFields = {
@@ -30,11 +36,11 @@ export const NodeSchema = Type.Object(nodeFields);
 
 export const NodeDetailSchema = Type.Object({
   ...nodeFields,
-  sources: Type.Array(NodeSourceSchema, { description: "The projects' sources (checkouts) on the node, by path." }),
+  sources: Type.Array(NodeSourceSchema, { description: "The sources (locations: directories sessions work in) in use on the node, by path." }),
 });
 
 /** The calling session's node. */
-const callerNodeId = (ctx: ApiContext) => getSource(ctx.sourceId)?.node_id;
+const callerNodeId = (ctx: ApiContext) => ctx.session.source.record.node_id;
 
 const nodeParam = Type.String({ description: 'Its ID, its name (any case), or "current" for the calling session\'s.' });
 const optionalNodeParam = Type.String({ description: 'Its ID, its name (any case), or "current": the calling session\'s, the default.' });
@@ -63,7 +69,7 @@ export const nodesListFunction = defineFunction({
   name: "nodes.list",
   description:
     "List the nodes (machines that run sessions' tools: files and commands), in name order: whether each is " +
-    "connected, whether it is the calling session's, and how many sources it holds (nodes.get lists them). " +
+    "connected, whether it is the calling session's, and how many sources (directories sessions work in) are in use on it (nodes.get lists them). " +
     "Removed nodes are not listed.",
   parameters: Type.Object({}),
   returns: Type.Array(NodeSchema),
@@ -74,8 +80,8 @@ export const nodesListFunction = defineFunction({
 export const nodesGetFunction = defineFunction({
   name: "nodes.get",
   description:
-    "Get a node with the projects' sources on it: each source's project and its path on the node. Throws for an " +
-    "unknown or removed node.",
+    "Get a node with the sources in use on it (directories sessions work in): each one's path on the node and the " +
+    "projects whose sessions work there or whose default source it is. Throws for an unknown or removed node.",
   parameters: Type.Object({
     node: Type.Optional(optionalNodeParam),
   }),
@@ -87,7 +93,7 @@ export const nodesGetFunction = defineFunction({
     const node = model.view();
     return {
       ...nodeSummary(node, ctx),
-      sources: node.sources.map(source => ({ sourceId: source.project.sourceId, projectId: source.project.id, projectName: source.project.name, path: source.path })),
+      sources: node.sources.map(source => ({ sourceId: source.id, path: source.path, projects: source.projects })),
     };
   },
 });

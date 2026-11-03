@@ -2,6 +2,7 @@
  * File Browser — overlay with a directory tree (`<file-tree>`) and a `<file-viewer>`, shown while its
  * store's `browserOpen`. Escape, the backdrop or the close button close it. Once it has shown a file
  * it stays rendered while closed, so opening it again shows the file without reading it again.
+ * Files chosen with Upload, or dropped on it, are written into the open file's folder.
  */
 
 import { LitElement, html, nothing, type PropertyValues } from "lit";
@@ -11,7 +12,12 @@ import { StoreController } from "../../controllers/store-controller.js";
 import type { FileView } from "../file-viewer/file-viewer.js";
 import "../file-viewer/file-viewer.js";
 import "./file-tree.js";
-import { closeIcon, fileSearchIcon, menuIcon } from "../../ui/icons.js";
+import { closeIcon, fileSearchIcon, menuIcon, uploadIcon } from "../../ui/icons.js";
+import { showToast } from "../../ui/toast.js";
+
+function isFileInput(target: EventTarget | null): target is HTMLInputElement {
+  return target !== null && "files" in target && "value" in target;
+}
 
 @customElement("file-browser")
 export class FileBrowser extends LitElement {
@@ -53,6 +59,40 @@ export class FileBrowser extends LitElement {
     if (source) this.store?.openSearch(source);
   }
 
+  private _chooseFiles() {
+    this.querySelector<HTMLInputElement>("input[data-role=upload-input]")?.click();
+  }
+
+  private _onFilesChosen = (e: Event) => {
+    const input = e.target;
+    if (!isFileInput(input)) return;
+    if (input.files) void this._upload(input.files);
+    // So choosing the same files again is a change too.
+    input.value = "";
+  };
+
+  private _onDragOver = (e: DragEvent) => {
+    if (e.dataTransfer?.types.includes("Files")) e.preventDefault();
+  };
+
+  private _onDrop = (e: DragEvent) => {
+    const files = e.dataTransfer?.files;
+    if (!files || files.length === 0) return;
+    e.preventDefault();
+    void this._upload(files);
+  };
+
+  private async _upload(files: FileList | readonly File[]) {
+    if (files.length === 0 || !this.store) return;
+    const result = await this.store.upload(files);
+    if ("error" in result) {
+      showToast(result.error, "error");
+      return;
+    }
+    const count = result.uploaded.length;
+    showToast(`Uploaded ${count} file${count === 1 ? "" : "s"}.`, "success");
+  }
+
   private _onGlobalKeydown = (e: KeyboardEvent) => {
     if (e.key === "Escape" && this.store?.browserOpen && !this.store.searchOpen) {
       e.preventDefault();
@@ -82,7 +122,11 @@ export class FileBrowser extends LitElement {
         class="fixed inset-0 z-[var(--layer-overlay)] ${store.browserOpen ? "flex" : "hidden"} items-center justify-center bg-black/70 sm:px-4"
         @click=${this.handleBackdropClick}
       >
-        <div class="w-[100vw] h-[100dvh] min-w-0 min-h-0 sm:w-[90vw] sm:h-[90vh] overflow-hidden bg-zinc-800 sm:ring-1 sm:ring-zinc-600 sm:rounded-lg shadow-2xl flex flex-col">
+        <div
+          class="w-[100vw] h-[100dvh] min-w-0 min-h-0 sm:w-[90vw] sm:h-[90vh] overflow-hidden bg-zinc-800 sm:ring-1 sm:ring-zinc-600 sm:rounded-lg shadow-2xl flex flex-col"
+          @dragover=${this._onDragOver}
+          @drop=${this._onDrop}
+        >
           <div class="flex items-center gap-2 px-3 py-2 border-b border-zinc-700 min-w-0">
             <button
               class="p-1 text-zinc-400 hover:text-zinc-200 cursor-pointer shrink-0 sm:hidden"
@@ -99,6 +143,16 @@ export class FileBrowser extends LitElement {
               ${fileSearchIcon()}
             </button>
             <span class="text-sm text-zinc-400 truncate flex-1" title=${checkout}>${checkout.slice(checkout.lastIndexOf("/") + 1)}</span>
+            ${store.uploadProgress === null ? nothing : html`<span class="text-xs text-zinc-400 shrink-0">Uploading ${store.uploadProgress}%</span>`}
+            <input data-role="upload-input" type="file" multiple hidden @change=${this._onFilesChosen} />
+            <button
+              class="p-1 text-zinc-400 hover:text-zinc-200 cursor-pointer shrink-0 disabled:opacity-50 disabled:cursor-default"
+              ?disabled=${store.uploadProgress !== null}
+              @click=${this._chooseFiles}
+              title=${store.uploadFolder === "." ? "Upload files into the checkout's root" : `Upload files into ${store.uploadFolder}/`}
+            >
+              ${uploadIcon()}
+            </button>
             <kbd class="hidden sm:inline text-[10px] text-zinc-500 bg-zinc-700 px-1.5 py-0.5 rounded">Esc</kbd>
             <button
               class="p-1 text-zinc-400 hover:text-zinc-200 cursor-pointer shrink-0"

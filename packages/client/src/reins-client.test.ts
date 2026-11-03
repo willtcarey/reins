@@ -33,6 +33,20 @@ describe("ReinsClient", () => {
     });
   });
 
+  test("asks where a project's new session can work, and the skills of a location", async () => {
+    const { client, requests } = recordingClient(() => Response.json({}));
+
+    await client.projects.locations(7);
+    await client.projects.locations(7, 3);
+    await client.skills.at("my node", "/work/a b");
+
+    expect(requests.map(request => request.url)).toEqual([
+      "/api/projects/7/locations",
+      "/api/projects/7/locations?taskId=3",
+      "/api/nodes/my%20node/skills?path=%2Fwork%2Fa+b",
+    ]);
+  });
+
   test("sends a session's prompt, steer and abort to its routes", async () => {
     const { client, requests } = recordingClient();
     const input = { clientId: "c1", message: [{ type: "text" as const, text: "hi" }] };
@@ -74,7 +88,7 @@ describe("ReinsClient", () => {
     const client = new ReinsClient({ fetch: async () => responses.shift()! });
 
     const projects = await client.projects.list();
-    const patch = await client.diff.patch(1, {
+    const patch = await client.diff.patch("s1", {
       context: 3,
       mode: "branch",
       branch: "task/client",
@@ -121,8 +135,8 @@ describe("ReinsClient", () => {
     expect(client.sessions.attachmentUrl("session / one", "attachment/1")).toBe(
       "/api/sessions/session%20%2F%20one/attachments/attachment%2F1",
     );
-    expect(client.files.contentUrl(7, "docs/a b.pdf", { ref: "topic/client", download: true })).toBe(
-      "/api/projects/7/files/content?path=docs%2Fa+b.pdf&ref=topic%2Fclient&download=1",
+    expect(client.files.contentUrl("s1", "docs/a b.pdf", { ref: "topic/client", download: true })).toBe(
+      "/api/sessions/s1/files/content?path=docs%2Fa+b.pdf&ref=topic%2Fclient&download=1",
     );
   });
 
@@ -187,12 +201,13 @@ describe("ReinsClient", () => {
     ]);
   });
 
-  test("uploads project files as multipart form data, through the upload transport when one is given", async () => {
+  test("uploads files into a folder of a session's checkout as multipart form data, through the upload transport when one is given", async () => {
     const files = [new File(["a"], "a.txt"), new File(["b"], "b.txt")];
     const { client, requests } = recordingClient(() => Response.json({ uploaded: ["a.txt", "b.txt"] }));
 
-    expect(await client.projects.upload(7, files)).toEqual({ uploaded: ["a.txt", "b.txt"] });
-    expect(requests[0]?.url).toBe("/api/projects/7/upload");
+    expect(await client.files.upload("sess-1", files)).toEqual({ uploaded: ["a.txt", "b.txt"] });
+    expect(await client.files.upload("sess-1", files, { path: "docs/notes" })).toEqual({ uploaded: ["a.txt", "b.txt"] });
+    expect(requests.map(request => request.url)).toEqual(["/api/sessions/sess-1/upload", "/api/sessions/sess-1/upload?path=docs%2Fnotes"]);
     expect(requests[0]?.init?.method).toBe("POST");
     const body = requests[0]?.init?.body;
     expect(body instanceof FormData ? body.getAll("files").map(file => (file instanceof File ? file.name : file)) : body).toEqual(["a.txt", "b.txt"]);
@@ -208,9 +223,9 @@ describe("ReinsClient", () => {
         return Response.json({ error: "Path escapes the checkout" }, { status: 400 });
       },
     });
-    const error = await rejection(withProgress.projects.upload(7, files, { onProgress: percent => progress.push(percent) }));
+    const error = await rejection(withProgress.files.upload("sess-1", files, { onProgress: percent => progress.push(percent) }));
     expect(error).toMatchObject({ status: 400, message: "Path escapes the checkout" });
-    expect(uploads).toEqual(["POST http://server/api/projects/7/upload"]);
+    expect(uploads).toEqual(["POST http://server/api/sessions/sess-1/upload"]);
     expect(progress).toEqual([50]);
   });
 });

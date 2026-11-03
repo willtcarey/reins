@@ -51,6 +51,8 @@ describe("WorkspaceStore session transitions", () => {
       base_branch: "main",
       created_at: "",
       last_opened_at: "",
+      default_source_id: null,
+      defaultSource: null,
     }];
     const workspace = new WorkspaceStore(runtime);
 
@@ -208,7 +210,7 @@ describe("WorkspaceStore Inspector and files", () => {
     const runtime = new AppStore(client);
     const workspace = new WorkspaceStore(runtime);
     await workspace.setSession("first");
-    const diffRequests = () => requests.filter((url) => url.startsWith("/api/projects/1/diff/files")).length;
+    const diffRequests = () => requests.filter((url) => url.startsWith("/api/sessions/first/diff/files")).length;
     const placement = sessionDetail("first", 1, 10).placement;
     runtime.sessionCache.set("same-source", { placement });
     runtime.sessionCache.set("other-source", { placement: { ...placement, path: "/work/other" } });

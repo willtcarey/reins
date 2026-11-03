@@ -13,13 +13,16 @@ import { badRequest, conflict, HttpError } from "../errors.js";
 import { SessionMoveConflict } from "../sessions/session-ownership.js";
 import { PromptTooLargeError, SessionNotFoundError, type Sessions } from "../models/sessions.js";
 import { SessionNodeRemovedError } from "../models/session.js";
+import { NodeNotFoundError } from "../models/nodes.js";
+import { CheckoutNotFoundError } from "../models/sources.js";
 import { parseDisplayCursor, type ClientPromptContent } from "../messages-store.js";
 import { parseClientPromptContent } from "../session-attachments-store.js";
 import { parseBody, parseOptionalBody } from "./validate.js";
+import { SessionLocationSchema, SessionModelChoiceSchema } from "../sessions/create-session.js";
 import { withSessionNotFound } from "./session-errors.js";
 import type { SessionMoveTarget } from "../sessions/session-ownership.js";
 
-/** A node and whether the session can move there; `connected` is whether the node's link is open. */
+/** A node the session can move to, with its project's paths there; `connected` is whether the node's link is open. */
 export type SessionMoveTargetView = SessionMoveTarget & { connected: boolean };
 
 export interface MessagePageQuery { before?: string; after?: string; limit?: number }
@@ -35,9 +38,10 @@ const SessionModelBody = Type.Object({
   thinkingLevel: Type.Optional(Type.String()),
 });
 
-/** `nodeId`: the node to move the session to (required: there is no release back to the server). */
+/** Where to move the session: a node and an absolute path on it. */
 const SessionMoveBody = Type.Object({
   nodeId: Type.String({ minLength: 1 }),
+  path: Type.String({ minLength: 1, pattern: "\\S" }),
 });
 
 /** `instructions`: what the summary should focus on. */
@@ -68,7 +72,31 @@ export type SessionCompactRequest = Static<typeof SessionCompactBody>;
 export type SessionMetadataUpdate = Static<typeof SessionMetadataBody>;
 export interface SessionSubmissionRequest { clientId: string; message: ClientPromptContent }
 
+/** A session of no project: where it works (required: it has no project's default source to inherit), its title and model. */
+const UnownedSessionCreateBody = Type.Object({
+  source: SessionLocationSchema,
+  /** Its name, trimmed; left out, the session is named as any is. */
+  title: Type.Optional(Type.String()),
+  model: Type.Optional(SessionModelChoiceSchema),
+});
+export type UnownedSessionCreateRequest = Static<typeof UnownedSessionCreateBody>;
+
 export function registerSessionRoutes(router: RouterGroup<RouteContext>) {
+  // The sessions of no project the browser shows (not archived, not background), pinned first, then by
+  // activity. Sessions of a project are listed under it.
+  router.get("", (ctx) => {
+    return Response.json(ctx.models.sessions.listUnowned());
+  });
+
+  // Create a session of no project on a source: 201 with its detail. A task needs a project: these have none.
+  router.post("", async (ctx) => {
+    const { source, title, model } = await parseBody(UnownedSessionCreateBody, ctx.req);
+    const created = await ctx.models.sessions.create({ source, ...(title === undefined ? {} : { title }), ...(model ? { model } : {}) });
+    const data = ctx.models.sessions.getDetail(created.id);
+    if (!data) throw new Error(`Failed to load created session: ${created.id}`);
+    return Response.json(data, { status: 201 });
+  });
+
   // List all sessions with non-null activity_state — for initial page-load
   // reconciliation without needing to expand every project first.
   router.get("/activity", (ctx) => {
@@ -186,21 +214,23 @@ export function registerSessionRoutes(router: RouterGroup<RouteContext>) {
     return Response.json({ ok: true });
   }));
 
-  // Every node, eligible move targets first; ineligible ones say why (`current`, `no_source`).
+  // Every node not removed, with the paths the session's project used on each.
   router.get("/:sessionId/move-targets", withSessionNotFound(async (ctx) => {
     const targets = ctx.models.sessions.moveTargets(ctx.params.sessionId);
     return Response.json(targets.map((target): SessionMoveTargetView => ({ ...target, connected: ctx.state.nodes.get(target.nodeId).connected })));
   }));
 
-  // Move the idle session to a node (re-points its source and closes its live runtime).
-  // Returns its placement; 409 while it is busy or the node has no source for its project.
+  // Move the idle session to a node and path (re-points its source and closes its live runtime).
+  // Returns its placement; 409 while it is busy; 400 for a removed or unknown node, or a path that is not a
+  // directory there; 503 when a new path's node is offline.
   router.post("/:sessionId/move", withSessionNotFound(async (ctx) => {
     const body = await parseBody(SessionMoveBody, ctx.req);
     const sessions = ctx.models.sessions;
     try {
-      return Response.json(await sessions.move(ctx.params.sessionId, body.nodeId));
+      return Response.json(await sessions.move(ctx.params.sessionId, body));
     } catch (err) {
       if (err instanceof SessionMoveConflict) conflict(err.message);
+      if (err instanceof NodeNotFoundError || err instanceof CheckoutNotFoundError) badRequest(err.message);
       throw err;
     }
   }));

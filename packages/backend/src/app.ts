@@ -8,7 +8,7 @@
 import type { App, AppState } from "./state.js";
 import { getNode } from "./node-store.js";
 import { Models } from "./models/models.js";
-import { serverToolCalls, sessionToolScope, type ReinsToolCalls } from "./tools/index.js";
+import { serverToolCalls, type ReinsToolCalls } from "./tools/index.js";
 import { SessionInstance } from "./sessions/session-instance.js";
 import { APP_CODE } from "./session-runtime/live.js";
 
@@ -22,10 +22,7 @@ export function createApp(state: AppState): App & { stop(): void } {
   let stopped = false;
   const toolCalls = (sessionId: string): ReinsToolCalls => {
     const models = new Models(state);
-    return serverToolCalls({
-      ...sessionToolScope(sessionId), sessionId,
-      broadcast: models.broadcast, nodes: state.nodes, models, instance: new SessionInstance(state, sessionId),
-    });
+    return serverToolCalls({ sessionId, models, instance: new SessionInstance(models, sessionId) });
   };
   return {
     code: APP_CODE,
@@ -52,6 +49,7 @@ export function createApp(state: AppState): App & { stop(): void } {
     searchScript: (sessionId, query, signal) => toolCalls(sessionId).searchScript(query, signal),
     createTask: (sessionId, input, signal) => toolCalls(sessionId).createTask(input, signal),
     promptSections: context => state.extensions.promptSections(context),
+    sessionSettled: notice => state.extensions.sessionSettled(notice),
     stop() {
       stopped = true;
       for (const script of scripts) script.abort(new Error("The server reloaded"));

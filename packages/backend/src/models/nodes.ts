@@ -4,7 +4,7 @@
  */
 import type { AppState, NodeHub } from "../state.js";
 import type { Broadcast } from "./broadcast.js";
-import { getNode, listNodes } from "../node-store.js";
+import { getNode, listNodes, listSourcesOnNode } from "../node-store.js";
 import { NodeModel, type NodeView } from "./node.js";
 import { NodePairing } from "./node-pairing.js";
 
@@ -53,6 +53,22 @@ export class Nodes {
     const row = getNode(nodeId);
     if (!row || row.removedAt !== null) this.broadcast({ type: "node_removed", nodeId });
     else this.broadcast({ type: "node_updated", node: new NodeModel(this, row).view(), ...(pairingCodeId === undefined ? {} : { pairingCodeId }) });
+  }
+
+  /**
+   * Watches every node's sources in use (`NodeView.sources`: each path with the projects working there)
+   * across a change that may alter them (a session made, moved or deleted; a project made, renamed, moved
+   * or deleted): `publishChanged()`, called after it, tells browsers each node whose list it changed. The
+   * changer need not know which nodes those are.
+   */
+  watchSources(): { publishChanged(): void } {
+    const listed = () => new Map(listNodes().map(node => [node.id, JSON.stringify(listSourcesOnNode(node.id))]));
+    const before = listed();
+    return {
+      publishChanged: () => {
+        for (const [nodeId, sources] of listed()) if (before.get(nodeId) !== sources) this.publish(nodeId);
+      },
+    };
   }
 
   /** Pairing codes and their redemption. */

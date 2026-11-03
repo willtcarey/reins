@@ -83,6 +83,13 @@ export class SettingsExtensionDetails extends LitElement {
     `);
   }
 
+  /** What its backend part hears of sessions: its listeners of the runs of the sessions it started. */
+  private _renderSessions(extension: ExtensionSummary) {
+    const listeners = extension.backend?.registrations.settlementListeners ?? 0;
+    if (listeners === 0) return nothing;
+    return group("Sessions", html`${row("Run ends heard", listeners === 1 ? "1 listener" : `${listeners} listeners`)}`);
+  }
+
   /** Its backend part's long-running work, each with its state as the host records it. */
   private _renderServices(extension: ExtensionSummary) {
     const services = extension.backend?.services ?? [];
@@ -158,6 +165,7 @@ export class SettingsExtensionDetails extends LitElement {
         ? html`<p class="mt-6 text-xs text-zinc-500">It gives agents and users nothing now.</p>`
         : nothing}
       ${this._renderServices(extension)}
+      ${this._renderSessions(extension)}
       ${this._renderStorage(extension)}
       ${this._renderErrors(extension)}
     `;

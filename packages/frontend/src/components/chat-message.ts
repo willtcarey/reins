@@ -107,6 +107,7 @@ export class ChatMessage extends LitElement {
         @keydown=${actions.enabled ? actions.handleKeyDown : nothing}
       >
         <div data-role="user-message-animation-target" class="flex max-w-[80%] flex-col items-end">
+          ${message.sourceExtension ? html`<div data-role="message-origin" class="mb-1 text-[10px] text-zinc-500">from ${message.sourceExtension}</div>` : nothing}
           <div data-role="message-press-target" class="flex max-w-full origin-bottom-right flex-col items-end gap-2">
             ${images.length > 0 ? html`
               <div data-role="user-message-attachments" class="grid grid-cols-1 gap-2 justify-items-end max-w-full">

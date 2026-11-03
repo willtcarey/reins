@@ -17,9 +17,10 @@ export function registerNewSessionCommand(reins: ReinsSdk): Disposer {
       }
       // Beside a session, the new one also shares its source, which the subject does not carry.
       const session = sessionId ? await reins.sessions.get(sessionId) : null;
-      const place = session
+      const place = session?.projectId != null
         ? { projectId: session.projectId, taskId: session.taskId, source: session.source }
         : projectId == null ? null : { projectId, taskId };
+      // A session of no project has none to start another in (the browser creates sessions in projects).
       if (!place) throw new Error("Choose a project to start a session in");
       const created = await reins.sessions.create({ ...place, prompt: args });
       workspace.open({ view: "session", sessionId: created }, { in: "main" });

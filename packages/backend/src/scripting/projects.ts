@@ -4,8 +4,6 @@
 
 import { Type } from "@sinclair/typebox";
 import { getProject, listProjects } from "../project-store.js";
-import { createProject } from "../models/projects.js";
-import { getSource } from "../node-store.js";
 import { type ApiFunctionDef, defineFunction } from "./define-function.js";
 
 // ---------------------------------------------------------------------------
@@ -16,6 +14,7 @@ export const ProjectSchema = Type.Object({
   id: Type.Number(),
   name: Type.String(),
   base_branch: Type.String(),
+  default_source_id: Type.Union([Type.Number(), Type.Null()], { description: "Its default source: where it was created, where a new session of it works unless told otherwise." }),
   created_at: Type.String(),
   last_opened_at: Type.String(),
 });
@@ -48,9 +47,8 @@ export const PROJECT_FUNCTIONS: ApiFunctionDef[] = [
   defineFunction({
     name: "projects.create",
     description:
-      "Create a new project whose first source (its working copy on a node) is `path` on node `nodeId` (default: the node this session runs on). " +
-      "Detects the default branch (main, master or develop) there if not provided. " +
-      "Throws if that path on that node is already a source of another project.",
+      "Create a new project whose default source is `path` on node `nodeId` (default: the node this session runs on), a directory there. " +
+      "Detects the default branch (main, master or develop) there if not provided.",
     parameters: Type.Object({
       name: Type.String(),
       path: Type.String(),
@@ -61,20 +59,20 @@ export const PROJECT_FUNCTIONS: ApiFunctionDef[] = [
     async: true,
     tags: ["projects", "create", "write", "mutation"],
     execute: ({ nodeId, ...params }, ctx) => {
-      const node = nodeId ?? getSource(ctx.sourceId)?.node_id;
-      if (!node) throw new Error("Calling session's source not found: pass nodeId");
-      return createProject({ ...params, nodeId: node }, ctx.models.nodes);
+      return ctx.models.projects.create({ ...params, nodeId: nodeId ?? ctx.session.source.record.node_id });
     },
   }),
   defineFunction({
     name: "projects.current",
-    description: "Get the current project (the one this session belongs to). No ID needed.",
+    description: "Get the current project (the one this session belongs to), or null for a session of no project. No ID needed.",
     parameters: Type.Object({}),
-    returns: ProjectSchema,
+    returns: Type.Union([ProjectSchema, Type.Null()]),
     tags: ["projects", "current", "read", "self", "context"],
     execute: (_params, ctx) => {
-      const project = getProject(ctx.projectId);
-      if (!project) throw new Error(`Project ${ctx.projectId} not found`);
+      const { projectId } = ctx.session;
+      if (projectId === null) return null;
+      const project = getProject(projectId);
+      if (!project) throw new Error(`Project ${projectId} not found`);
       return project;
     },
   }),

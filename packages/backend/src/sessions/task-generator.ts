@@ -11,8 +11,8 @@ import { slugifyBranchName } from "../branch-name.js";
 import { createBroadcast } from "../models/broadcast.js";
 import { resolveUtilityModelConfig } from "../models/model-settings.js";
 import { Sessions } from "../models/sessions.js";
-import type { Source } from "../node-store.js";
 import { deleteSession } from "../session-store.js";
+import { Nodes } from "../models/nodes.js";
 import type { AppState } from "../state.js";
 import { createSession } from "./create-session.js";
 import { TASK_GENERATOR_KIND } from "./session-kinds.js";
@@ -29,13 +29,13 @@ export interface GeneratedTask {
 const TIMEOUT_MS = 30_000;
 
 /**
- * Generate a structured task from freeform user input, in a session on `source`. Any failure to get a
+ * Generate a structured task from freeform user input, in a session of the project on `place.sourceId`. Any failure to get a
  * usable reply (no model configured, too slow, a failed run, unparseable JSON) gives the deterministic
  * fallback.
  */
 export async function generateTask(
   state: AppState,
-  source: Pick<Source, "id" | "project_id">,
+  place: { projectId: number; sourceId: number },
   prompt: string,
   { timeoutMs = TIMEOUT_MS }: { timeoutMs?: number } = {},
 ): Promise<GeneratedTask> {
@@ -44,10 +44,11 @@ export async function generateTask(
   const model = resolveUtilityModelConfig();
   if (!model) return fallback(prompt);
 
-  const { id } = createSession(state, source.project_id, {
+  const { id } = createSession(state, {
+    projectId: place.projectId,
     kind: TASK_GENERATOR_KIND,
     background: true,
-    sourceId: source.id,
+    sourceId: place.sourceId,
     model: { provider: model.provider, modelId: model.modelId },
     thinkingLevel: model.thinkingLevel,
   });
@@ -62,7 +63,9 @@ export async function generateTask(
     // Submission or wait failure — fall through
   } finally {
     await closeSessionRuntime(state.process, id);
+    const sources = new Nodes(state, createBroadcast(state.process)).watchSources();
     deleteSession(id);
+    sources.publishChanged();
   }
   return fallback(prompt);
 }

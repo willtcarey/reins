@@ -92,14 +92,13 @@ test("an installed node works in a checkout added to a project on it, and when t
   const remote = (await api.client.nodes.list()).find(entry => entry.name === "remote")!;
   expect(remote).toMatchObject({ connected: true, sources: [], build: { id: firstBuild, status: "current" } });
 
-  // A project on the local node, to which a checkout on the remote node is added (POST
-  // /api/projects/:id/sources); a session moved to the remote node runs a turn with a bash call there.
+  // A project on the local node; a session moved to a checkout on the remote node runs a turn with a bash
+  // call there.
   startNodeProcess(dirs);
   await until(() => api.localNodeConnected(), "the local node connected");
   const { projectId } = await api.setUp(dirs.repo.dir);
-  await api.client.projects.addSource(projectId, { nodeId: remote.id, path: checkout });
   const sessionId = await api.createSession(projectId);
-  await api.client.sessions.move(sessionId, { nodeId: remote.id });
+  await api.client.sessions.move(sessionId, { nodeId: remote.id, path: checkout });
   await api.prompt(sessionId, "turn", "Run it [tool]");
   await api.waitForTranscript(sessionId, ["user: Run it [tool]", "assistant: ", "assistant: Echo: Run it [tool]"]);
   await until(async () => await api.activity(sessionId) === "finished", "the turn settled");

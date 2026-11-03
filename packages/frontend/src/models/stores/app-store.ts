@@ -1,6 +1,6 @@
 /** Long-lived application runtime and shared stores. */
 
-import type { Project as ProjectInfo } from "@backend/project-store.js";
+import type { ProjectView as ProjectInfo } from "@backend/routes/projects.js";
 import type { ContainerId, View } from "@reins/sdk";
 import { CommandRegistry } from "../../sdk-host/commands.js";
 import { SendHandoff } from "../send-handoff.js";
@@ -12,6 +12,7 @@ import { Inspector } from "../inspector.js";
 import type { IAppClient } from "../ws-client.js";
 import { SessionOperations } from "../session-operations.js";
 import { ConversationsStore } from "./conversations-store.js";
+import { LocationSkills } from "./location-skills.js";
 import { ProjectFiles } from "./project-files.js";
 import { ProjectsStore } from "./projects-store.js";
 import { SessionCache } from "./session-cache.js";
@@ -41,6 +42,8 @@ export class AppStore {
   readonly inspector = new Inspector(this.views);
   /** A message the new session page sent, which the session's chat panel animates into its conversation. */
   readonly sendHandoff = new SendHandoff();
+  /** The skills of each location, for the composers' `/name` suggestions. */
+  readonly locationSkills = new LocationSkills();
 
   connected = false;
 

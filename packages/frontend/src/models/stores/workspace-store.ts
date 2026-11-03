@@ -69,7 +69,7 @@ export class WorkspaceStore {
   /** The viewed session's source, once its details are known; the same object while it is unchanged. */
   get source(): Source | null {
     const placement = this.active?.sessionData.placement;
-    if (this.projectId == null || !placement?.path) return null;
+    if (!placement?.path) return null;
     const source = { nodeId: placement.nodeId, path: placement.path };
     if (!sameSource(this._source, source)) this._source = source;
     return this._source;
@@ -124,19 +124,19 @@ export class WorkspaceStore {
     if (!this.isCurrent(transition, active)) return;
 
     const projectId = active.projectId;
-    if (projectId == null) return;
-    await this.app.projectsStore.ensureLoaded(projectId);
-    if (!this.isCurrent(transition, active)) return;
-
     const taskId = active.sessionData.taskId ?? null;
-    const branch = taskId == null
+    if (projectId != null) {
+      await this.app.projectsStore.ensureLoaded(projectId);
+      if (!this.isCurrent(transition, active)) return;
+    }
+    const branch = projectId == null || taskId == null
       ? null
       : this.app.projectsStore.peekStore(projectId)?.findTask(taskId)?.branch_name ?? null;
 
     // Both stores synchronously adopt the same transition's scope before their
-    // own async refreshes can complete.
-    this.diffStore.setScope(projectId, branch);
-    void this.codeReviewStore.setScope({ projectId, taskId });
+    // own async refreshes can complete. The diff reads the session's own checkout.
+    this.diffStore.setScope(active.sessionId, branch, projectId);
+    if (projectId != null) void this.codeReviewStore.setScope({ projectId, taskId });
     this.notify();
   }
 
@@ -158,15 +158,8 @@ export class WorkspaceStore {
   createProject(data: { name: string; path: string; nodeId: string; base_branch: string }) {
     return this.app.projectsStore.createProject(data);
   }
-  updateProject(projectId: number, data: { name: string; base_branch: string }) {
+  updateProject(projectId: number, data: { name: string; base_branch: string; defaultSource?: { nodeId: string; path: string } }) {
     return this.app.projectsStore.updateProject(projectId, data);
-  }
-  listSources(projectId: number) { return this.app.projectsStore.listSources(projectId); }
-  addSource(projectId: number, nodeId: string, path: string) {
-    return this.app.projectsStore.addSource(projectId, nodeId, path);
-  }
-  moveSource(projectId: number, sourceId: number, path: string) {
-    return this.app.projectsStore.moveSource(projectId, sourceId, path);
   }
   deleteProject(projectId: number) { return this.app.projectsStore.deleteProject(projectId); }
   generateTask(projectId: number, prompt: string) {

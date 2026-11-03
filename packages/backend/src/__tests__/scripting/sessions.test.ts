@@ -5,7 +5,8 @@ import { Value } from "@sinclair/typebox/value";
 import { Type } from "@sinclair/typebox";
 import { SessionHandleSchema, SessionSchema } from "../../scripting/sessions.js";
 import { createProject } from "../project-fixture.js";
-import { defaultSource } from "../../node-store.js";
+import { upsertSource } from "../../node-store.js";
+import { createSession as insertSession } from "../../session-store.js";
 import { createTask } from "../../task-store.js";
 import { createSession, getSession, listSessions, updateActivityState, updateSessionMetadata } from "../session-fixture.js";
 import { loadMessages } from "../../messages-store.js";
@@ -21,6 +22,7 @@ import { useFakeModel } from "../helpers/fake-model.js";
 import { sessionActivity } from "../../models/session-activity.js";
 import { persistCanonicalMessages } from "../helpers/canonical-messages.js";
 import { executeTool, reinsTool } from "../helpers/execute-tool.js";
+import { scriptContext } from "../helpers/script-context.js";
 
 const text = (value: string) => [{ type: "text" as const, text: value }];
 
@@ -47,19 +49,10 @@ describe("api.sessions orchestration", () => {
     const broadcasts: unknown[] = [];
     // Node status and live session events are announced too.
     state.process.clients.add({ ws: { send: data => { const message = JSON.parse(data); if (message.type !== "node_updated" && message.type !== "event") broadcasts.push(message); return 0; } } });
-    const instanceFor = (sessionId: string) => new SessionInstance(state, sessionId);
-    const models = new Models(state);
-    const context = {
-      projectId: project.id,
-      sessionId: "parent",
-      taskId: null,
-      broadcast: models.broadcast,
-      sourceId: defaultSource(project.id)!.id,
-      nodes: state.nodes,
-      models,
-      instance: instanceFor("parent"),
-    };
-    return { state, project, turns, broadcasts, context, instanceFor, api: buildApiObject(context) };
+    const instanceFor = (sessionId: string) => new SessionInstance(new Models(state), sessionId);
+    /** The script context of session `sessionId`, which exists. */
+    const contextFor = (sessionId: string) => scriptContext(state, { sessionId, instance: instanceFor(sessionId) });
+    return { state, project, turns, broadcasts, contextFor, instanceFor, api: buildApiObject(contextFor("parent")) };
   }
   /** Answers the session's model requests until it is idle. */
   async function answerUntilIdle(sessionId: string, reply?: string): Promise<void> {
@@ -72,6 +65,33 @@ describe("api.sessions orchestration", () => {
 
   /** The transcript as the server's storage holds it. */
   const transcript = (sessionId: string, role?: string) => loadMessages(sessionId).filter(message => !role || message.role === role).map(message => message.content);
+
+  test("a session of no project lists the sessions of no project on its source, starts there or at a location it names, and reaches any session", async () => {
+    const { state, project } = setup();
+    const scratch = upsertSource("internal", repo.dir + "/..");
+    const elsewhere = upsertSource("internal", "/tmp/elsewhere");
+    for (const [id, sourceId] of [["loose", scratch.id], ["neighbour", scratch.id], ["far", elsewhere.id]] as const) {
+      insertSession(id, null, { agentRuntimeType: "pi", modelProvider: provider(), modelId: "fake", sourceId, background: true });
+    }
+    const api = buildApiObject(scriptContext(state, { sessionId: "loose", instance: new SessionInstance(new Models(state), "loose") }));
+
+    const listed = Value.Parse(Type.Array(SessionSchema), await api.sessions.list({ background: "include" }));
+    expect(listed.map(session => session.id).toSorted()).toEqual(["loose", "neighbour"]);
+    const started = Value.Parse(SessionHandleSchema, await api.sessions.start("Look around", { parentSessionId: null }));
+    expect(getSession(started.sessionId)).toMatchObject({ project_id: null, task_id: null, source_id: scratch.id });
+    await answerUntilIdle(started.sessionId);
+    const placed = Value.Parse(SessionHandleSchema, await api.sessions.start("Over there", { parentSessionId: null, source: { nodeId: "internal", path: "/tmp/elsewhere" } }));
+    expect(getSession(placed.sessionId)).toMatchObject({ project_id: null, source_id: elsewhere.id });
+    await answerUntilIdle(placed.sessionId);
+    await expect(api.sessions.send("neighbour", "Hello")).resolves.toEqual({ sessionId: "neighbour" });
+    await answerUntilIdle("neighbour");
+    await expect(api.sessions.send("far", "Hello")).resolves.toEqual({ sessionId: "far" });
+    await answerUntilIdle("far");
+    expect(await api.sessions.setName("parent", "Renamed")).toMatchObject({ id: "parent", name: "Renamed" });
+    await expect(api.sessions.start("In a task", { parentSessionId: null, taskId: createTask(project.id, "T", null, "task/t").id })).rejects.toThrow("A session of no project has no task");
+    expect(() => api.tasks.list()).toThrow("This session has no project, and tasks belong to projects");
+    expect(api.projects.current()).toBeNull();
+  });
 
   test("discovers unread activity and returns persisted status without marking sessions read", async () => {
     const { api } = setup();
@@ -116,8 +136,7 @@ describe("api.sessions orchestration", () => {
 
     const otherProject = createProject("Other organization", `${repo.dir}-organization`, "main");
     createSession("foreign-organization", otherProject.id, { agentRuntimeType: "pi" });
-    await expect(Promise.resolve().then(() => api.sessions.setPinned("foreign-organization", true))).rejects.toThrow("scope");
-    expect(getSession("foreign-organization")!.pinned_at).toBeNull();
+    expect(await api.sessions.setPinned("foreign-organization", true)).toMatchObject({ pinned: true });
   });
 
   test("renames and clears a session through an explicit scoped mutation", async () => {
@@ -140,7 +159,7 @@ describe("api.sessions orchestration", () => {
     expect(getSession("parent")!.name).toBeNull();
   });
 
-  test("rejects invalid or foreign-project names without side effects", async () => {
+  test("rejects invalid names without side effects, and renames a session of another project", async () => {
     const { api, broadcasts } = setup();
     updateSessionMetadata("parent", { name: "Original" });
 
@@ -151,9 +170,7 @@ describe("api.sessions orchestration", () => {
     const otherProject = createProject("Other naming", `${repo.dir}-naming`, "main");
     createSession("foreign-name", otherProject.id, { agentRuntimeType: "pi" });
     updateSessionMetadata("foreign-name", { name: "Foreign original" });
-    await expect(Promise.resolve().then(() => api.sessions.setName("foreign-name", "Not allowed"))).rejects.toThrow("scope");
-    expect(getSession("foreign-name")!.name).toBe("Foreign original");
-    expect(broadcasts).toEqual([]);
+    expect(await api.sessions.setName("foreign-name", "Renamed here")).toMatchObject({ name: "Renamed here" });
   });
 
   test("starts immediately with explicit child/title semantics and waits for native settlement", async () => {
@@ -173,7 +190,8 @@ describe("api.sessions orchestration", () => {
 
   test("a background session the server starts runs, settles and reports like any other, and scripts list it only when asked", async () => {
     const { api, turns, state, project } = setup();
-    const child = createNewSession(state, project.id, {
+    const child = createNewSession(state, {
+      projectId: project.id,
       parentSessionId: "parent", model: { provider: provider(), modelId: "fake" }, thinkingLevel: "high", background: true,
     });
     await new Sessions(state, () => {}).submit(child.id, { op: "prompt", content: text("Hidden work"), clientId: "hidden" });
@@ -222,16 +240,13 @@ describe("api.sessions orchestration", () => {
     expect(transcript("existing", "user")).toEqual([text("one"), text("two"), text("resume")]);
   });
 
-  test("validates parent, model, message, scope and self-wait before side effects", async () => {
+  test("validates parent, model, message and self-wait before side effects", async () => {
     const { api, project, turns } = setup();
     const before = listSessions({ projectId: project.id });
     await expect(Promise.resolve().then(() => api.sessions.start("bad", {}))).rejects.toThrow();
     await expect(Promise.resolve().then(() => api.sessions.start("bad", { parentSessionId: null, modelId: "alone" }))).rejects.toThrow();
     await expect(Promise.resolve().then(() => api.sessions.send("parent", ""))).rejects.toThrow();
     await expect(Promise.resolve().then(() => api.sessions.wait("parent", 0))).rejects.toThrow("itself");
-    const other = createProject("Other", `${repo.dir}/other`, "main");
-    createSession("foreign", other.id, { agentRuntimeType: "pi" });
-    await expect(Promise.resolve().then(() => api.sessions.send("foreign", "bad"))).rejects.toThrow("project");
     expect(listSessions({ projectId: project.id })).toEqual(before);
     expect(turns).toEqual([]);
   });
@@ -250,17 +265,11 @@ describe("api.sessions orchestration", () => {
   });
 
   test("inherits task scope and enforces child depth while independent sessions have no parent", async () => {
-    const { project, context, instanceFor, turns } = setup();
+    const { project, contextFor, turns } = setup();
     await Bun.spawn(["git", "branch", "task/orchestration"], { cwd: repo.dir }).exited;
     const task = createTask(project.id, "Orchestration", null, "task/orchestration");
     createSession("task-parent", project.id, { agentRuntimeType: "pi", taskId: task.id, modelProvider: provider(), modelId: "fake" });
-    const taskContext = {
-      ...context,
-      sessionId: "task-parent",
-      taskId: task.id,
-      instance: instanceFor("task-parent"),
-    };
-    const api = buildApiObject(taskContext);
+    const api = buildApiObject(contextFor("task-parent"));
     const child = Value.Decode(SessionHandleSchema, await api.sessions.start("Task work", { parentSessionId: "current" }));
     expect(getSession(child.sessionId)).toMatchObject({ task_id: task.id, parent_session_id: "task-parent" });
     await admitted(turns, 1);
@@ -269,11 +278,7 @@ describe("api.sessions orchestration", () => {
 
     createSession("level-two", project.id, { agentRuntimeType: "pi", taskId: task.id, parentSessionId: child.sessionId });
     createSession("level-three", project.id, { agentRuntimeType: "pi", taskId: task.id, parentSessionId: "level-two", modelProvider: provider(), modelId: "fake" });
-    const deep = buildApiObject({
-      ...taskContext,
-      sessionId: "level-three",
-      instance: instanceFor("level-three"),
-    });
+    const deep = buildApiObject(contextFor("level-three"));
     const ids = () => listSessions({ taskId: task.id }).map(session => session.id);
     const before = ids();
     await expect(deep.sessions.start("Too deep", { parentSessionId: "current" })).rejects.toThrow("depth");
@@ -288,14 +293,14 @@ describe("api.sessions orchestration", () => {
     await deep.sessions.wait(independent.sessionId, 1000);
   });
 
-  test("starts sessions in another task or scratch, independent unless asked, and waits on its own children there", async () => {
+  test("starts sessions in another task or scratch, independent unless asked, and waits on any of them", async () => {
     const { api, project, turns } = setup();
     await Bun.spawn(["git", "branch", "task/elsewhere"], { cwd: repo.dir }).exited;
     const task = createTask(project.id, "Elsewhere", null, "task/elsewhere");
 
     const independent = Value.Decode(SessionHandleSchema, await api.sessions.start("Independent", { parentSessionId: null, taskId: task.id }));
     expect(getSession(independent.sessionId)).toMatchObject({ task_id: task.id, parent_session_id: null });
-    await expect(Promise.resolve().then(() => api.sessions.wait(independent.sessionId, 0))).rejects.toThrow("scope");
+    expect(await api.sessions.wait(independent.sessionId, 0)).toMatchObject({ sessionId: independent.sessionId });
 
     const child = Value.Decode(SessionHandleSchema, await api.sessions.start("Child", { parentSessionId: "current", taskId: task.id }));
     expect(getSession(child.sessionId)).toMatchObject({ task_id: task.id, parent_session_id: "parent" });
@@ -307,15 +312,16 @@ describe("api.sessions orchestration", () => {
   });
 
   test("a task session starts scratch sessions with taskId null; tasks of other projects are refused", async () => {
-    const { project, context, instanceFor } = setup();
+    const { project, contextFor } = setup();
     const task = createTask(project.id, "Caller task", null, "task/caller");
     createSession("task-caller", project.id, { agentRuntimeType: "pi", taskId: task.id, modelProvider: provider(), modelId: "fake" });
-    const api = buildApiObject({ ...context, sessionId: "task-caller", taskId: task.id, instance: instanceFor("task-caller") });
+    const api = buildApiObject(contextFor("task-caller"));
     const other = createProject("Other", `${repo.dir}/other`, "main");
     const foreignTask = createTask(other.id, "Foreign", null, "task/foreign");
     const before = listSessions({ projectId: project.id });
-    await expect(Promise.resolve().then(() => api.sessions.start("bad", { parentSessionId: null, taskId: foreignTask.id }))).rejects.toThrow("not in the current project");
-    await expect(Promise.resolve().then(() => api.sessions.start("bad", { parentSessionId: null, taskId: 999_999 }))).rejects.toThrow("not in the current project");
+    await expect(Promise.resolve().then(() => api.sessions.start("bad", { parentSessionId: null, taskId: foreignTask.id }))).rejects.toThrow(`Task ${foreignTask.id} is not a task of project ${project.id}`);
+    await expect(Promise.resolve().then(() => api.sessions.start("bad", { parentSessionId: null, taskId: 999_999 }))).rejects.toThrow("Task not found: 999999");
+    await expect(Promise.resolve().then(() => api.sessions.start("bad", { parentSessionId: null, modelProvider: provider(), modelId: "missing" }))).rejects.toThrow(`Model 'missing' not found for provider '${provider()}'`);
     expect(listSessions({ projectId: project.id })).toEqual(before);
 
     const scratch = Value.Decode(SessionHandleSchema, await api.sessions.start("Scratch", { parentSessionId: null, taskId: null }));
@@ -324,16 +330,11 @@ describe("api.sessions orchestration", () => {
   });
 
   test("starting siblings on the active task does not contend for Git's checkout lock", async () => {
-    const { project, context, instanceFor } = setup();
+    const { project, contextFor } = setup();
     await Bun.spawn(["git", "checkout", "-b", "task/parallel"], { cwd: repo.dir, stderr: "ignore" }).exited;
     const task = createTask(project.id, "Parallel", null, "task/parallel");
     createSession("task-parent", project.id, { agentRuntimeType: "pi", taskId: task.id, modelProvider: provider(), modelId: "fake" });
-    const api = buildApiObject({
-      ...context,
-      sessionId: "task-parent",
-      taskId: task.id,
-      instance: instanceFor("task-parent"),
-    });
+    const api = buildApiObject(contextFor("task-parent"));
     // Another agent may be using Git; creating sessions on the already-active branch needs no checkout.
     const lock = join(repo.dir, ".git/index.lock");
     writeFileSync(lock, "held by another operation");
@@ -375,10 +376,10 @@ describe("api.sessions orchestration", () => {
   });
 
   test("execute cancellation interrupts only its wait, not the target session", async () => {
-    const { api, turns, context, state } = setup();
+    const { api, turns, project, instanceFor, state } = setup();
     const child = Value.Decode(SessionHandleSchema, await api.sessions.start("Work", { parentSessionId: "current" }));
     const controller = new AbortController();
-    const tool = reinsTool("execute", { ...context, state });
+    const tool = reinsTool("execute", { sessionId: "parent", projectId: project.id, instance: instanceFor("parent"), state });
     const waiting = executeTool(tool, "wait", { code: `return await api.sessions.wait(${JSON.stringify(child.sessionId)}, 1000)` }, controller.signal, undefined);
     controller.abort();
     expect((await waiting).details).toMatchObject({ success: false });

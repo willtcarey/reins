@@ -8,15 +8,14 @@ import { createAppState, type TestAppState } from "../helpers/app-state.js";
 import { useTestRepo } from "../helpers/test-repo.js";
 import { connectLoopbackNode, connectScriptedNode, loopbackLink, SEEDED_NODE_ID, stopLoopbackNode } from "../helpers/loopback-node.js";
 import { buildRouter } from "../../routes/index.js";
-import { createProject } from "../project-fixture.js";
 import type { SkillsListResponse } from "../../routes/skills.js";
+import { findSource } from "../../node-store.js";
 
 const failing = async (): Promise<never> => { throw new Error("disk on fire"); };
 
-describe("GET /api/projects/:id/skills", () => {
+describe("GET /api/nodes/:nodeId/skills", () => {
   let state: TestAppState;
   let router: ReturnType<typeof buildRouter>;
-  let projectId: number;
   let home: string;
   let previousHome: string | undefined;
 
@@ -26,7 +25,6 @@ describe("GET /api/projects/:id/skills", () => {
   beforeEach(() => {
     state = createAppState();
     router = buildRouter();
-    projectId = createProject("Test Project", repo.dir).id;
     // The server's own skills, in its ~/.agents: not a session's. (The loopback node's home is this test
     // process's own: Pi's `~` is `os.homedir()`, which HOME set here does not move.)
     previousHome = process.env.HOME;
@@ -47,13 +45,13 @@ describe("GET /api/projects/:id/skills", () => {
     writeFileSync(join(skillDir, "SKILL.md"), `---\nname: ${name}\ndescription: ${description}\n---\n\nBody of ${name}`, "utf-8");
   }
   const writeProjectSkill = (name: string, description: string) => writeSkill(join(repo.dir, ".agents"), name, description);
-  const skills = async (): Promise<SkillsListResponse> => {
-    const res = await router.handle(makeRequest("GET", `/api/projects/${projectId}/skills`), state);
+  const skills = async (path = repo.dir): Promise<SkillsListResponse> => {
+    const res = await router.handle(makeRequest("GET", `/api/nodes/${SEEDED_NODE_ID}/skills?path=${encodeURIComponent(path)}`), state);
     expect(res!.status).toBe(200);
     return res!.json();
   };
 
-  test("lists the skills of the project's default source's node and checkout, as a session's runtime discovers them: name and description only, nothing of the server's ~/.agents", async () => {
+  test("lists the skills of a directory on a node, as a session's runtime there discovers them: name and description only, nothing of the server's ~/.agents", async () => {
     writeProjectSkill("checkout-skill", "The checkout's skill");
     connectLoopbackNode(state);
     await loopbackLink(state).ready();
@@ -81,8 +79,24 @@ describe("GET /api/projects/:id/skills", () => {
     broken.stop();
   });
 
-  test("returns 404 for a missing project", async () => {
-    const res = await router.handle(makeRequest("GET", "/api/projects/99999/skills"), state);
-    expect(res!.status).toBe(404);
+  test("lists a directory no session works in yet, keeping no source for it", async () => {
+    const elsewhere = mkdtempSync(join(tmpdir(), "reins-skills-"));
+    try {
+      writeSkill(join(elsewhere, ".agents"), "fresh-skill", "In a new directory");
+      connectLoopbackNode(state);
+      await loopbackLink(state).ready();
+
+      expect((await skills(`${elsewhere}/`)).skills).toContainEqual({ name: "fresh-skill", description: "In a new directory" });
+      expect(findSource(SEEDED_NODE_ID, elsewhere)).toBeNull();
+    } finally {
+      rmSync(elsewhere, { recursive: true, force: true });
+    }
+  });
+
+  test("an unknown node is 404; a missing or relative path is 400", async () => {
+    const at = async (url: string) => (await router.handle(makeRequest("GET", url), state))!.status;
+    expect(await at(`/api/nodes/nowhere/skills?path=${encodeURIComponent(repo.dir)}`)).toBe(404);
+    expect(await at(`/api/nodes/${SEEDED_NODE_ID}/skills`)).toBe(400);
+    expect(await at(`/api/nodes/${SEEDED_NODE_ID}/skills?path=relative`)).toBe(400);
   });
 });

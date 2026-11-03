@@ -3,6 +3,9 @@ import { reinsToolNames } from "../session-runtime/reins-tools.js";
 interface ReinsSystemPromptOptions {
   /** The session's task (null: a scratch session, the project's assistant). */
   task: { title: string; description: string | null } | null;
+  /** Whether the session has a project (true by default). One of no project gets no project section: its
+   * work and context come from its prompt and its source (AGENTS.md, skills, the environment). */
+  project?: boolean;
   /** The tools the session is offered; absent: every tool. */
   tools?: readonly string[];
   /** What the app's extensions add (`reins.prompt`), after the Reins section, in order. */
@@ -12,7 +15,7 @@ interface ReinsSystemPromptOptions {
 /**
  * The Reins part of an agent session's system prompt: who the agent is and how it works, how it
  * orchestrates other sessions (when it is offered `execute`), and its task or, for a scratch session, its
- * role as the project's assistant, then the sections of the app's extensions. The session's runtime appends its environment (the tools, REINS docs,
+ * role as the project's assistant (neither for a session of no project), then the sections of the app's extensions. The session's runtime appends its environment (the tools, REINS docs,
  * context files and skills; see session-runtime.md *The environment*).
  */
 export function reinsSystemPrompt(options: ReinsSystemPromptOptions): string {
@@ -40,7 +43,9 @@ Session orchestration (through execute):
 Other machines: api.nodes.readFile, writeFile, copy and run work on files and commands on any connected node from execute (search "nodes" for details). Return only what you need; the rest stays out of your context.`;
   }
 
-  if (options.task) {
+  if (options.project === false) {
+    // No project section.
+  } else if (options.task) {
     const { title, description } = options.task;
     prompt += `\n\n## Task\nTitle: ${title}`;
     if (description) {

@@ -303,7 +303,7 @@ export class ReviewDiffPanel extends LitElement {
     this._ensureContextState();
     const store = this.store;
     this._inlineReview.reconcile(
-      `${store?.projectId ?? "none"}:${store?.diffMode ?? "branch"}:${source.branch ?? store?.branch ?? ""}`,
+      `${store?.sessionId ?? "none"}:${store?.diffMode ?? "branch"}:${source.branch ?? store?.branch ?? ""}`,
       this._parsedData.changes.map((change) => ({
         id: change.id,
         contentKey: change.contentKey,
@@ -318,13 +318,13 @@ export class ReviewDiffPanel extends LitElement {
 
   private _ensureContextState(): FileDiffContextState | null {
     const store = this.store;
-    if (store?.projectId == null) return null;
+    if (store?.sessionId == null) return null;
     const scope: FileDiffContextScope = {
-      projectId: store.projectId,
+      sessionId: store.sessionId,
       mode: store.diffMode,
       branch: this._parsedSource?.branch ?? store.branch,
     };
-    const key = `${scope.projectId}:${scope.mode}:${scope.branch ?? ""}`;
+    const key = `${scope.sessionId}:${scope.mode}:${scope.branch ?? ""}`;
     if (key === this._contextScopeKey && this._contextState) return this._contextState;
 
     this._contextScopeKey = key;
@@ -569,7 +569,7 @@ export class ReviewDiffPanel extends LitElement {
                             ?data-review-first=${change === changes[0]}
                             .change=${change}
                             .collapsed=${this.isItemCollapsed(change.id)}
-                            .projectId=${this.store?.projectId ?? null}
+                            .sessionId=${this.store?.sessionId ?? null}
                             .branch=${branch ?? null}
                             .source=${this.source}
                             .reservedHeight=${Math.max(1, entry.height - entry.gapBefore)}

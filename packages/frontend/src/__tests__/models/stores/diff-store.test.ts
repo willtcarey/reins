@@ -34,7 +34,7 @@ describe("DiffStore", () => {
   });
 
   test("starts with empty changed-file and patch state", () => {
-    expect(store.projectId).toBeNull();
+    expect(store.sessionId).toBeNull();
     expect(store.fileData.data).toEqual({ files: [], branch: null, baseBranch: null });
     expect(store.patchData.data).toBeNull();
     expect(store.diffMode).toBe("branch");
@@ -50,15 +50,15 @@ describe("DiffStore", () => {
       baseBranch: "main",
     });
 
-    store.setProject(7);
+    store.setScope("s7", null);
 
-    expect(store.projectId).toBe(7);
+    expect(store.sessionId).toBe("s7");
     expect(store.patchData.data).toBeNull();
     expect(store.fileData.data).toEqual({ files: [], branch: null, baseBranch: null });
   });
 
   test("keeps the diff review's active file while the project stays", () => {
-    store.setScope(7, "feature/review");
+    store.setScope("s7", "feature/review");
     let notified = 0;
     store.subscribe(() => { notified += 1; });
 
@@ -66,9 +66,9 @@ describe("DiffStore", () => {
     store.setActiveFile("src/app.ts");
     expect(notified).toBe(1);
 
-    store.setScope(7, "feature/other");
+    store.setScope("s7", "feature/other");
     expect(store.activeFile).toBe("src/app.ts");
-    store.setScope(8, null);
+    store.setScope("s8", null);
     expect(store.activeFile).toBeNull();
   });
 
@@ -81,14 +81,14 @@ describe("DiffStore", () => {
       return jsonResponse({});
     });
 
-    store.setScope(7, "feature/review");
+    store.setScope("s7", "feature/review");
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(requests.filter((url) => url.includes("/diff/files"))).toEqual([
-      "/api/projects/7/diff/files?mode=branch&branch=feature%2Freview",
+      "/api/sessions/s7/diff/files?mode=branch&branch=feature%2Freview",
     ]);
     expect(requests.filter((url) => url.includes("/git/spread"))).toEqual([
-      "/api/projects/7/git/spread?branch=feature%2Freview&fetch=false",
+      "/api/sessions/s7/git/spread?branch=feature%2Freview&fetch=false",
     ]);
   });
 
@@ -100,7 +100,7 @@ describe("DiffStore", () => {
       if (url.includes("/git/spread")) return jsonResponse({});
       return textResponse("unexpected patch");
     });
-    store.setScope(7, "feature/review");
+    store.setScope("s7", "feature/review");
     await new Promise((resolve) => setTimeout(resolve, 0));
     store.patchData = store.patchData.asLoaded({
       patch: "cached",
@@ -111,11 +111,11 @@ describe("DiffStore", () => {
     });
     requests.length = 0;
 
-    store.setScope(7, "feature/review");
+    store.setScope("s7", "feature/review");
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(requests).toEqual([
-      "/api/projects/7/diff/files?mode=branch&branch=feature%2Freview",
+      "/api/sessions/s7/diff/files?mode=branch&branch=feature%2Freview",
     ]);
     expect(store.patchData.data?.patch).toBe("cached");
   });
@@ -130,12 +130,12 @@ describe("DiffStore", () => {
       if (url.includes("/diff/patch")) return textResponse("diff --git a/a.ts b/a.ts\n");
       return jsonResponse({});
     });
-    store.setProject(7);
+    store.setScope("s7", null);
     store.setBranch("feature/review");
 
     await store.fetchPatchDiff();
 
-    expect(requests).toContain("/api/projects/7/diff/patch?context=3&mode=branch&branch=feature%2Freview");
+    expect(requests).toContain("/api/sessions/s7/diff/patch?context=3&mode=branch&branch=feature%2Freview");
     expect(store.patchData.data).toMatchObject({
       patch: "diff --git a/a.ts b/a.ts\n",
       version: 1,
@@ -152,7 +152,7 @@ describe("DiffStore", () => {
       if (url.includes("/diff/patch")) return textResponse("");
       return jsonResponse({});
     });
-    store.setProject(1);
+    store.setScope("s1", null);
     store.patchData = store.patchData.asLoaded({
       patch: "old",
       cacheKeyPrefix: "old",
@@ -164,7 +164,7 @@ describe("DiffStore", () => {
     await store.setDiffMode("uncommitted");
 
     expect(store.diffMode).toBe("uncommitted");
-    expect(requests).toContain("/api/projects/1/diff/patch?context=3&mode=uncommitted");
+    expect(requests).toContain("/api/sessions/s1/diff/patch?context=3&mode=uncommitted");
     expect(requests.some((url) => /\/diff\?/.test(url))).toBe(false);
   });
 
@@ -172,23 +172,23 @@ describe("DiffStore", () => {
     const oldFiles = deferredResponse();
     const oldSpread = deferredResponse();
     mockFetch((url) => {
-      if (url === "/api/projects/1/diff/files?mode=branch&branch=old") return oldFiles.promise;
-      if (url === "/api/projects/1/git/spread?branch=old&fetch=false") return oldSpread.promise;
-      if (url === "/api/projects/2/diff/files?mode=branch&branch=new") {
+      if (url === "/api/sessions/s1/diff/files?mode=branch&branch=old") return oldFiles.promise;
+      if (url === "/api/sessions/s1/git/spread?branch=old&fetch=false") return oldSpread.promise;
+      if (url === "/api/sessions/s2/diff/files?mode=branch&branch=new") {
         return jsonResponse({
           files: [{ path: "new.ts", additions: 2, removals: 0 }],
           branch: "new",
           baseBranch: "main",
         });
       }
-      if (url === "/api/projects/2/git/spread?branch=new&fetch=false") {
+      if (url === "/api/sessions/s2/git/spread?branch=new&fetch=false") {
         return jsonResponse({ branch: "new", aheadBase: 2, behindBase: 0, aheadRemote: 1, behindRemote: 0 });
       }
       return jsonResponse({});
     });
 
-    store.setScope(1, "old");
-    store.setScope(2, "new");
+    store.setScope("s1", "old");
+    store.setScope("s2", "new");
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     oldFiles.resolve(jsonResponse({
@@ -221,7 +221,7 @@ describe("DiffStore", () => {
       return jsonResponse({});
     });
 
-    store.setScope(1, "old");
+    store.setScope("s1", "old");
     store.setScope(null, null);
     oldFiles.resolve(jsonResponse({ error: "old failure" }, 500));
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -244,7 +244,7 @@ describe("DiffStore", () => {
       if (url.includes("/diff/files")) return jsonResponse({ files: [] });
       return jsonResponse({});
     });
-    store.setProject(1);
+    store.setScope("s1", null);
 
     const first = store.fetchPatchDiff();
     await store.fetchPatchDiff();
@@ -268,7 +268,7 @@ describe("DiffStore", () => {
       if (url.includes("/diff/patch")) return textResponse(`patch-${++patchRequest}`);
       return jsonResponse({});
     });
-    store.setProject(1);
+    store.setScope("s1", null);
     await new Promise((resolve) => setTimeout(resolve, 0));
     await store.fetchPatchDiff();
 
@@ -288,7 +288,7 @@ describe("DiffStore", () => {
       }
       return jsonResponse({});
     });
-    store.setProject(1);
+    store.setScope("s1", null);
     await new Promise((resolve) => setTimeout(resolve, 0));
     await store.fetchPatchDiff();
 
@@ -304,7 +304,7 @@ describe("DiffStore", () => {
       if (url.includes("/diff/files")) return jsonResponse({ files: [] });
       return jsonResponse({});
     });
-    store.setProject(1);
+    store.setScope("s1", null);
     const pending = store.fetchPatchDiff();
 
     store.clearPatchDiff();

@@ -20,7 +20,8 @@
 
 import { LitElement, html, nothing, type PropertyValues } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
-import type { ProjectStore } from "../models/stores/project-store.js";
+import type { Source } from "@reins/sdk";
+import type { LocationSkills } from "../models/stores/location-skills.js";
 import type { CommandRegistry } from "../sdk-host/commands.js";
 import { slashSuggestions, type SlashSuggestion } from "../models/slash-suggestions.js";
 import { slashInsertEvent } from "./events.js";
@@ -33,9 +34,12 @@ export class SlashSuggest extends LitElement {
     return this;
   }
 
-  /** Project store whose `skills` field gives the skills suggested. */
+  /** The skills suggested are those of `location` (the session's, or the one chosen for a new one). */
   @property({ attribute: false })
-  store: ProjectStore | null = null;
+  skills: LocationSkills | null = null;
+
+  @property({ attribute: false })
+  location: Source | null = null;
 
   @property({ attribute: false })
   commands: CommandRegistry | null = null;
@@ -54,7 +58,7 @@ export class SlashSuggest extends LitElement {
 
     const matches = slashSuggestions(query, {
       commands: this.commands?.list() ?? [],
-      skills: this.store?.skills ?? [],
+      skills: this.skills?.get(this.location) ?? [],
       atStart,
     });
     if (matches.length === 0) { this.close(); return; }

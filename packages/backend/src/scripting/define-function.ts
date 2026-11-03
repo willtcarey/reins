@@ -7,28 +7,19 @@
  */
 
 import type { TSchema, TObject, TProperties, Static } from "@sinclair/typebox";
-import type { Broadcast } from "../models/broadcast.js";
 import type { Models } from "../models/models.js";
+import type { SessionModel } from "../models/session.js";
 import type { SessionInstance } from "../sessions/session-instance.js";
-import type { NodeHub } from "../state.js";
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
-/**
- * Runtime context passed to every API function's execute method.
- * Carries the project scope and shared state.
- */
+/** What every API function's execute method is called with. */
 export interface ApiContext {
-  projectId: number;
-  sessionId: string;
-  taskId: number | null;
-  broadcast: Broadcast;
-  /** The calling session's source: the checkout its git and file operations work in. */
-  sourceId: number;
-  /** Reaches the nodes holding the project's checkouts. */
-  nodes: NodeHub;
+  /** The calling session, as its row was when the call began: its project and task (null for none), its
+   * source (the checkout its git and file operations work in). Never the caller's say. */
+  session: SessionModel;
   /** The call's models. */
   models: Models;
   instance?: SessionInstance;

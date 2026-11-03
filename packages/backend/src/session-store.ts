@@ -1,8 +1,9 @@
 /**
  * Session Store
  *
- * SQLite-backed persistence for agent session metadata. Sessions are linked to
- * projects by FK; transcript/message persistence lives in messages-store.ts.
+ * SQLite-backed persistence for agent session metadata. A session works in a source
+ * (a location on a node) and belongs to a project, or to none (ADR-034);
+ * transcript/message persistence lives in messages-store.ts.
  *
  * A row's `activity_state` is derived as it is read: `running` while the process has the session busy
  * (`sessionBusy`, from the open sessions the app gave the stores, `injectProcessState`), else the stored value,
@@ -21,7 +22,8 @@ export type ActivityStateValue = "running" | "finished";
 
 export interface SessionRow {
   id: string;
-  project_id: number;
+  /** Null for a session of no project: it has a source and no task. */
+  project_id: number | null;
   source_id: number;
   name: string | null;
   created_at: string;
@@ -39,6 +41,8 @@ export interface SessionRow {
   background: 0 | 1;
   /** How the session runs (`sessions/session-kinds.ts`): "agent" unless created as another kind. */
   kind: string;
+  /** The backend extension that started it, or null. */
+  source_extension: string | null;
   /** Present on list/query rows that join session message metadata. */
   message_count?: number;
   /** Present on list/query rows that join the first user-message preview. */
@@ -46,8 +50,10 @@ export interface SessionRow {
 }
 
 export interface SessionListOptions {
-  /** Required unless listing sessions for a specific numeric taskId. */
-  projectId?: number;
+  /** A project's sessions, or (null) those of no project. A project, a numeric taskId or a source is required. */
+  projectId?: number | null;
+  /** Only the sessions working in this source. */
+  sourceId?: number;
   /**
    * `undefined` means use `includeTaskSessions` to decide scope.
    * `null` means scratch sessions only.
@@ -117,7 +123,7 @@ export function runningSessionIds(sessions: OpenSessions): string[] {
 
 export function createSession(
   id: string,
-  projectId: number,
+  projectId: number | null,
   opts: {
     modelProvider?: string;
     modelId?: string;
@@ -128,13 +134,14 @@ export function createSession(
     sourceId: number;
     background?: boolean;
     kind?: string;
+    sourceExtension?: string;
   },
 ): SessionRow {
   const db = getDb();
   return withLiveActivity(db
-    .query<SessionRow, [string, number, number, string | null, string | null, string, string, number | null, string | null, number, string]>(
-      `INSERT INTO sessions (id, project_id, source_id, model_provider, model_id, thinking_level, agent_runtime_type, task_id, parent_session_id, background, kind, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    .query<SessionRow, [string, number | null, number, string | null, string | null, string, string, number | null, string | null, number, string, string | null]>(
+      `INSERT INTO sessions (id, project_id, source_id, model_provider, model_id, thinking_level, agent_runtime_type, task_id, parent_session_id, background, kind, source_extension, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
        RETURNING *`,
     )
     .get(
@@ -149,7 +156,14 @@ export function createSession(
       opts.parentSessionId ?? null,
       opts.background ? 1 : 0,
       opts.kind ?? "agent",
+      opts.sourceExtension ?? null,
     )!);
+}
+
+/** The task's most recently active session, background ones included: where a new session of the task
+ * works unless told otherwise. */
+export function latestTaskSession(taskId: number): Pick<SessionRow, "id" | "source_id"> | null {
+  return getDb().query<Pick<SessionRow, "id" | "source_id">, [number]>("SELECT id, source_id FROM sessions WHERE task_id = ? ORDER BY updated_at DESC, rowid DESC LIMIT 1").get(taskId) ?? null;
 }
 
 export function getSession(id: string): SessionRow | null {
@@ -169,17 +183,24 @@ export function deleteSession(id: string): void {
  * and filters without loading full transcripts into the agent context.
  */
 export function listSessions(options: SessionListOptions): SessionRow[] {
-  if (options.projectId === undefined && (options.taskId === undefined || options.taskId === null)) {
-    throw new Error("projectId or numeric taskId must be provided");
+  if (options.projectId === undefined && options.sourceId === undefined && (options.taskId === undefined || options.taskId === null)) {
+    throw new Error("projectId, sourceId or numeric taskId must be provided");
   }
 
   const db = getDb();
   const where: string[] = [];
   const binds: (string | number)[] = [];
 
-  if (options.projectId !== undefined) {
+  if (options.projectId === null) {
+    where.push("s.project_id IS NULL");
+  } else if (options.projectId !== undefined) {
     where.push("s.project_id = ?");
     binds.push(options.projectId);
+  }
+
+  if (options.sourceId !== undefined) {
+    where.push("s.source_id = ?");
+    binds.push(options.sourceId);
   }
 
   if (options.taskId === null) {
@@ -442,11 +463,11 @@ export function clearFinishedActivityForTasks(taskIds: number[]): string[] {
  * (`liveActivityState`); background sessions are left out. Closed tasks are not: their sessions only
  * carry activity once resumed after the close.
  */
-export function listSessionsWithActivity(): Array<{ id: string; activity_state: ActivityStateValue; project_id: number; task_id: number | null }> {
+export function listSessionsWithActivity(): Array<{ id: string; activity_state: ActivityStateValue; project_id: number | null; task_id: number | null }> {
   const sessions = getOpenSessions();
   const running = sessions ? runningSessionIds(sessions) : [];
   return getDb()
-    .query<{ id: string; activity_state: ActivityStateValue | null; project_id: number; task_id: number | null }, [string]>(
+    .query<{ id: string; activity_state: ActivityStateValue | null; project_id: number | null; task_id: number | null }, [string]>(
       `SELECT s.id, s.activity_state, s.project_id, s.task_id
        FROM sessions s
        WHERE s.background = 0 AND (s.activity_state IS NOT NULL OR s.id IN (SELECT value FROM json_each(?)))`,
