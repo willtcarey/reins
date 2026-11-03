@@ -22,7 +22,7 @@ The pairing code works once and expires after 10 minutes. It goes to the server 
 
 **Running it again** is safe, with the same command and the same (now used) code: a machine already paired with this server is not paired again, and a node already running is left running. Run it again to restart a node that stopped. If the server's node code changed since, it installs the new code and restarts the node on it.
 
-If the node was removed in Settings (or revoked), run the install command again with a **new** code from **Add node**: the server refuses the old pairing, so the machine is paired again with the new code, and the node starts. It appears in Settings as a new node, with no sources: add the projects' sources on it again (*Sources*), then move the sessions of the removed node to it with **Move to node…** ([settings.md](settings.md) *Nodes*).
+If the node was removed in Settings (or revoked), run the install command again with a **new** code from **Add node**: the server refuses the old pairing, so the machine is paired again with the new code, and the node starts. It appears in Settings as a new node, with no sources in use: move the sessions of the removed node to it with **Move session…**, naming the directory there ([settings.md](settings.md) *Nodes*).
 
 If the server cannot build the node's code, or is still building it, the install command says so in one line and exits non-zero; try again later, or see the server's log.
 
@@ -83,7 +83,7 @@ A node that was removed in Settings is different: its sessions take no new work 
 
 ## Sources
 
-A node works in the sources of projects on it, a source being a project's working copy on a node; it keeps no list of its own. Once the node is connected, put a project on it: add a project and choose the node, or open an existing project's settings and use **Add a source** with the node and the directory's path on that machine ([projects.md](projects.md)). The node checks that the directory exists. From a terminal, on that machine: `~/.reins/bin/reins source add <path> --project <id>` (a relative path is resolved where you run it); elsewhere, name the node with `--node <nodeId>` and give an absolute path. `reins source list` lists every project's sources, with their nodes (not those on removed nodes). **Settings → Nodes** shows how many sources each node holds.
+A node works in whatever directory a session names, a source being a directory on a node where sessions work; it keeps no list of its own, and there is nothing to add. Once the node is connected, use it: add a project with its default source on it, or move a session there with **Move session…**, choosing the node and the directory's path on that machine ([projects.md](projects.md)). The node checks that a directory no session used yet exists. `reins source list` lists the sources in use on each node with the projects using them (not those on removed nodes). **Settings → Nodes** shows how many sources are in use on each node.
 
 ## Uninstalling
 

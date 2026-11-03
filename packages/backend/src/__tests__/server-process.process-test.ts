@@ -52,7 +52,7 @@ test("server-only and node-only processes link over the socket and prompt end to
   expect(await api.health()).toMatchObject({ status: "ok", nodes: [{ id: "internal", name: "Internal", connected: true }] });
 
   const { projectId } = await api.setUp(dirs.repo.dir);
-  const skills = await fetch(`http://localhost:${server.port}/api/projects/${projectId}/skills`);
+  const skills = await fetch(`http://localhost:${server.port}/api/nodes/internal/skills?path=${encodeURIComponent(dirs.repo.dir)}`);
   expect(await skills.json()).toEqual({ skills: [{ name: "node-skill", description: "node-skill" }], available: true });
   const sessionId = await api.createSession(projectId);
   await api.prompt(sessionId, "first", "Hello node");

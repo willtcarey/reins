@@ -1,6 +1,6 @@
 import { describe, test, expect } from "bun:test";
 import { createRouter, type Middleware } from "../router.js";
-import { HttpError } from "../errors.js";
+import { HttpError, RequestRefused } from "../errors.js";
 import { createAppState } from "./helpers/app-state.js";
 import { makeRequest } from "./helpers/request.js";
 
@@ -84,6 +84,19 @@ describe("createRouter", () => {
     const res = await router.handle(makeRequest("GET", "/api/fail"), state);
     expect(res!.status).toBe(404);
     expect(await res!.json()).toEqual({ error: "not found" });
+  });
+
+  test("answers a model's refusal 400, with its message", async () => {
+    class TitleRefused extends RequestRefused {}
+    const router = createRouter();
+    router.post("/api/things", () => {
+      throw new TitleRefused("A thing's title must not be blank");
+    });
+
+    const res = await router.handle(makeRequest("POST", "/api/things"), state);
+
+    expect(res!.status).toBe(400);
+    expect(await res!.json()).toEqual({ error: "A thing's title must not be blank" });
   });
 
   test("catches unexpected errors and returns 500", async () => {

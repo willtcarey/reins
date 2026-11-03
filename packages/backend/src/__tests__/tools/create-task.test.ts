@@ -1,11 +1,10 @@
 import { describe, test, expect, beforeEach, spyOn } from "bun:test";
+import { Models } from "../../models/models.js";
 import { useTestDb } from "../helpers/test-db.js";
 import { useTestRepo } from "../helpers/test-repo.js";
 import { localGit } from "../helpers/local-git.js";
 import { createProject } from "../project-fixture.js";
 import { getTask } from "../../task-store.js";
-import { createSource } from "../../node-store.js";
-import { getDb } from "../../app-globals.js";
 import { SessionInstance } from "../../sessions/session-instance.js";
 import { createAppState, useLoopbackState } from "../helpers/app-state.js";
 import type { ServerMessage } from "../../models/broadcast.js";
@@ -53,7 +52,7 @@ describe("create_task tool", () => {
   });
 
   describe("execute — success", () => {
-    test("creates a task and branch, returns success result", async () => {
+    test("creates a task, whose branch its first session's run makes, and returns it", async () => {
       const tool = reinsTool("create_task", { projectId, state: loopback.state });
 
       const result = await executeTool(tool, "call-1", {
@@ -80,8 +79,7 @@ describe("create_task tool", () => {
       expect(dbTask).not.toBeNull();
       expect(dbTask!.title).toBe("Implement dark mode");
 
-      // Branch exists in git
-      expect(await localGit(repo.dir).branchExists(taskData.branch_name)).toBe(true);
+      expect(await localGit(repo.dir).branchExists(taskData.branch_name)).toBe(false);
 
       // Browsers were told
       expect(broadcasts).toEqual([{ type: "task_updated", projectId }]);
@@ -115,7 +113,7 @@ describe("create_task tool", () => {
 
     test("starts an initial task session through the session instance", async () => {
       const started: { taskId: number; prompt: string }[] = [];
-      const instance = new SessionInstance(createAppState(), "caller");
+      const instance = new SessionInstance(new Models(createAppState()), "caller");
       spyOn(instance, "startTaskSession").mockImplementation(async (taskId, prompt) => {
         started.push({ taskId, prompt });
         return { sessionId: "started-session" };
@@ -136,8 +134,8 @@ describe("create_task tool", () => {
   });
 
   describe("execute — error", () => {
-    test("returns error result when project not found", async () => {
-      const tool = reinsTool("create_task", { projectId: 99999 });
+    test("returns error result when the calling session is gone", async () => {
+      const tool = reinsTool("create_task", { sessionId: "gone" });
 
       const result = await executeTool(tool, "call-err-1", {
         title: "Should fail",
@@ -146,32 +144,6 @@ describe("create_task tool", () => {
 
       expect(textOf(result.content[0])).toStartWith("Error:");
       expect(textOf(result.content[0])).toContain("not found");
-      expect(result.details).toBeNull();
-    });
-
-    test("creates the branch in the calling session's source, not the project's default", async () => {
-      getDb().exec("INSERT INTO nodes (id, name) VALUES ('remote', 'Remote')");
-      const remote = createSource(projectId, "remote", "/remote/checkout");
-      const tool = reinsTool("create_task", { projectId, state: loopback.state, sourceId: remote.id });
-
-      const result = await executeTool(tool, "call-err-source", { title: "Elsewhere", description: "" }, undefined, undefined);
-
-      // The session's node is not connected (the default source's is).
-      expect(textOf(result.content[0])).toBe("Error: Node not connected");
-      expect(await localGit(repo.dir).branchExists("task/elsewhere")).toBe(false);
-    });
-
-    test("returns error result on git failure", async () => {
-      // Create tool pointing to a project with a bad path
-      const badProject = createProject("Bad Project", "/nonexistent/path", "main");
-      const tool = reinsTool("create_task", { projectId: badProject.id });
-
-      const result = await executeTool(tool, "call-err-2", {
-        title: "Should fail",
-        description: "Bad git path",
-      }, undefined, undefined);
-
-      expect(textOf(result.content[0])).toStartWith("Error:");
       expect(result.details).toBeNull();
     });
   });

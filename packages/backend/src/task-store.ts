@@ -52,6 +52,11 @@ export function createTask(
     .get(projectId, title, description, branchName, baseCommit)!;
 }
 
+/** Whether one of the project's tasks has the branch name. */
+export function projectHasTaskBranch(projectId: number, branchName: string): boolean {
+  return getDb().query("SELECT 1 FROM tasks WHERE project_id = ? AND branch_name = ?").get(projectId, branchName) !== null;
+}
+
 export function getTask(id: number): TaskRow | null {
   const db = getDb();
   return db.query<TaskRow, [number]>(`SELECT *, ${STATUS_SQL} FROM tasks WHERE id = ?`).get(id) ?? null;

@@ -32,7 +32,7 @@ describe("FileDiffContextState", () => {
   test("does not fetch merely because an offscreen change has persistent context state", () => {
     let requests = 0;
     const state = new FileDiffContextState(
-      { projectId: 7, mode: "branch" },
+      { sessionId: "s7", mode: "branch" },
       async () => {
         requests += 1;
         throw new Error("unexpected request");
@@ -48,7 +48,7 @@ describe("FileDiffContextState", () => {
     let resolveRequest!: (value: Response) => void;
     const pending = new Promise<Response>((resolve) => { resolveRequest = resolve; });
     const state = new FileDiffContextState(
-      { projectId: 7, mode: "branch", branch: "feature/review" },
+      { sessionId: "s7", mode: "branch", branch: "feature/review" },
       async (input) => {
         requests.push(String(input));
         return pending;
@@ -60,7 +60,7 @@ describe("FileDiffContextState", () => {
     const second = state.loadFiles(change);
     expect(state.forChange(change).outcome).toBe("loading");
     expect(requests).toEqual([
-      "/api/projects/7/files/content?path=src%2Fnew.ts&ref=feature%2Freview",
+      "/api/sessions/s7/files/content?path=src%2Fnew.ts&ref=feature%2Freview",
     ]);
 
     resolveRequest(textResponse("before\nnew changed\nafter\n"));
@@ -86,7 +86,7 @@ describe("FileDiffContextState", () => {
   test("omits ref when the review scope has no selected branch", async () => {
     const requests: string[] = [];
     const state = new FileDiffContextState(
-      { projectId: 7, mode: "uncommitted" },
+      { sessionId: "s7", mode: "uncommitted" },
       async (input) => {
         requests.push(String(input));
         return textResponse("before\nnew changed\n");
@@ -95,12 +95,12 @@ describe("FileDiffContextState", () => {
 
     await state.loadFiles(fileChange());
 
-    expect(requests).toEqual(["/api/projects/7/files/content?path=src%2Fnew.ts"]);
+    expect(requests).toEqual(["/api/sessions/s7/files/content?path=src%2Fnew.ts"]);
     expect(state.forChange(fileChange()).outcome).toBe("available");
   });
 
   test("retains public expansion commands for virtual remount restoration", () => {
-    const state = new FileDiffContextState({ projectId: 7, mode: "branch" });
+    const state = new FileDiffContextState({ sessionId: "s7", mode: "branch" });
     const change = fileChange();
 
     state.retainExpansion(change, { hunkIndex: 0, direction: "down", lineCount: 15 });
@@ -123,7 +123,7 @@ describe("FileDiffContextState", () => {
 
     for (const result of outcomes) {
       const state = new FileDiffContextState(
-        { projectId: 7, mode: "branch" },
+        { sessionId: "s7", mode: "branch" },
         async () => {
           if (result instanceof Error) throw result;
           return result;
@@ -152,7 +152,7 @@ describe("FileDiffContextState", () => {
 
     for (const [index, response] of responses.entries()) {
       const state = new FileDiffContextState(
-        { projectId: 7, mode: "branch" },
+        { sessionId: "s7", mode: "branch" },
         async () => response,
       );
       const change = fileChange();

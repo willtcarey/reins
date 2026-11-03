@@ -8,9 +8,8 @@ import type { OpenSession, ServerProcess, SessionRuntime } from "../state.js";
 import { getSession } from "../session-store.js";
 import { SessionModel } from "../models/session.js";
 import { SessionNotFoundError } from "../models/sessions.js";
-import { resolveSource } from "../models/sources.js";
 import { logger } from "../logger.js";
-import { buildSessionRuntime, type ModelOverride } from "./build.js";
+import { buildSessionRuntime, currentAppNode, type ModelOverride } from "./build.js";
 
 /** The identity of this code: one per app bundle, which each reload builds anew. Its app carries it
  * (`App.code`), so a runtime this code opens while another app's code is current (a runtime of an older
@@ -48,8 +47,8 @@ export async function openSessionRuntime(serverProcess: ServerProcess, sessionId
   const { live, opening } = serverProcess.sessions;
   const row = getSession(sessionId);
   if (!row) throw new SessionNotFoundError(`Session not found: ${sessionId}`);
-  const session = new SessionModel(row);
-  const source = resolveSource(row.project_id, row.source_id);
+  const session = new SessionModel(row, { get: nodeId => currentAppNode(serverProcess, nodeId) });
+  const source = session.source.record;
   session.assertRunnable(source);
   const binding = JSON.stringify(session.binding(source));
   const current = live.get(sessionId);

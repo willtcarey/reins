@@ -1,6 +1,6 @@
 # File Browser
 
-A read-only file browser overlay for viewing any file in the project repository: the checkout of the session you are viewing.
+A file browser overlay for viewing any file in the checkout of the session you are viewing, and uploading files into it.
 
 ## How to Open
 
@@ -22,6 +22,10 @@ Files named in messages open in the Inspector instead ([workspace-panes.md](work
 - Click backdrop (outside the overlay) — closes the overlay
 
 Closing keeps what the browser had loaded: reopening it shows the tree and file as you left them (with its scroll position), without reading the file or every directory again. Opening a file reads it again, so the viewer shows the checkout as it is now. While a session working in the same checkout changes files (a write, edit or command finishes, or a turn ends), the open file, the expanded directories and the search's file list are read again too. Opening the browser for a session in another checkout starts it over.
+
+## Uploading files
+
+The **Upload** button in the browser's header (its tooltip names the folder) opens a file picker; you can select several files. You can also drop files on the browser. The files are written into the folder of the file you are viewing, or into the checkout's root when no file is open, on the session's node. A file of the same name there is replaced. While the files upload, the header shows the progress. A message then says how many files were uploaded, or why the upload failed (for example, the node is offline). The tree shows the new files.
 
 ## Open in Inspector
 

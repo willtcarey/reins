@@ -4,7 +4,8 @@ import type { ExtensionView } from "@reins/backend/extensions/host.js";
 import type { SpreadResponse } from "@reins/backend/routes/git.js";
 import type { OAuthProviderInfo, OAuthStartResponse } from "@reins/backend/routes/oauth.js";
 import type { ArchivedSessionPage, SessionCreateRequest } from "@reins/backend/routes/project-sessions.js";
-import type { ProjectInput, ProjectUpdate } from "@reins/backend/routes/projects.js";
+import type { ProjectLocationsView } from "@reins/backend/models/sessions.js";
+import type { ProjectInput, ProjectUpdate, ProjectView } from "@reins/backend/routes/projects.js";
 import type { SessionMessagePage } from "@reins/backend/messages-store.js";
 import type {
   ActivitySnapshotItem,
@@ -14,15 +15,13 @@ import type {
   SessionMetadataUpdate,
   SessionModelUpdate,
   SessionMoveRequest,
+  UnownedSessionCreateRequest,
   SessionMoveTargetView,
   SessionSubmissionRequest,
 } from "@reins/backend/routes/sessions.js";
 import type { SkillsListResponse } from "@reins/backend/routes/skills.js";
 import type { GeneratedTaskInput, TaskDetail, TaskHistoryPage, TaskUpdate } from "@reins/backend/routes/tasks.js";
-import type { Project } from "@reins/backend/project-store.js";
 import type { NodeView } from "@reins/backend/models/node.js";
-import type { SourceInput, SourceUpdate } from "@reins/backend/routes/sources.js";
-import type { SourceView } from "@reins/backend/models/sources.js";
 import type { CodeReviewState, CreateCodeReviewCommentInput, DeleteCodeReviewCommentInput } from "@reins/backend/models/code-review.js";
 import type { SessionDetailView, SessionListView, SessionPlacementView, SessionView } from "@reins/backend/models/sessions.js";
 import type { TaskWithDiffStats } from "@reins/backend/models/tasks.js";
@@ -38,7 +37,7 @@ type FetchTransport = (input: string, init?: RequestInit) => Promise<Response>;
 /** A fetch that reports upload progress as it sends the body. */
 type UploadTransport = (input: string, init: RequestInit, onProgress?: (percent: number) => void) => Promise<Response>;
 export type RequestOptions = { signal?: AbortSignal };
-type UploadOptions = RequestOptions & { onProgress?: (percent: number) => void };
+type UploadOptions = RequestOptions & { onProgress?: (percent: number) => void; /** The folder in the checkout; its root without it. */ path?: string };
 interface HistoryQuery { limit: number; offset: number; search?: string }
 
 export interface ReinsClientOptions {
@@ -46,7 +45,7 @@ export interface ReinsClientOptions {
   baseUrl?: string;
   /** Sends every request; `globalThis.fetch` by default. */
   fetch?: FetchTransport;
-  /** Sends project uploads, so they can report progress (the browser's is XHR); `fetch`, without progress, by default. */
+  /** Sends uploads, so they can report progress (the browser's is XHR); `fetch`, without progress, by default. */
   upload?: UploadTransport;
 }
 
@@ -100,25 +99,28 @@ export class ReinsClient {
   };
 
   readonly projects = {
-    list: (options?: RequestOptions) => this.json<Project[]>("GET", "/api/projects", undefined, options),
-    get: (projectId: number, options?: RequestOptions) => this.json<Project>("GET", this.projectPath(projectId), undefined, options),
-    create: (input: ProjectInput, options?: RequestOptions) => this.json<Project>("POST", "/api/projects", input, options),
-    update: (projectId: number, input: ProjectUpdate, options?: RequestOptions) => this.json<Project>("PATCH", this.projectPath(projectId), input, options),
-    sources: (projectId: number, options?: RequestOptions) => this.json<SourceView[]>("GET", `${this.projectPath(projectId)}/sources`, undefined, options),
-    /** Attaches the checkout at `path` on node `nodeId` to the project, once the node confirms it serves it. */
-    addSource: (projectId: number, input: SourceInput, options?: RequestOptions) => this.json<SourceView>("POST", `${this.projectPath(projectId)}/sources`, input, options),
-    updateSource: (projectId: number, sourceId: number, input: SourceUpdate, options?: RequestOptions) => this.json<SourceView>("PATCH", `${this.projectPath(projectId)}/sources/${this.segment(sourceId)}`, input, options),
+    list: (options?: RequestOptions) => this.json<ProjectView[]>("GET", "/api/projects", undefined, options),
+    get: (projectId: number, options?: RequestOptions) => this.json<ProjectView>("GET", this.projectPath(projectId), undefined, options),
+    /** A project whose default source is `input.path` on node `input.nodeId` (a directory there). */
+    create: (input: ProjectInput, options?: RequestOptions) => this.json<ProjectView>("POST", "/api/projects", input, options),
+    /** Its name, base branch or default source (`input.defaultSource`: a node and path; its sessions stay where they are). */
+    update: (projectId: number, input: ProjectUpdate, options?: RequestOptions) => this.json<ProjectView>("PATCH", this.projectPath(projectId), input, options),
     delete: (projectId: number, options?: RequestOptions) => this.json<void>("DELETE", this.projectPath(projectId), undefined, options),
-    upload: (projectId: number, files: FileList | readonly File[], options?: UploadOptions) => this.uploadFiles(projectId, files, options),
+    /** Where a new session of the project (of task `taskId`) can work, and works when none is chosen. */
+    locations: (projectId: number, taskId?: number | null, options?: RequestOptions) => this.json<ProjectLocationsView>("GET", this.query(`${this.projectPath(projectId)}/locations`, { taskId }), undefined, options),
   };
 
   readonly sessions = {
     get: (sessionId: string, options?: RequestOptions) => this.json<SessionDetailView>("GET", this.sessionPath(sessionId), undefined, options),
     listForProject: (projectId: number, options?: RequestOptions) => this.json<SessionListView[]>("GET", `${this.projectPath(projectId)}/sessions`, undefined, options),
+    /** The sessions of no project the browser shows (not archived, not background). */
+    listUnowned: (options?: RequestOptions) => this.json<SessionListView[]>("GET", "/api/sessions", undefined, options),
     history: (projectId: number, query: HistoryQuery, options?: RequestOptions) => this.json<ArchivedSessionPage>("GET", this.query(`${this.projectPath(projectId)}/sessions`, { archived: "only", ...query }), undefined, options),
     listForTask: (taskId: number, options?: RequestOptions) => this.json<SessionListView[]>("GET", `/api/tasks/${this.segment(taskId)}/sessions`, undefined, options),
     /** A new session of the project: on `input.taskId`, `input.source`, with `input.title` and `input.model` when given. */
     create: (projectId: number, input: SessionCreateRequest = {}, options?: RequestOptions) => this.json<SessionDetailView>("POST", `${this.projectPath(projectId)}/sessions`, input, options),
+    /** A new session of no project, working in `input.source` (a node and path). */
+    createUnowned: (input: UnownedSessionCreateRequest, options?: RequestOptions) => this.json<SessionDetailView>("POST", "/api/sessions", input, options),
     createForTask: (taskId: number, options?: RequestOptions) => this.json<SessionDetailView>("POST", `/api/tasks/${this.segment(taskId)}/sessions`, undefined, options),
     messages: (sessionId: string, query: MessagePageQuery = {}, options?: RequestOptions) => this.json<SessionMessagePage>("GET", this.query(`${this.sessionPath(sessionId)}/messages`, query), undefined, options),
     context: (sessionId: string, options?: RequestOptions) => this.json<SessionContextSnapshot | null>("GET", `${this.sessionPath(sessionId)}/context`, undefined, options),
@@ -153,26 +155,31 @@ export class ReinsClient {
     generate: (projectId: number, input: GeneratedTaskInput, options?: RequestOptions) => this.json<TaskRow>("POST", `${this.projectPath(projectId)}/tasks/generate`, input, options),
   };
 
+  /** The skills a session working in `path` on node `nodeId` can invoke (`/name` suggestions). */
   readonly skills = {
-    list: (projectId: number, options?: RequestOptions) => this.json<SkillsListResponse>("GET", `${this.projectPath(projectId)}/skills`, undefined, options),
+    at: (nodeId: string, path: string, options?: RequestOptions) => this.json<SkillsListResponse>("GET", this.query(`/api/nodes/${this.segment(nodeId)}/skills`, { path }), undefined, options),
   };
 
+  /** The diffs of a session's checkout (its source). */
   readonly diff = {
-    files: (projectId: number, query: DiffQuery, options?: RequestOptions) => this.json<DiffFileResponse>("GET", this.query(`${this.projectPath(projectId)}/diff/files`, query), undefined, options),
-    patch: (projectId: number, query: DiffPatchQuery, options?: RequestOptions) => this.text("GET", this.query(`${this.projectPath(projectId)}/diff/patch`, query), undefined, options),
+    files: (sessionId: string, query: DiffQuery, options?: RequestOptions) => this.json<DiffFileResponse>("GET", this.query(`${this.sessionPath(sessionId)}/diff/files`, query), undefined, options),
+    patch: (sessionId: string, query: DiffPatchQuery, options?: RequestOptions) => this.text("GET", this.query(`${this.sessionPath(sessionId)}/diff/patch`, query), undefined, options),
   };
 
+  /** Git in a session's checkout (its source). */
   readonly git = {
-    spread: (projectId: number, branch: string, fetchRemote: boolean, options?: RequestOptions) => this.json<SpreadResponse>("GET", this.query(`${this.projectPath(projectId)}/git/spread`, { branch, fetch: fetchRemote }), undefined, options),
-    push: (projectId: number, branch: string, options?: RequestOptions) => this.json<void>("POST", `${this.projectPath(projectId)}/git/push`, { branch }, options),
-    rebase: (projectId: number, branch: string, options?: RequestOptions) => this.json<void>("POST", `${this.projectPath(projectId)}/git/rebase`, { branch }, options),
+    spread: (sessionId: string, branch: string, fetchRemote: boolean, options?: RequestOptions) => this.json<SpreadResponse>("GET", this.query(`${this.sessionPath(sessionId)}/git/spread`, { branch, fetch: fetchRemote }), undefined, options),
+    push: (sessionId: string, branch: string, options?: RequestOptions) => this.json<void>("POST", `${this.sessionPath(sessionId)}/git/push`, { branch }, options),
+    rebase: (sessionId: string, branch: string, options?: RequestOptions) => this.json<void>("POST", `${this.sessionPath(sessionId)}/git/rebase`, { branch }, options),
   };
 
+  /** The files of a session's checkout (its source). */
   readonly files = {
-    list: (projectId: number, options?: RequestOptions) => this.json<{ files: string[] }>("GET", `${this.projectPath(projectId)}/files`, undefined, options),
-    tree: (projectId: number, path: string, options?: RequestOptions) => this.json<{ entries: DirectoryEntry[] }>("GET", this.query(`${this.projectPath(projectId)}/files/tree`, { path }), undefined, options),
-    content: (projectId: number, path: string, query: { ref?: string; download?: boolean } = {}, options?: RequestOptions) => this.response("GET", this.fileContentPath(projectId, path, query), undefined, options),
-    contentUrl: (projectId: number, path: string, query: { ref?: string; download?: boolean } = {}) => this.url(this.fileContentPath(projectId, path, query)),
+    list: (sessionId: string, options?: RequestOptions) => this.json<{ files: string[] }>("GET", `${this.sessionPath(sessionId)}/files`, undefined, options),
+    tree: (sessionId: string, path: string, options?: RequestOptions) => this.json<{ entries: DirectoryEntry[] }>("GET", this.query(`${this.sessionPath(sessionId)}/files/tree`, { path }), undefined, options),
+    content: (sessionId: string, path: string, query: { ref?: string; download?: boolean } = {}, options?: RequestOptions) => this.response("GET", this.fileContentPath(sessionId, path, query), undefined, options),
+    contentUrl: (sessionId: string, path: string, query: { ref?: string; download?: boolean } = {}) => this.url(this.fileContentPath(sessionId, path, query)),
+    upload: (sessionId: string, files: FileList | readonly File[], options?: UploadOptions) => this.uploadFiles(sessionId, files, options),
   };
 
   readonly reviews = {
@@ -277,10 +284,10 @@ export class ReinsClient {
     return response;
   }
 
-  private uploadFiles(projectId: number, files: FileList | readonly File[], { onProgress, ...options }: UploadOptions = {}): Promise<{ uploaded: string[] }> {
+  private uploadFiles(sessionId: string, files: FileList | readonly File[], { onProgress, path, ...options }: UploadOptions = {}): Promise<{ uploaded: string[] }> {
     const body = new FormData();
     for (const file of Array.from(files)) body.append("files", file);
-    return this.json("POST", `${this.projectPath(projectId)}/upload`, body, options, (input, init = {}) => this.uploadTransport(input, init, onProgress));
+    return this.json("POST", this.query(`${this.sessionPath(sessionId)}/upload`, { path: path || undefined }), body, options, (input, init = {}) => this.uploadTransport(input, init, onProgress));
   }
 
   private async httpError(response: Response): Promise<ReinsHttpError> {
@@ -298,8 +305,8 @@ export class ReinsClient {
   private projectPath(projectId: number): string { return `/api/projects/${this.segment(projectId)}`; }
   private sessionPath(sessionId: string): string { return `/api/sessions/${this.segment(sessionId)}`; }
   private attachmentPath(sessionId: string, attachmentId: string): string { return `${this.sessionPath(sessionId)}/attachments/${this.segment(attachmentId)}`; }
-  private fileContentPath(projectId: number, path: string, query: { ref?: string; download?: boolean }): string {
-    return this.query(`${this.projectPath(projectId)}/files/content`, { path, ref: query.ref, download: query.download ? 1 : undefined });
+  private fileContentPath(sessionId: string, path: string, query: { ref?: string; download?: boolean }): string {
+    return this.query(`${this.sessionPath(sessionId)}/files/content`, { path, ref: query.ref, download: query.download ? 1 : undefined });
   }
   private reviewPath(projectId: number, suffix: string, taskId: number | null): string {
     return this.query(`${this.projectPath(projectId)}/code-review${suffix}`, { taskId });

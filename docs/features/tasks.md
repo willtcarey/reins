@@ -16,9 +16,11 @@ Task sessions inherit context from their parent task: the agent's system prompt 
 
 ### Branch per task
 
-Every task gets its own git branch, created when the task is created. This keeps work isolated — multiple tasks can be in flight without interfering with each other.
+Every task gets its own git branch. This keeps work isolated — multiple tasks can be in flight without interfering with each other.
 
-The branch is created **from the latest upstream state** of the project's base branch. When a remote (`origin`) is available, Reins pulls the local base branch forward to match before branching, so the task starts from the most up-to-date commit. For repos without a remote, or when the local branch has diverged, it branches from whatever the local base branch points to.
+Creating a task touches no checkout. The branch is made where the task's sessions work, when a run of one of them starts there and that checkout does not have it yet: Reins uses the branch from `origin` if someone pushed it (from another machine, for example), else makes it. So a task session moved to another node or directory gets the branch there too. A branch name made from the title that another task of the project has gets a short suffix.
+
+A new branch is made **from the latest upstream state** of the project's base branch. When a remote (`origin`) is available, Reins pulls the local base branch forward to match before branching, so the task starts from the most up-to-date commit. For repos without a remote, or when the local branch has diverged, it branches from whatever the local base branch points to.
 
 When a task session is opened, the task's branch is checked out automatically.
 
@@ -30,7 +32,7 @@ Generation runs on the server, using the [utility model](settings.md#utility-mod
 
 ### Adopting an existing branch
 
-If you provide an explicit `branch_name` when creating a task and that branch already exists (locally or on origin), Reins **adopts** it instead of creating a new branch. The remote branch is fetched and checked out locally if needed, and the task's base commit is set to the merge-base of the project's base branch and the existing branch — so diffs and reconciliation work correctly even though the branch wasn't created by Reins.
+If you provide an explicit `branch_name` when creating a task and that branch already exists (locally or on origin) where its session works, Reins **adopts** it instead of creating a new branch. A branch name made from the title that happens to match an existing branch there is adopted the same way. The remote branch is fetched and checked out locally if needed, and the task's base commit is set to the merge-base of the project's base branch and the existing branch — so diffs and reconciliation work correctly even though the branch wasn't created by Reins.
 
 This supports the "pull someone else's branch" workflow: a colleague pushes a branch, and you create a task pointing at it to get the full Reins experience (diff view, sessions, sync) on top of their work.
 
@@ -44,7 +46,7 @@ The branch name is shown in the edit dialog for reference but cannot be changed.
 
 Once a task exists you can create sessions under it, from its **New session** button. Each session:
 
-1. **Checks out the task branch** in the project's source on the session's node, at the start of each run, so file changes always land on the right branch.
+1. **Checks out the task branch** in the session's source on its node, at the start of each run (making it there first if that checkout does not have it), so file changes always land on the right branch.
 2. **Injects the task context** into the agent's system prompt (title + description). The task is read when the session's runtime opens, so an edited title or description reaches a session the next time it is opened (after it has been idle for a few minutes, or after a server restart), not mid-conversation.
 3. Is recorded against the task so you can see the full history of sessions that contributed to a piece of work.
 
@@ -82,6 +84,6 @@ Tasks are persistent — they survive server restarts. The `updated_at` timestam
 
 ### Closing tasks
 
-Tasks are closed explicitly (from the task's menu, or by the assistant's `tasks.close`). Reins does not close a task when its branch is merged: a project can have sources on several machines, and whether a branch looks merged or gone depends on which source looks. Refreshing the branch spread still fetches from origin and fast-forwards the base branch, in the source being viewed.
+Tasks are closed explicitly (from the task's menu, or by the assistant's `tasks.close`). Reins does not close a task when its branch is merged: a project's sessions can work in several directories on several machines, and whether a branch looks merged or gone depends on which one looks. Refreshing the branch spread still fetches from origin and fast-forwards the base branch, in the source being viewed.
 
 Once closed, a task stays closed permanently. Closed tasks leave the project sidebar and appear in the project's History page. They no longer show diff stats (since their changes are now part of the base branch). Closing a task quiets its sessions: their unread notifications are cleared, and a session still running when the task closes (such as the agent that closed it) finishes without becoming unread. A session you resume from History after the close notifies like any other, including the project and title badges.

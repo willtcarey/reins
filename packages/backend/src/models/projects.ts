@@ -1,12 +1,10 @@
 /**
  * Project Model
  *
- * Business logic for the project's own data: its name and base branch, tasks and code reviews,
- * orchestrating store calls and WebSocket broadcasts. Where its code is lives on its sources (checkouts
- * on nodes, `sources.ts`): a project model works in one of them, the source the call names.
- *
- * `createProject()` remains a standalone function (pre-project context).
- * For project-scoped operations, construct a `ProjectModel` instance.
+ * Projects (`Projects`, `Models.projects`): making, changing and deleting them. One project's own data
+ * (`ProjectModel`): its tasks and code reviews, and its default source, the only location a project has
+ * (its sessions work wherever they are placed: `SessionModel`). Each tells browsers of what it changed,
+ * the nodes' sources in use included (`Nodes.watchSources`).
  */
 
 import {
@@ -20,47 +18,85 @@ import { isNodeUnavailable } from "../errors.js";
 import type { Broadcast } from "./broadcast.js";
 import { ProjectTasks } from "./tasks.js";
 import { ProjectCodeReviews } from "./code-reviews.js";
-import { createSource, SourceNotFoundError, type SourceModel } from "./sources.js";
+import { defaultSourceOf, ensureSource, SourceModel } from "./sources.js";
 import type { Nodes } from "./nodes.js";
+import { sessionIdsIn } from "../sessions/session-ownership.js";
+import { closeSessionRuntimes } from "../session-runtime/live.js";
 
-// ---------------------------------------------------------------------------
-// Create project (standalone — no project context needed)
-// ---------------------------------------------------------------------------
+export class ProjectNotFoundError extends Error {
+  constructor(projectId: number) {
+    super(`Project not found: ${projectId}`);
+    this.name = "ProjectNotFoundError";
+  }
+}
 
 export interface CreateProjectParams {
   name: string;
-  /** The first checkout's path on its node. */
+  /** Its default source: the checkout's path on node `nodeId`. */
   path: string;
-  /** The node holding that checkout. */
   nodeId: string;
   base_branch?: string;
 }
 
-/**
- * Create a project and its first source, the checkout at `path` on node `nodeId` (`createSource`: the
- * node must confirm it). Without a base branch, it is detected in that checkout: `main` when it has none
- * of the candidates or is not a repository. When the source is refused (or its node is unreachable) the
- * project is not kept.
- *
- * Throws on failure — callers map to HTTP responses.
- */
-export async function createProject(params: CreateProjectParams, nodes: Nodes): Promise<Project> {
-  const project = storeCreateProject(params.name, params.base_branch || "main");
-  let source: SourceModel | undefined;
-  try {
-    source = await createSource(project.id, params.nodeId, params.path, nodes);
-    if (params.base_branch) return project;
-    const baseBranch = await source.git.detectDefaultBranch()
+/** A project's changes: its name (trimmed, not blank), its base branch, its default source's location. */
+export interface ProjectChanges {
+  name?: string;
+  baseBranch?: string;
+  defaultSource?: { nodeId: string; path: string };
+}
+
+/** The server's projects, on `nodes` (whose broadcast tells browsers). */
+export class Projects {
+  constructor(private readonly nodes: Nodes) {}
+
+  /**
+   * Makes a project whose default source is the checkout at `path` on node `nodeId` (`ensureSource`: a
+   * location not known yet must be a directory there). Without a base branch, it is detected in that
+   * checkout: `main` when it has none of the candidates or is not a repository. Nothing is kept when the
+   * location is refused or its node is unreachable (a location it made stays: it belongs to no project).
+   * Throws as `ensureSource` does.
+   */
+  async create(params: CreateProjectParams): Promise<Project> {
+    const source = await ensureSource(params.nodeId, params.path, this.nodes);
+    const baseBranch = params.base_branch || await source.git.detectDefaultBranch()
       .catch((error: unknown) => {
         if (isNodeUnavailable(error)) throw error;
         return "main";
       });
-    return updateProject(project.id, { base_branch: baseBranch }) ?? project;
-  } catch (error) {
-    deleteProject(project.id);
-    // Its source went with it.
-    if (source) nodes.publish(params.nodeId);
-    throw error;
+    const sources = this.nodes.watchSources();
+    const project = storeCreateProject(params.name, baseBranch, source.id);
+    sources.publishChanged();
+    return project;
+  }
+
+  /**
+   * Changes the project: a new default source is the checkout at its location (`ensureSource`; its
+   * sessions stay where they are). Throws `ProjectNotFoundError`, `Error` for a blank name, and as
+   * `ensureSource` does (then nothing changes).
+   */
+  async update(projectId: number, changes: ProjectChanges): Promise<Project> {
+    if (!getProject(projectId)) throw new ProjectNotFoundError(projectId);
+    if (changes.name !== undefined && !changes.name.trim()) throw new Error("name cannot be empty");
+    const source = changes.defaultSource && await ensureSource(changes.defaultSource.nodeId, changes.defaultSource.path, this.nodes);
+    const sources = this.nodes.watchSources();
+    const updated = updateProject(projectId, {
+      ...(changes.name === undefined ? {} : { name: changes.name.trim() }),
+      ...(changes.baseBranch === undefined ? {} : { base_branch: changes.baseBranch.trim() || "main" }),
+      ...(source ? { default_source_id: source.id } : {}),
+    });
+    if (!updated) throw new ProjectNotFoundError(projectId);
+    sources.publishChanged();
+    return updated;
+  }
+
+  /** Deletes the project with its tasks and sessions; their live runtimes are closed first (aborting their
+   * runs). Throws `ProjectNotFoundError`. */
+  async delete(projectId: number): Promise<void> {
+    if (!getProject(projectId)) throw new ProjectNotFoundError(projectId);
+    await closeSessionRuntimes(this.nodes.state.process, sessionIdsIn({ projectId }));
+    const sources = this.nodes.watchSources();
+    if (!deleteProject(projectId)) throw new ProjectNotFoundError(projectId);
+    sources.publishChanged();
   }
 }
 
@@ -71,23 +107,22 @@ export async function createProject(params: CreateProjectParams, nodes: Nodes): 
 export class ProjectModel {
   readonly baseBranch: string;
 
-  /** `source` is the checkout this call works in (`resolveSource`): tasks create and remove their
-   * branches there, and routes read it for files, diffs and git. */
+  /** The project's default source, the only location a project has: where the work no session does runs
+   * (task lists' diff stats, deleting a task's branch, a generated task's utility session), whoever asks. A
+   * session's own work runs in its source (`SessionModel`). Throws `SourceNotFoundError` without one. */
+  readonly defaultSource: SourceModel;
+
   constructor(
     readonly projectId: number,
-    private broadcast: Broadcast,
-    readonly source: SourceModel,
+    private readonly nodes: Nodes,
   ) {
     const project = getProject(projectId);
-    if (!project) throw new Error(`Project ${projectId} not found`);
-    if (source.record.project_id !== projectId) throw new SourceNotFoundError();
+    if (!project) throw new ProjectNotFoundError(projectId);
     this.baseBranch = project.base_branch;
+    this.defaultSource = new SourceModel(nodes.hub, defaultSourceOf(projectId));
   }
 
-  /** Files and diffs of the source's checkout, against the project's base branch. */
-  get workspace() {
-    return this.source.workspace(this.baseBranch);
-  }
+  private get broadcast(): Broadcast { return this.nodes.broadcast; }
 
   /**
    * Return a ProjectTasks instance for task lifecycle operations.
@@ -95,9 +130,9 @@ export class ProjectModel {
   tasks(): ProjectTasks {
     return new ProjectTasks(
       this.projectId,
-      this.source.git,
+      this.defaultSource.git,
       this.baseBranch,
-      this.broadcast,
+      this.nodes,
     );
   }
 

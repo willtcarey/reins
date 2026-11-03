@@ -1,7 +1,9 @@
 import { describe, test, expect, beforeEach, afterEach, spyOn } from "bun:test";
 import { useTestDb } from "../helpers/test-db.js";
 import { makeRequest } from "../helpers/request.js";
-import { connectLoopbackNode, connectScriptedNode, SEEDED_NODE_ID, stopLoopbackNode } from "../helpers/loopback-node.js";
+import { connectLoopbackNode, connectScriptedNode, loopbackLink, SEEDED_NODE_ID, stopLoopbackNode } from "../helpers/loopback-node.js";
+import { mkdirSync } from "fs";
+import { join } from "path";
 import { storeSessionAttachment } from "../../session-attachments-store.js";
 import { latestSettlement } from "../../sessions/session-runs.js";
 import { createAppState, stubRuntime } from "../helpers/app-state.js";
@@ -12,7 +14,7 @@ import { createProject } from "../project-fixture.js";
 import { createSession, updateActivityState } from "../session-fixture.js";
 import { persistCanonicalMessages } from "../helpers/canonical-messages.js";
 import { getDb } from "../../app-globals.js";
-import { createSource } from "../../node-store.js";
+import { defaultSource, upsertSource } from "../../node-store.js";
 import type { WsClient } from "../../state.js";
 import { getModels, getProviders } from "@earendil-works/pi-ai/compat";
 import { useFakeModel } from "../helpers/fake-model.js";
@@ -284,39 +286,81 @@ describe("session routes (top-level)", () => {
   describe("POST /api/sessions/:sessionId/move", () => {
     const move = (sessionId: string, body: unknown) => router.handle(makeRequest("POST", `/api/sessions/${sessionId}/move`, body), state);
 
-    test("moves an idle session to another node's source, closing its live runtime, and answers with its placement", async () => {
+    test("moves an idle session to a node and path, closing its live runtime, and answers with its placement", async () => {
       createRunnableSession("movable", projectId);
       getDb().query("INSERT INTO nodes (id, name) VALUES ('other', 'Other')").run();
-      const other = createSource(projectId, "other", "/elsewhere");
+      const other = upsertSource("other", "/elsewhere");
       await Promise.all([connectScriptedNode(state, SEEDED_NODE_ID, {}).ready(), connectScriptedNode(state, "other", {}).ready()]);
       const runtime = await openSessionRuntime(state.process, "movable");
       const closed = spyOn(runtime, "close");
 
-      // Onto the node it is already on: nothing changes.
-      expect(await (await move("movable", { nodeId: "internal" }))!.json()).toEqual({ available: true, removed: false, nodeId: "internal", nodeName: "Internal", path: repo.dir });
+      // Onto the source it is already on: nothing changes.
+      expect(await (await move("movable", { nodeId: "internal", path: repo.dir }))!.json()).toEqual({ available: true, removed: false, nodeId: "internal", nodeName: "Internal", path: repo.dir });
+      expect(closed).toHaveBeenCalledTimes(0);
 
-      const moved = await move("movable", { nodeId: "other" });
+      const moved = await move("movable", { nodeId: "other", path: "/elsewhere" });
       expect(moved!.status).toBe(200);
       expect(await moved!.json()).toEqual({ available: true, removed: false, nodeId: "other", nodeName: "Other", path: "/elsewhere" });
       expect(getDb().query("SELECT source_id FROM sessions WHERE id = 'movable'").get()).toEqual({ source_id: other.id });
       expect(closed).toHaveBeenCalledTimes(1);
       expect(state.process.sessions.live.has("movable")).toBe(false);
       // There is no release back to the server.
-      expect((await move("movable", { nodeId: null }))!.status).toBe(400);
+      expect((await move("movable", { nodeId: null, path: "/elsewhere" }))!.status).toBe(400);
     });
 
-    test("rejects a busy session, an unknown node, a missing session and an invalid body", async () => {
+    test("a path not known yet is checked on its node", async () => {
+      createSession("roaming", projectId, { agentRuntimeType: "pi" });
+      connectLoopbackNode(state);
+      await loopbackLink(state).ready();
+      try {
+        const missing = await move("roaming", { nodeId: "internal", path: join(repo.dir, "missing") });
+        expect({ status: missing!.status, body: await missing!.json() }).toEqual({ status: 400, body: { error: `Directory does not exist: ${join(repo.dir, "missing")}` } });
+        mkdirSync(join(repo.dir, "sub"));
+        expect(await (await move("roaming", { nodeId: "internal", path: join(repo.dir, "sub") }))!.json()).toMatchObject({ nodeId: "internal", path: join(repo.dir, "sub") });
+      } finally {
+        await stopLoopbackNode(state);
+      }
+    });
+
+    test("rejects a busy session, an unknown or removed node, a missing session and an invalid body", async () => {
       createSession("busy", projectId, { agentRuntimeType: "pi" });
       stubRuntime(state.process, "busy");
       getDb().query("INSERT INTO nodes (id, name) VALUES ('other', 'Other')").run();
-      createSource(projectId, "other", "/elsewhere");
-      const busy = await move("busy", { nodeId: "other" });
+      getDb().query("INSERT INTO nodes (id, name, removed_at) VALUES ('gone', 'Gone', '2026-10-11T09:00:00.000Z')").run();
+      upsertSource("other", "/elsewhere");
+      upsertSource("gone", "/gone");
+      const busy = await move("busy", { nodeId: "other", path: "/elsewhere" });
       expect(busy!.status).toBe(409);
       expect(await busy!.json()).toEqual({ error: "Session has an active run or pending input; try again when it is idle" });
       createSession("resting", projectId, { agentRuntimeType: "pi" });
-      expect((await move("resting", { nodeId: "elsewhere" }))!.status).toBe(409);
-      expect((await move("missing", { nodeId: "internal" }))!.status).toBe(404);
-      expect((await move("resting", {}))!.status).toBe(400);
+      expect((await move("resting", { nodeId: "nowhere", path: "/elsewhere" }))!.status).toBe(400);
+      expect((await move("resting", { nodeId: "gone", path: "/gone" }))!.status).toBe(400);
+      expect((await move("missing", { nodeId: "other", path: "/elsewhere" }))!.status).toBe(404);
+      expect((await move("resting", { nodeId: "other" }))!.status).toBe(400);
+      expect(getDb().query("SELECT source_id FROM sessions WHERE id = 'resting'").get()).toEqual({ source_id: defaultSource(projectId)!.id });
+    });
+  });
+
+  describe("sessions of no project", () => {
+    test("POST /api/sessions creates one in the location it names; GET /api/sessions lists those the browser shows", async () => {
+      upsertSource(SEEDED_NODE_ID, "/scratch");
+
+      const res = await router.handle(makeRequest("POST", "/api/sessions", { source: { nodeId: SEEDED_NODE_ID, path: "/scratch" }, title: "Notes" }), state);
+
+      expect(res!.status).toBe(201);
+      const created = await res!.json();
+      expect(created).toMatchObject({ projectId: null, taskId: null, name: "Notes", placement: { nodeId: SEEDED_NODE_ID, path: "/scratch" } });
+      createSession("project-one", projectId, { agentRuntimeType: "pi" });
+      getDb().query("INSERT INTO sessions (id, project_id, source_id, background) VALUES ('hidden', NULL, ?, 1)").run(defaultSource(projectId)!.id);
+      const listed = await (await router.handle(makeRequest("GET", "/api/sessions"), state))!.json();
+      expect(listed.map((session: { id: string }) => session.id)).toEqual([created.id]);
+    });
+
+    test("POST /api/sessions needs a location, on a known node", async () => {
+      expect((await router.handle(makeRequest("POST", "/api/sessions", {}), state))!.status).toBe(400);
+      const unknown = await router.handle(makeRequest("POST", "/api/sessions", { source: { nodeId: "nowhere", path: "/scratch" } }), state);
+      expect({ status: unknown!.status, body: await unknown!.json() }).toEqual({ status: 400, body: { error: "Node not found: nowhere" } });
+      expect(getDb().query("SELECT COUNT(*) AS n FROM sessions").get()).toEqual({ n: 0 });
     });
   });
 
@@ -324,35 +368,35 @@ describe("session routes (top-level)", () => {
     const targets = async (sessionId: string) => router.handle(makeRequest("GET", `/api/sessions/${sessionId}/move-targets`), state);
     const view = async (sessionId: string) => (await (await router.handle(makeRequest("GET", `/api/sessions/${sessionId}`), state))!.json());
 
-    test("lists every node, eligible first, marking where the session is and which nodes lack the project; the session view's placement names its node", async () => {
+    test("lists every node not removed with the paths its project's sessions used there, the latest first, marking where the session is; the session view's placement names its node", async () => {
       createSession("placed", projectId, { agentRuntimeType: "pi" });
       getDb().query("INSERT INTO nodes (id, name) VALUES ('other', 'Other'), ('unrelated', 'Alpha')").run();
-      createSource(projectId, "other", "/elsewhere");
+      getDb().query("INSERT INTO nodes (id, name, removed_at) VALUES ('gone', 'Gone', '2026-10-11T09:00:00.000Z')").run();
+      const older = upsertSource("other", "/older");
+      const newer = upsertSource("other", "/newer");
+      createSession("older", projectId, { agentRuntimeType: "pi", sourceId: older.id });
+      createSession("newer", projectId, { agentRuntimeType: "pi", sourceId: newer.id });
+      getDb().exec("UPDATE sessions SET updated_at = '2026-01-01T00:00:00.000Z' WHERE id = 'older'; UPDATE sessions SET updated_at = '2026-02-01T00:00:00.000Z' WHERE id = 'newer'");
+      // Another project's location is not suggested.
+      const other = createProject("Other", "/other/project", "main", "unrelated");
+      createSession("theirs", other.id, { agentRuntimeType: "pi" });
 
       const listedTargets = await targets("placed");
       expect(listedTargets!.status).toBe(200);
       expect(await listedTargets!.json()).toEqual([
-        { nodeId: "other", name: "Other", connected: false, eligible: true },
-        { nodeId: "unrelated", name: "Alpha", connected: false, eligible: false, reason: "no_source" },
-        { nodeId: "internal", name: "Internal", connected: false, eligible: false, reason: "current" },
+        { nodeId: "unrelated", name: "Alpha", connected: false, current: false, paths: [] },
+        { nodeId: "internal", name: "Internal", connected: false, current: true, paths: [repo.dir] },
+        { nodeId: "other", name: "Other", connected: false, current: false, paths: ["/newer", "/older"] },
       ]);
       const placedView = await view("placed");
       // `available`: whether its node is connected.
       expect(placedView.placement).toEqual({ available: false, removed: false, nodeId: "internal", nodeName: "Internal", path: repo.dir });
-      expect(placedView).not.toHaveProperty("moveTargetCount");
 
       await connectScriptedNode(state, SEEDED_NODE_ID, {}).ready();
-      expect((await (await targets("placed"))!.json()).at(-1)).toEqual({ nodeId: "internal", name: "Internal", connected: true, eligible: false, reason: "current" });
+      expect((await (await targets("placed"))!.json())[1]).toMatchObject({ nodeId: "internal", connected: true, current: true });
       expect(await view("placed")).toMatchObject({ placement: { available: true, removed: false, nodeId: "internal", nodeName: "Internal" } });
       const [listed] = await (await router.handle(makeRequest("GET", `/api/projects/${projectId}/sessions`), state))!.json();
       expect(listed).toMatchObject({ id: "placed", placement: { nodeId: "internal", nodeName: "Internal" } });
-      expect(listed).not.toHaveProperty("location");
-      expect(listed).not.toHaveProperty("moveTargetCount");
-
-      // Once moved, the node of its new source is the current one.
-      await router.handle(makeRequest("POST", "/api/sessions/placed/move", { nodeId: "other" }), state);
-      expect((await (await targets("placed"))!.json()).map((target: { nodeId: string; reason?: string }) => [target.nodeId, target.reason]))
-        .toEqual([["internal", undefined], ["unrelated", "no_source"], ["other", "current"]]);
     });
 
     test("returns 404 for a missing session", async () => {
@@ -364,7 +408,7 @@ describe("session routes (top-level)", () => {
     /** A session on the project's source on node `gone`, which was removed. */
     function strandedSession(): string {
       getDb().exec("INSERT INTO nodes (id, name, public_key, removed_at) VALUES ('gone', 'Gone', 'key', '2026-10-11T09:00:00.000Z')");
-      const source = createSource(projectId, "gone", "/gone/checkout");
+      const source = upsertSource("gone", "/gone/checkout");
       createSession("stranded", projectId, { agentRuntimeType: "pi", sourceId: source.id, modelProvider: "anthropic", modelId: "claude-sonnet-4-5" });
       return "stranded";
     }
@@ -388,12 +432,12 @@ describe("session routes (top-level)", () => {
       expect({ status: changed!.status, body: await changed!.json() }).toEqual({ status: 409, body: refusal });
     });
 
-    test("moves to a live node holding a source of its project; the removed node is no move target", async () => {
+    test("moves to a live node; the removed node is no move target", async () => {
       const sessionId = strandedSession();
 
       expect(await (await router.handle(makeRequest("GET", `/api/sessions/${sessionId}/move-targets`), state))!.json())
-        .toEqual([{ nodeId: "internal", name: "Internal", connected: false, eligible: true }]);
-      const moved = await router.handle(makeRequest("POST", `/api/sessions/${sessionId}/move`, { nodeId: "internal" }), state);
+        .toEqual([{ nodeId: "internal", name: "Internal", connected: false, current: false, paths: [repo.dir] }]);
+      const moved = await router.handle(makeRequest("POST", `/api/sessions/${sessionId}/move`, { nodeId: "internal", path: repo.dir }), state);
 
       expect(moved!.status).toBe(200);
       expect(await moved!.json()).toEqual({ available: false, removed: false, nodeId: "internal", nodeName: "Internal", path: repo.dir });

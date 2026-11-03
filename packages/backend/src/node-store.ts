@@ -1,44 +1,43 @@
 import { getDb } from "./app-globals.js";
 
-export interface Source { id: number; project_id: number; node_id: string; path: string }
+/** A location: a path on a node, where sessions work (ADR-034). It belongs to no project: any session may
+ * use it, and a project has one as its default source (`projects.default_source_id`). One row per node and path. */
+export interface Source { id: number; node_id: string; path: string }
 
 export function getSource(id: number): Source | null {
   return getDb().query<Source, [number]>("SELECT * FROM sources WHERE id = ?").get(id) ?? null;
 }
 
-/** The project's default source, where a new session is placed unless the caller names one: its first
- * (lowest ID) source on a node that was not removed, i.e. the one it was created with while that node
- * remains. */
+/** The source of `path` on node `nodeId`, made if there is none (one row per node and path). */
+export function upsertSource(nodeId: string, path: string): Source {
+  return getDb().query<Source, [string, string]>(`INSERT INTO sources (node_id, path) VALUES (?, ?)
+    ON CONFLICT (node_id, path) DO UPDATE SET path = excluded.path RETURNING *`).get(nodeId, path)!;
+}
+
+export function findSource(nodeId: string, path: string): Source | null {
+  return getDb().query<Source, [string, string]>("SELECT * FROM sources WHERE node_id = ? AND path = ?").get(nodeId, path) ?? null;
+}
+
+/** The project's default source: where it was created, the default of a session with nothing better to
+ * inherit. */
 export function defaultSource(projectId: number): Source | null {
-  return getDb().query<Source, [number]>(`SELECT sources.* FROM sources JOIN nodes ON nodes.id = sources.node_id
-    WHERE sources.project_id = ? AND nodes.removed_at IS NULL ORDER BY sources.id LIMIT 1`).get(projectId) ?? null;
+  return getDb().query<Source, [number]>(`SELECT sources.* FROM sources JOIN projects ON projects.default_source_id = sources.id
+    WHERE projects.id = ?`).get(projectId) ?? null;
 }
 
-/** The project's sources, its first (default) one first. */
-export function listSources(projectId: number): Source[] {
-  return getDb().query<Source, [number]>("SELECT * FROM sources WHERE project_id = ? ORDER BY id").all(projectId);
-}
+/** A node not removed, with the paths a project's sessions used on it, the most recently used first. */
+export interface NodePaths { id: string; name: string; paths: string[] }
 
-/** Throws a UNIQUE constraint error when a source of any project already has this node and path. */
-export function createSource(projectId: number, nodeId: string, path: string): Source {
-  return getDb().query<Source, [number, string, string]>("INSERT INTO sources (project_id, node_id, path) VALUES (?, ?, ?) RETURNING *").get(projectId, nodeId, path)!;
-}
-
-/** Throws a UNIQUE constraint error when another source already has this node and path. */
-export function updateSourcePath(id: number, path: string): Source | null {
-  return getDb().query<Source, [string, number]>("UPDATE sources SET path = ? WHERE id = ? RETURNING *").get(path, id) ?? null;
-}
-
-/** Removes a source no session is bound to (a session's source cannot be deleted). */
-export function deleteSource(id: number): void {
-  getDb().query("DELETE FROM sources WHERE id = ?").run(id);
-}
-
-/** Every node not removed, in name order, with whether it holds a source for the project. */
-export function listNodesForProject(projectId: number): Array<{ id: string; name: string; hasSource: boolean }> {
-  return getDb().query<{ id: string; name: string; hasSource: number }, [number]>(`SELECT nodes.id, nodes.name,
-      EXISTS (SELECT 1 FROM sources WHERE sources.node_id = nodes.id AND sources.project_id = ?) AS hasSource
-    FROM nodes WHERE nodes.removed_at IS NULL ORDER BY nodes.name, nodes.id`).all(projectId).map(node => ({ ...node, hasSource: node.hasSource === 1 }));
+/** Every node not removed, in name order, each with the paths `projectId`'s sessions used there, most
+ * recently used first (its default source first on its node when no session used it); no paths without a project. */
+export function listNodePathsForProject(projectId: number | null): NodePaths[] {
+  const nodes = getDb().query<{ id: string; name: string }, []>("SELECT id, name FROM nodes WHERE removed_at IS NULL ORDER BY name, id").all();
+  if (projectId === null) return nodes.map(node => ({ ...node, paths: [] }));
+  const used = getDb().query<{ node_id: string; path: string }, [number, number]>(`SELECT sources.node_id, sources.path FROM sources
+      LEFT JOIN sessions ON sessions.source_id = sources.id AND sessions.project_id = ?1
+    WHERE sessions.id IS NOT NULL OR sources.id = (SELECT default_source_id FROM projects WHERE id = ?2)
+    GROUP BY sources.id ORDER BY MAX(sessions.updated_at) DESC NULLS LAST, sources.id`).all(projectId, projectId);
+  return nodes.map(node => ({ ...node, paths: used.filter(source => source.node_id === node.id).map(source => source.path) }));
 }
 
 /** A node: `publicKey`, `hostname` and `pairedAt` once it redeemed a pairing code (the seeded local node
@@ -57,13 +56,25 @@ export function listNodes(): NodeRow[] {
   return getDb().query<NodeRow, []>(`SELECT ${NODE_COLUMNS} FROM nodes WHERE removed_at IS NULL ORDER BY name, id`).all();
 }
 
-/** A source on a node, with its project's name. */
-export interface NodeSource { id: number; projectId: number; projectName: string; path: string }
+/** A source on a node in use, with the projects that use it: whose sessions work there, or whose default source it is. */
+export interface NodeSource { id: number; path: string; projects: Array<{ id: number; name: string }> }
 
-/** The sources on the node, of every project, by path. */
+/** The sources in use on the node (by a session, or as a project's default source), by path. */
 export function listSourcesOnNode(nodeId: string): NodeSource[] {
-  return getDb().query<NodeSource, [string]>(`SELECT sources.id, sources.project_id AS projectId, projects.name AS projectName, sources.path
-    FROM sources JOIN projects ON projects.id = sources.project_id WHERE sources.node_id = ? ORDER BY sources.path, sources.id`).all(nodeId);
+  const rows = getDb().query<{ id: number; path: string; projectId: number | null; projectName: string | null }, [string]>(`SELECT sources.id, sources.path,
+      projects.id AS projectId, projects.name AS projectName
+    FROM sources
+      LEFT JOIN (SELECT DISTINCT source_id, project_id FROM sessions UNION SELECT default_source_id, id FROM projects) used ON used.source_id = sources.id
+      LEFT JOIN projects ON projects.id = used.project_id
+    WHERE sources.node_id = ? AND used.source_id IS NOT NULL
+    ORDER BY sources.path, sources.id, projects.name, projects.id`).all(nodeId);
+  const sources = new Map<number, NodeSource>();
+  for (const row of rows) {
+    const source = sources.get(row.id) ?? { id: row.id, path: row.path, projects: [] };
+    sources.set(row.id, source);
+    if (row.projectId !== null && !source.projects.some(project => project.id === row.projectId)) source.projects.push({ id: row.projectId, name: row.projectName! });
+  }
+  return [...sources.values()];
 }
 
 /** Throws a UNIQUE constraint error when another node already holds `publicKey`. */

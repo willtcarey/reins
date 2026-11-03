@@ -7,6 +7,7 @@
  */
 
 import type { Models } from "../models/models.js";
+import type { SessionModel } from "../models/session.js";
 import { logger } from "../logger.js";
 
 export interface TaskSessionStarter {
@@ -14,9 +15,8 @@ export interface TaskSessionStarter {
 }
 
 export interface CreateTaskScope {
-  projectId: number;
-  /** The calling session's source: the task's branch is created in its checkout. */
-  sourceId: number;
+  /** The calling session: the task is its project's (a session of no project cannot create tasks). */
+  session: SessionModel;
   models: Models;
   /** When set, a prompt starts a session on the new task. */
   instance?: TaskSessionStarter;
@@ -30,7 +30,9 @@ export interface CreateTaskResult { task: { id: number; [field: string]: unknown
 
 /** Loads the project at call time so project path or base branch changes are picked up. */
 export async function createTaskForSession(scope: CreateTaskScope, input: CreateTaskInput): Promise<CreateTaskResult> {
-  const task = await scope.models.project(scope.projectId, scope.sourceId).tasks().create({
+  const { projectId } = scope.session;
+  if (projectId === null) throw new Error("This session has no project, and a task belongs to a project");
+  const task = await scope.models.project(projectId).tasks().create({
     title: input.title,
     description: input.description,
     branch_name: input.branchName,

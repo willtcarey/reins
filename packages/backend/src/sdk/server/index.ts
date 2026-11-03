@@ -57,6 +57,8 @@ export interface ServerSdk {
   readonly scripting: Scripting;
   readonly http: Http;
   readonly services: Services;
+  /** Sessions: start them, message them, read them, and hear when the runs of those it started end. */
+  readonly sessions: Sessions;
   /**
    * The extension's own directory, `<data dir>/extensions/<name>/` (absolute), which the host creates before
    * the extension registers and never deletes. The extension writes its files only here.
@@ -165,6 +167,98 @@ export interface Services {
   register(service: Service): Disposer;
 }
 
+// ---------------------------------------------------------------------------
+// Sessions
+// ---------------------------------------------------------------------------
+
+/** A location sessions work in: a node and an absolute path on it. */
+export interface Location {
+  readonly nodeId: string;
+  readonly path: string;
+}
+
+/** A session as the server has it now. */
+export interface SessionInfo {
+  readonly id: string;
+  /** Where it works: its source (a location, with its ID). */
+  readonly source: Location & { readonly id: number };
+  /** Its project; null for a session of no project, which has no task. */
+  readonly projectId: number | null;
+  readonly taskId: number | null;
+  readonly parentSessionId: string | null;
+  readonly name: string | null;
+  /** Never shown in the browser (`SessionStart.background`). */
+  readonly background: boolean;
+  /** Its run is in progress now (or input it was given is being admitted). */
+  readonly running: boolean;
+  /** The extension that started it (`SessionStart`), or null. */
+  readonly startedBy: string | null;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export type ThinkingLevel = "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+
+/** A session to start, with its first prompt. It needs a `source` or a `projectId` (or both). */
+export interface SessionStart {
+  /** Where it works: a source's ID, or a node and path (a directory no session used yet is checked on its
+   * node). Without it, the project's: its task's latest session's source, else its default source. */
+  readonly source?: number | Location;
+  /** Its project; without it, the session has none (then `source` is required, and there is no task). */
+  readonly projectId?: number;
+  /** A task of the project. */
+  readonly taskId?: number;
+  readonly prompt: string;
+  /** Its model; without it, the `default_model` setting's. */
+  readonly model?: { readonly provider: string; readonly modelId: string; readonly thinkingLevel?: ThinkingLevel };
+  /** A background session: one the browser never shows (not listed, counted or badged); it runs, settles and
+   * can be read like any other. */
+  readonly background?: boolean;
+  /** Its name; without it, it is named as any session is. */
+  readonly title?: string;
+}
+
+/** How a run of a session ended: its status, the text of its final reply (null without one) and, for a run
+ * that failed or was cancelled, why. */
+export interface SessionSettlement {
+  readonly sessionId: string;
+  readonly status: "completed" | "failed" | "cancelled";
+  readonly result: string | null;
+  readonly error: string | null;
+}
+
+/**
+ * Sessions, as the agents' `api.sessions` has them, for the extension: it acts as no session, so it names
+ * where a session works. What it starts and what it sends record the extension as their origin (the
+ * session's `startedBy`; its messages' `metadata.sourceExtension`), which the chat shows ("from <name>").
+ * Its messages reach the model as they are, like a user's: an extension is trusted code of the server.
+ */
+export interface Sessions {
+  /** The session; rejects for one the server does not have. */
+  get(sessionId: string): Promise<SessionInfo>;
+  /**
+   * Creates a session and submits its prompt; resolves with its ID once Pi admitted the prompt, without
+   * waiting for the run. Rejects, keeping nothing, with neither a source nor a project, an unknown
+   * project, task (or a task of another project), source or node, a path that is not a directory on its
+   * node, a model the server does not have, a blank prompt or title, and a prompt the session refuses.
+   */
+  start(session: SessionStart): Promise<string>;
+  /**
+   * Submits `message` to the session, as the agents' `api.sessions.send` does: it steers it, so a running
+   * session takes it into its work and an idle one starts a run with it; resolves once Pi admitted it, not
+   * when the work ends. It does not look at whether the session is busy: `get` tells. Rejects for an unknown
+   * session, a blank message and one the session refuses (its node was removed).
+   */
+  send(sessionId: string, message: string): Promise<void>;
+  /**
+   * Tells `listener` each time a run of a session this extension started ends, once its end is recorded,
+   * with its outcome and final reply. Only the extension's own sessions (`startedBy`), and only while the
+   * listener is registered: a run that ends while no app runs (during a dev reload's gap) is not told, so
+   * read what a listener missed with `get`. A throw or rejection is the extension's error, logged.
+   */
+  onSettled(listener: (settlement: SessionSettlement) => void | Promise<void>): Disposer;
+}
+
 /** A JSON Schema object, as JSON Schema defines it (a TypeBox schema is one). */
 export type JsonSchema = object;
 
@@ -257,7 +351,8 @@ export interface Tools {
 // ---------------------------------------------------------------------------
 
 export interface PromptContext {
-  session: { id: string; projectId: number; taskId: number | null };
+  /** `projectId` is null for a session of no project (it then has no task). */
+  session: { id: string; projectId: number | null; taskId: number | null };
   task: { id: number; title: string; description: string | null } | null;
   /** The tools the session's model is offered, by name (`execute`, `search`, `read`, …); null: every tool. */
   tools: readonly string[] | null;
@@ -282,7 +377,8 @@ export interface Prompt {
 /** What a scripting function runs for: the agent's session, and its script's signal. */
 export interface ScriptContext {
   sessionId: string;
-  projectId: number;
+  /** Null when the agent's session has no project. */
+  projectId: number | null;
   taskId: number | null;
   signal?: AbortSignal;
 }

@@ -22,6 +22,7 @@ function childSession(activityState: SessionListItem["activityState"]): SessionL
     activityState,
     pinnedAt: null,
     archivedAt: null,
+    sourceExtension: null,
     placement: { available: true, removed: false, nodeId: "internal", nodeName: "Internal", path: "" },
   };
 }

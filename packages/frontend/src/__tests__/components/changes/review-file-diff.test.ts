@@ -255,7 +255,7 @@ describe("ReviewFileDiff", () => {
   test("does not request complete content merely by rendering an expandable file", () => {
     const fileChange = parseFileChanges(EXPANDABLE_PATCH, "project-7-v1").changes[0]!;
     const item = new ReviewFileDiff();
-    const contextState = new FileDiffContextState({ projectId: 7, mode: "branch" });
+    const contextState = new FileDiffContextState({ sessionId: "s7", mode: "branch" });
     item.change = fileChange;
     item.contextState = contextState;
 
@@ -267,7 +267,7 @@ describe("ReviewFileDiff", () => {
   test("updates when its persistent context state changes", async () => {
     const fileChange = parseFileChanges(PATCH, "project-7-v1").changes[0]!;
     const state = new FileDiffContextState(
-      { projectId: 7, mode: "branch" },
+      { sessionId: "s7", mode: "branch" },
       async () => { throw new Error("offline"); },
     );
     const item = new ReviewFileDiff();
@@ -285,7 +285,7 @@ describe("ReviewFileDiff", () => {
   test("leaves expansion controls to Pierre and reports acquisition failure without replacing the diff", async () => {
     const fileChange = parseFileChanges(PATCH, "project-7-v1").changes[0]!;
     const state = new FileDiffContextState(
-      { projectId: 7, mode: "branch" },
+      { sessionId: "s7", mode: "branch" },
       async () => { throw new Error("offline"); },
     );
     await expect(state.loadFiles(fileChange)).rejects.toBeDefined();

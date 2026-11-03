@@ -26,9 +26,10 @@ describe("project-store", () => {
       expect(p.base_branch).toBe("main");
     });
 
-    test("a checkout (node and path) belongs to one project: a second source of it throws", () => {
-      createProject("A", "/tmp/same-path");
-      expect(() => createProject("B", "/tmp/same-path")).toThrow("UNIQUE constraint");
+    test("two projects may have their home in one checkout", () => {
+      const a = createProject("A", "/tmp/same-path");
+      const b = createProject("B", "/tmp/same-path");
+      expect(b.default_source_id).toBe(a.default_source_id);
     });
   });
 

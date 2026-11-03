@@ -58,6 +58,7 @@ function makeSessionData(overrides: {
     activityState: overrides.activityState ?? null,
     pinnedAt: null,
     archivedAt: null,
+    sourceExtension: null,
     background: false,
     placement: { status: "server" as const, error: null, available: true, removed: false, nodeId: "internal", nodeName: "Internal", path: "" },
     pendingOperation: null,

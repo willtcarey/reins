@@ -1,13 +1,12 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { runScript } from "../../../tools/execute.js";
-import type { ApiContext } from "../../../scripting/define-function.js";
-import { Models } from "../../../models/models.js";
 import { createAppState, type TestAppState } from "../../helpers/app-state.js";
 import { echoTool, startFakeMcpServer, type FakeMcpServer, type FakeTool } from "../../helpers/fake-mcp-server.js";
 import { testMcp } from "../../helpers/mcp-extension.js";
 import { useTestDb } from "../../helpers/test-db.js";
 import { testExtension, testTool } from "../../helpers/test-extension.js";
 import type { McpServers } from "../../../extensions/mcp/servers.js";
+import { scriptContext } from "../../helpers/script-context.js";
 
 const fakes: FakeMcpServer[] = [];
 
@@ -30,13 +29,12 @@ const listProjects: FakeTool = { name: "list_projects", description: "Lists the 
 function app(others: Parameters<typeof createAppState>[1] = {}): { state: TestAppState; servers: McpServers; script(code: string): Promise<string> } {
   const mcp = testMcp();
   const state = createAppState(undefined, { extensions: [mcp.registration, ...(others.extensions ?? [])] });
-  const models = new Models(state);
-  const ctx: ApiContext = { projectId: 1, sessionId: "caller", taskId: null, broadcast: models.broadcast, sourceId: 0, nodes: state.nodes, models };
+  const ctx = () => scriptContext(state, { sessionId: "caller" });
   return {
     state,
     servers: mcp.servers,
     async script(code) {
-      const result = await runScript(ctx, code);
+      const result = await runScript(ctx(), code);
       if (!result.ok) throw new Error(result.error);
       return result.text;
     },

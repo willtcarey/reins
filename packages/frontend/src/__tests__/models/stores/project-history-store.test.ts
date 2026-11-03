@@ -15,6 +15,7 @@ const archivedSession = {
   activityState: null,
   pinnedAt: null,
   archivedAt: "2026-01-03T00:00:00Z",
+  sourceExtension: null,
   placement: { status: "server" as const, error: null, available: true, removed: false, nodeId: "internal", nodeName: "Internal", path: "" },
   taskTitle: "Router task",
 };
@@ -106,6 +107,7 @@ describe("ProjectHistoryStore", () => {
       ...archivedSession,
       id: "current",
       archivedAt: null,
+      sourceExtension: null,
       updatedAt: "2026-01-05T00:00:00Z",
     };
     mockFetch((url) => {

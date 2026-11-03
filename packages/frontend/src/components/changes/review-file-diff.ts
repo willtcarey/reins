@@ -79,7 +79,8 @@ export class ReviewFileDiff extends LitElement {
 
   @property({ attribute: false }) change: FileChange | null = null;
   @property({ type: Boolean }) collapsed = false;
-  @property({ type: Number, attribute: false }) projectId: number | null = null;
+  /** The session whose checkout the file is read from. */
+  @property({ attribute: false }) sessionId: string | null = null;
   @property({ attribute: false }) branch: string | null = null;
   /** The viewed session's source, which the file's view button opens the file browser in. */
   @property({ attribute: false }) source: Source | null = null;
@@ -225,9 +226,9 @@ export class ReviewFileDiff extends LitElement {
   }
 
   private _fileUrl(path: string): string {
-    if (this.projectId == null) return "";
+    if (this.sessionId == null) return "";
     return api.files.contentUrl(
-      this.projectId,
+      this.sessionId,
       path,
       this.branch ? { ref: this.branch } : {},
     );

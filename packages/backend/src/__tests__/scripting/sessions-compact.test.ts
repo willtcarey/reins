@@ -7,11 +7,10 @@ import { createAppState } from "../helpers/app-state.js";
 import { getDb } from "../../app-globals.js";
 import { type Project } from "../../project-store.js";
 import { createProject } from "../project-fixture.js";
-import { defaultSource } from "../../node-store.js";
 import { createSession } from "../session-fixture.js";
 import { sessionsCompactFunction } from "../../scripting/sessions.js";
 import type { ApiContext } from "../../scripting/define-function.js";
-import { Models } from "../../models/models.js";
+import { scriptContext } from "../helpers/script-context.js";
 
 const storedRoles = (sessionId: string) => getDb()
   .query<{ role: string }, [string]>("SELECT role FROM session_messages WHERE session_id = ? ORDER BY seq")
@@ -26,8 +25,7 @@ describe("sessions.compact", () => {
 
   function makeCtx(): ApiContext {
     const state = createAppState();
-    const models = new Models(state);
-    return { projectId: project.id, sessionId: "ctx-session", taskId: null, sourceId: defaultSource(project.id)!.id, broadcast: models.broadcast, nodes: state.nodes, models };
+    return scriptContext(state, { sessionId: "ctx-session", projectId: project.id });
   }
 
   test("compacts a session of the current project with the given instructions", async () => {
@@ -45,12 +43,17 @@ describe("sessions.compact", () => {
     await until(() => storedRoles("idle").at(-1) === "compaction", "the compaction was committed");
   });
 
-  test("refuses a session outside the current project", async () => {
+  test("compacts a session of another project", async () => {
     const other = createProject("Other Project", "/tmp/other-project", "main");
     createSession("elsewhere", other.id, { agentRuntimeType: "pi", modelProvider: model.model.provider, modelId: model.model.modelId });
-    persistCanonicalMessages("elsewhere", [{ role: "user", content: [{ type: "text", text: "Hello" }], timestamp: 1 }]);
+    persistCanonicalMessages("elsewhere", [
+      { role: "user", content: [{ type: "text", text: "Hello" }], timestamp: 1 },
+      { role: "assistant", content: [{ type: "text", text: "Hi" }], timestamp: 2 },
+    ]);
 
-    await expect(sessionsCompactFunction.execute({ sessionId: "elsewhere" }, makeCtx())).rejects.toThrow("Session elsewhere is outside the current project scope");
-    expect(storedRoles("elsewhere")).toEqual(["reinsInput"]);
+    expect(await sessionsCompactFunction.execute({ sessionId: "elsewhere" }, makeCtx())).toEqual({ sessionId: "elsewhere" });
+
+    (await model.nextSummary()).finish({ reply: "A greeting" });
+    await until(() => storedRoles("elsewhere").at(-1) === "compaction", "the compaction was committed");
   });
 });

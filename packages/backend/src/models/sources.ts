@@ -1,8 +1,9 @@
 /**
  * Source Model
  *
- * A source is one checkout of a project: a path on one node. This model owns its record (creating one,
- * moving its path, resolving which one a call works in) and what reads or changes that checkout, run on
+ * A source is a location: a path on one node, where sessions work (ADR-034). It belongs to no project: any
+ * session may use it, and a project has one as its default source. This model owns its record (made on first use,
+ * `ensureSource`; resolving which one a call works in) and what reads or changes that checkout, run on
  * its node: its git (`Git` on `NodeDirClient.spawner`), listing (`fs.list`), reading (`fs.read`) and writing
  * (`fs.write`) files, diffs (`Workspace`) and the skills of its checkout (discovered through `fs.*`). The
  * git logic stays in `Git`, the transport in `NodeClient`: node failures reach callers as they are (an
@@ -10,23 +11,13 @@
  * The node confines nothing to the checkout (ADR-029): what a browser names is confined here.
  */
 
-import { basename, isAbsolute, join, relative, resolve } from "path";
+import { basename, isAbsolute, join, normalize, relative, resolve } from "path";
 import { nodeResources, type Skill } from "../session-runtime/resources.js";
 import { NodeDirClient, NodeFileError } from "../nodes/node-dir-client.js";
 import { PiNodeEnv } from "../nodes/pi-node-env.js";
 import { logger } from "../logger.js";
 import { Git } from "../git.js";
-import {
-  createSource as storeCreateSource,
-  defaultSource,
-  deleteSource,
-  getNode,
-  getSource,
-  listSources,
-  updateSourcePath,
-  type Source,
-} from "../node-store.js";
-import type { SessionRow } from "../session-store.js";
+import { findSource, getNode, getSource, defaultSource, upsertSource, type Source } from "../node-store.js";
 import type { NodeHub } from "../state.js";
 import { NodeNotFoundError, type Nodes } from "./nodes.js";
 import { Workspace } from "./workspace.js";
@@ -45,13 +36,6 @@ export class SourceNotFoundError extends Error {
 
 /** A source's path is not a directory on its node. */
 export class CheckoutNotFoundError extends Error {}
-
-/** Another source (of any project) already has that node and path: a checkout belongs to one project. Or
- * the project already has a source on that node: a session moved to a node works in its project's source
- * there, so a project has at most one per node. */
-export class DuplicateSourceError extends Error {
-  constructor(message = "That path is already a source of another project") { super(message); }
-}
 
 export class PathTraversalError extends Error {
   constructor(message = "Path traversal not allowed") { super(message); }
@@ -81,130 +65,69 @@ function withinCheckout(cwd: string, path: string): string | null {
   const fromRoot = relative(cwd, resolved);
   return fromRoot === ".." || fromRoot.startsWith("../") || isAbsolute(fromRoot) ? null : resolved;
 }
-/** A skill as suggestions list it (`GET /api/projects/:id/skills`). */
+/** A skill as suggestions list it (`GET /api/nodes/:nodeId/skills`). */
 export interface SkillInfo { name: string; description: string }
 const skillInfos = (skills: readonly Skill[]): SkillInfo[] => skills.map(({ name, description }) => ({ name, description }));
-
-const isUniqueViolation = (error: unknown) => error instanceof Error && error.message.includes("UNIQUE constraint");
 
 // ---------------------------------------------------------------------------
 // Records
 // ---------------------------------------------------------------------------
 
-/**
- * The source a call works in: the one the caller names (a request's `sourceId`, a calling session's
- * source), which must belong to the project, or else the project's default source. Resolve it where the
- * call enters (route middleware, tool scope), not inside models.
- */
-export function resolveSource(projectId: number, sourceId?: number | null): Source {
-  if (sourceId == null) {
-    const source = defaultSource(projectId);
-    if (!source) throw new SourceNotFoundError("Project has no source");
-    return source;
-  }
+/** Source `sourceId`; throws `SourceNotFoundError`. Resolve it where the call enters (route middleware, tool
+ * scope), not inside models. */
+export function resolveSource(sourceId: number): Source {
   const source = getSource(sourceId);
-  if (!source || source.project_id !== projectId) throw new SourceNotFoundError();
+  if (!source) throw new SourceNotFoundError();
   return source;
 }
 
-/** The session's source (`resolveSource` of its row), or null when it is gone or belongs to another
- * project. Where the session's commands go: to that source's node. */
-export function sessionSource(row: Pick<SessionRow, "source_id" | "project_id">): Source | null {
-  try {
-    return resolveSource(row.project_id, row.source_id);
-  } catch (error) {
-    if (error instanceof SourceNotFoundError) return null;
-    throw error;
-  }
+/** The project's default source: where it was created, the default of a session with nothing better to
+ * inherit, and the checkout of project operations no session makes (task lists' diff stats, deleting a
+ * task's branch). A default, not a limit: any session may work elsewhere. Throws `SourceNotFoundError`. */
+export function defaultSourceOf(projectId: number): Source {
+  const source = defaultSource(projectId);
+  if (!source) throw new SourceNotFoundError("Project has no default source");
+  return source;
 }
 
-/** A source as the project edit form shows it. */
-export interface SourceView {
-  id: number;
-  nodeId: string;
-  nodeName: string;
-  /** Whether its node is connected now. */
-  connected: boolean;
-  /** Whether its node was revoked: it may not connect, so the path cannot be checked there. */
-  revoked: boolean;
-  path: string;
-}
-
-/** The project's sources, its default one first. Those on a removed node are left out: that node is gone
- * for good, so there is nothing to edit there (its sessions stay, and move to another node's source). */
-export function listProjectSources(projectId: number, nodes: Pick<NodeHub, "get">): SourceView[] {
-  return listSources(projectId).flatMap((source) => {
-    const node = getNode(source.node_id);
-    if (node?.removedAt) return [];
-    return [{
-      id: source.id,
-      nodeId: source.node_id,
-      nodeName: node?.name ?? source.node_id,
-      connected: nodes.get(source.node_id).connected,
-      revoked: !!node?.revokedAt,
-      path: source.path,
-    }];
-  });
-}
-
-/** A checkout's path is absolute: the node works in the path it is sent, and a relative one would be
- * resolved against wherever the node runs. */
-function assertAbsolute(path: string): void {
-  if (!isAbsolute(path)) throw new CheckoutNotFoundError(`A source's path must be absolute: ${path}`);
+/** A path as sources keep it: absolute, normalized, without a trailing slash, so one directory is one row. */
+function sourcePath(path: string): string {
+  const trimmed = path.trim();
+  // A relative path would be resolved against wherever the node runs.
+  if (!isAbsolute(trimmed)) throw new CheckoutNotFoundError(`A source's path must be absolute: ${trimmed}`);
+  const normalized = normalize(trimmed);
+  return normalized.length > 1 && normalized.endsWith("/") ? normalized.slice(0, -1) : normalized;
 }
 
 /**
- * Creates a source of the project: the checkout at `path` on node `nodeId`, kept only once that node
- * confirms the path is a directory there. The server's sources are the only record of a node's checkouts:
- * the node keeps none and works in the path it is sent (ADR-026). Tells browsers the node's new source
- * (`Nodes.publish`). Throws `NodeNotFoundError` (also for a removed node), `DuplicateSourceError` (a
- * checkout a project has, or a second checkout of the project on the node), `CheckoutNotFoundError`, or the
- * node's failure when it is unreachable.
+ * The source of `path` on node `nodeId`, made the first time a session, a move or a project names it. A
+ * known one is returned without contacting its node, so a known location on an offline node can still be
+ * chosen (its work then waits for the node). A new one needs an absolute path, a node that is not removed,
+ * and that node confirming a directory there (`fs.list`). The server's sources are the only record of a
+ * node's directories: the node keeps none and works in the path it is sent (ADR-026). Throws `NodeNotFoundError` (also for a removed node),
+ * `CheckoutNotFoundError`, or the node's failure when it is unreachable.
  */
-export async function createSource(projectId: number, nodeId: string, path: string, nodes: Nodes): Promise<SourceModel> {
+export async function ensureSource(nodeId: string, path: string, nodes: Nodes): Promise<SourceModel> {
+  const normalized = sourcePath(path);
+  const known = findSource(nodeId, normalized);
+  if (known) return new SourceModel(nodes.hub, known);
   const node = getNode(nodeId);
   // A removed node is no longer offered: it holds no new sources.
   if (!node || node.removedAt) throw new NodeNotFoundError(nodeId);
-  assertAbsolute(path);
-  if (listSources(projectId).some((source) => source.node_id === nodeId)) throw new DuplicateSourceError(`The project already has a source on ${node.name}`);
-  let record: Source;
-  try {
-    record = storeCreateSource(projectId, nodeId, path);
-  } catch (error) {
-    if (isUniqueViolation(error)) throw new DuplicateSourceError();
-    throw error;
-  }
-  const source = new SourceModel(nodes.hub, record);
-  try {
-    await source.assertCheckoutExists();
-  } catch (error) {
-    deleteSource(record.id);
-    throw error;
-  }
-  nodes.publish(nodeId);
-  return source;
+  await new SourceModel(nodes.hub, { id: 0, node_id: nodeId, path: normalized }).assertCheckoutExists();
+  return new SourceModel(nodes.hub, upsertSource(nodeId, normalized));
 }
 
 /**
- * Moves one of the project's sources to another path on its node, once the node confirms it is a
- * directory there. Tells browsers. Throws `SourceNotFoundError` (also for a source on a removed node, which
- * is no longer listed), `DuplicateSourceError`,
- * `CheckoutNotFoundError`, or the node's failure when it is unreachable.
+ * The skills a session working in `path` on node `nodeId` can invoke, for `/name` suggestions (`listSkills`):
+ * a directory no session works in yet too, without keeping a source for it. Throws `NodeNotFoundError`
+ * (also for a removed node) and `CheckoutNotFoundError` for a relative path.
  */
-export async function moveSource(projectId: number, sourceId: number, path: string, nodes: Nodes): Promise<Source> {
-  const current = resolveSource(projectId, sourceId);
-  if (getNode(current.node_id)?.removedAt) throw new SourceNotFoundError();
-  assertAbsolute(path);
-  await new SourceModel(nodes.hub, { ...current, path }).assertCheckoutExists();
-  let moved: Source;
-  try {
-    moved = updateSourcePath(sourceId, path) ?? current;
-  } catch (error) {
-    if (isUniqueViolation(error)) throw new DuplicateSourceError();
-    throw error;
-  }
-  nodes.publish(current.node_id);
-  return moved;
+export async function skillsAt(nodeId: string, path: string, nodes: Nodes): Promise<{ skills: SkillInfo[]; available: boolean }> {
+  const normalized = sourcePath(path);
+  const node = getNode(nodeId);
+  if (!node || node.removedAt) throw new NodeNotFoundError(nodeId);
+  return new SourceModel(nodes.hub, findSource(nodeId, normalized) ?? { id: 0, node_id: nodeId, path: normalized }).listSkills();
 }
 
 // ---------------------------------------------------------------------------

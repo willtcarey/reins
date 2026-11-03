@@ -10,6 +10,7 @@ import type { PromptBlock } from "./events.js";
 import { Git } from "../git.js";
 import type { NodeDirClient } from "../nodes/node-dir-client.js";
 import type { NodeClient } from "../state.js";
+import type { TaskBranch } from "../models/session.js";
 import { formatContextFilesForPrompt, formatSkillsForPrompt, type SessionResources, type Skill } from "./resources.js";
 
 const BUILTIN_TOOL_SNIPPETS: Record<string, string> = {
@@ -92,6 +93,13 @@ export async function expandSkills(content: PromptBlock[], skills: () => Promise
     : block);
 }
 
+/** Where the branch begins is only shown: one that cannot be found (no common history with the base
+ * branch) leaves the task without it rather than fail the run. */
+async function recordBaseCommit(git: Git, branch: TaskBranch): Promise<void> {
+  const commit = await git.mergeBase(branch.base, branch.name).catch(() => null);
+  if (commit) branch.recordBaseCommit(commit);
+}
+
 /** The checkout could not be prepared, definitively (not because its node is unreachable): a git
  * failure, a missing checkout, a removed node. */
 export class CheckoutPreparationError extends Error {
@@ -101,18 +109,36 @@ export class CheckoutPreparationError extends Error {
   }
 }
 
-/** Checks out `branch` (none for a scratch session) unless it is checked out: from the start again when the
- * node's link drops midway, as it is safe to repeat. */
-export async function prepareCheckout(checkout: NodeDirClient, branch: string | null, signal: AbortSignal): Promise<NodeClient> {
+/** The preparation running in each checkout (by node and path). Git takes one command at a time in a
+ * checkout (`index.lock`), and two runs of a task would both make its branch: they take turns. */
+const preparing = new Map<string, Promise<unknown>>();
+
+async function oneAtATime<T>(key: string, prepare: () => Promise<T>): Promise<T> {
+  const before = preparing.get(key) ?? Promise.resolve();
+  const turn = before.catch(() => {}).then(prepare);
+  const settled = turn.catch(() => {});
+  preparing.set(key, settled);
+  void settled.then(() => { if (preparing.get(key) === settled) preparing.delete(key); });
+  return turn;
+}
+
+/** Checks out `branch` (none for a scratch session) unless it is checked out, making it first when the
+ * checkout does not have it (`TaskBranch`): from the start again when the node's link drops midway, as it
+ * is safe to repeat. Runs in one checkout prepare it one at a time. */
+export async function prepareCheckout(checkout: NodeDirClient, branch: TaskBranch | null, signal: AbortSignal): Promise<NodeClient> {
   try {
-    return await checkout.repeat(async () => {
+    return await oneAtATime(`${checkout.nodeId}\0${checkout.cwd}`, () => checkout.repeat(async () => {
       const node = await checkout.connectedNode({ signal });
       if (branch) {
         const git = new Git(checkout.spawner({ signal }));
-        if (await git.getCurrentBranch() !== branch) await git.checkoutBranch(branch);
+        if (await git.getCurrentBranch() !== branch.name) {
+          const made = await git.ensureBranch(branch.name, branch.base);
+          await git.checkoutBranch(branch.name);
+          if (made !== "existing" || !branch.baseCommitKnown) await recordBaseCommit(git, branch);
+        }
       }
       return node;
-    }, { signal });
+    }, { signal }));
   } catch (error) {
     signal.throwIfAborted();
     throw new CheckoutPreparationError(error instanceof Error ? error.message : String(error), { cause: error });

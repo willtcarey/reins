@@ -5,7 +5,7 @@ import { SessionModel } from "../../models/session.js";
 import { createSession } from "../../sessions/create-session.js";
 import { getSource } from "../../node-store.js";
 import { getSession } from "../../session-store.js";
-import { createProject } from "../project-fixture.js";
+import { createProject, createSourceAt } from "../project-fixture.js";
 import { createAppState } from "../helpers/app-state.js";
 import { useTestDb } from "../helpers/test-db.js";
 import { useTestRepo } from "../helpers/test-repo.js";
@@ -42,13 +42,25 @@ describe("the agent kind", () => {
 
   test("asks the app's extensions for their sections, with the session, its task and every tool", async () => {
     const project = createProject("Reins", repo.dir);
-    const created = createSession(createAppState(), project.id, { model: { provider: "anthropic", modelId: "claude-haiku-4-5" } });
+    const created = createSession(createAppState(), { projectId: project.id, model: { provider: "anthropic", modelId: "claude-haiku-4-5" } });
     const row = getSession(created.id)!;
     const asked: unknown[] = [];
 
-    const { systemPrompt } = (await new SessionModel(row).context(getSource(row.source_id)!, async context => { asked.push(context); return ["From an extension"]; })).runtime;
+    const { systemPrompt } = (await new SessionModel(row, createAppState().nodes).context(getSource(row.source_id)!, async context => { asked.push(context); return ["From an extension"]; })).runtime;
 
     expect(systemPrompt).toEndWith("\n\nFrom an extension");
     expect(asked).toEqual([{ session: { id: row.id, projectId: project.id, taskId: null }, task: null, tools: null }]);
+  });
+
+  test("a session of no project gets no project section: neither a task nor the project assistant's role", async () => {
+    const source = createSourceAt(repo.dir);
+    const created = createSession(createAppState(), { sourceId: source.id, model: { provider: "anthropic", modelId: "claude-haiku-4-5" } });
+    const row = getSession(created.id)!;
+
+    const { systemPrompt } = (await new SessionModel(row, createAppState().nodes).context(source)).runtime;
+
+    expect(systemPrompt).toBe(reinsSystemPrompt({ task: null, project: false }));
+    expect(systemPrompt).not.toContain("project assistant");
+    expect(systemPrompt).not.toContain("## Task");
   });
 });

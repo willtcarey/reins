@@ -2,9 +2,10 @@ import { describe, test, expect } from "bun:test";
 import { useTestDb } from "../helpers/test-db.js";
 import { createAppState } from "../helpers/app-state.js";
 import { createProject } from "../project-fixture.js";
-import { createSource, defaultSource } from "../../node-store.js";
+import { upsertSource, defaultSource } from "../../node-store.js";
 import { SEEDED_NODE_ID } from "../helpers/loopback-node.js";
 import { Models } from "../../models/models.js";
+import { createSession as insertSession } from "../../session-store.js";
 
 describe("Models", () => {
   useTestDb();
@@ -26,14 +27,15 @@ describe("Models", () => {
     expect(sent.map(frame => JSON.parse(frame))).toEqual([{ type: "task_updated", projectId: 7 }]);
   });
 
-  test("project works in the project's default source unless given one", () => {
+  test("a project's model works in its default source, whoever asks; a session's in its own source", () => {
     const project = createProject("Test", "/tmp/first");
-    const second = createSource(project.id, SEEDED_NODE_ID, "/tmp/second");
+    const second = upsertSource(SEEDED_NODE_ID, "/tmp/second");
     const models = new Models(createAppState());
+    insertSession("elsewhere", project.id, { agentRuntimeType: "pi", sourceId: second.id });
 
-    expect(models.project(project.id).source.record).toEqual(defaultSource(project.id)!);
-    expect(models.project(project.id).source.path).toBe("/tmp/first");
-    expect(models.project(project.id, null).source.path).toBe("/tmp/first");
-    expect(models.project(project.id, second.id).source.record).toEqual(second);
+    expect(models.project(project.id).defaultSource.record).toEqual(defaultSource(project.id)!);
+    expect(models.project(project.id).defaultSource.path).toBe("/tmp/first");
+    expect(models.sessions.get("elsewhere").source.record).toEqual(second);
+    expect(models.sessions.get("elsewhere").baseBranch).toBe("main");
   });
 });

@@ -7,7 +7,7 @@ The backend uses a lightweight URLPattern-based router (`src/router.ts`) with no
 ```
 src/
   api-paths.ts          # All route path constants (single source of truth)
-  errors.ts             # HttpError class + shorthand throwers
+  errors.ts             # HttpError class + shorthand throwers, RequestRefused (a model's refusal: 400)
   router.ts             # createRouter(), URLPattern matching, middleware chaining
   routes/
     index.ts            # Composes all routes, defines shared middleware
@@ -92,7 +92,8 @@ Every HTTP endpoint is a route, those outside `/api` included; `handler.ts` only
 ## Project-Scoped vs Top-Level Routes
 
 - **Top-level routes** (like `/api/projects`, `/api/health`) are registered directly on the router.
-- **Project-scoped routes** (like sessions, diff) are registered inside `router.group(API.project, projectMiddleware, ...)`. The middleware resolves `:id` to a project and attaches `ctx.project` (`ctx.models.project(id)`, a `ProjectModel`) working in the project's default source (404 when the project has none) (how a request picks among several sources comes with multiple-source support).
+- **Project-scoped routes** (like a project's sessions, tasks, code reviews) are registered inside `router.group(API.project, projectMiddleware, ...)`. The middleware resolves `:id` to a project and attaches `ctx.project` (`ctx.models.project(id)`, a `ProjectModel`, whose `defaultSource` is the only location it has; 404 when it has none).
+- **A session's checkout routes** (files, diffs, git, uploads: what a session's views read or write of its checkout) are registered inside `r.group("/:sessionId", sessionMiddleware, ...)` under `API.sessions` (`/api/sessions/:sessionId/files`, …). The middleware attaches `ctx.session` (`ctx.models.sessions.get(id)`, a `SessionModel`; 404 "Session not found: <id>"): its `source` (a `SourceModel`), its `baseBranch` (its project's, or `HEAD` for a session of no project, so its diffs show uncommitted work) and its `workspace` against it, so a session moved to another node shows that node's checkout. Skill suggestions are a location's, not a session's: `GET /api/nodes/:nodeId/skills?path=` (`routes/skills.ts`, top level), as the new session page has no session yet.
 
 ## Error Handling
 
@@ -110,7 +111,7 @@ conflict("Already exists");         // 409
 throw new HttpError(403, "Forbidden");
 ```
 
-A node the request needed being unreachable (`isNodeUnavailable`: a `NodeClient` call's `RpcFailure` with code `"unavailable"`) is returned as 503; let it propagate rather than catching it. Other unexpected errors are caught automatically and returned as 500 with the error message.
+A model's refusal of what its caller asked (a subclass of `RequestRefused` in `errors.ts`, such as `SessionCreationRefused`) is returned as 400 with its message; let it propagate, as the models' other callers (scripts, extensions) get the same error. A node the request needed being unreachable (`isNodeUnavailable`: a `NodeClient` call's `RpcFailure` with code `"unavailable"`) is returned as 503; let it propagate rather than catching it. Other unexpected errors are caught automatically and returned as 500 with the error message.
 
 ## Unknown Routes
 
@@ -158,4 +159,4 @@ interface RouteContext {
 // (route tests) no upgrade succeeds.
 ```
 
-Handlers reach models through `ctx.models` (`models/models.ts`): `ctx.models.sessions`, `ctx.models.nodes`, `ctx.models.broadcast`, `ctx.models.project(projectId, sourceId?)`. The router builds one `Models` per request, so every route and group has it; don't construct `Sessions`, `Nodes`, `ProjectModel` or a broadcast in a route.
+Handlers reach models through `ctx.models` (`models/models.ts`): `ctx.models.sessions`, `ctx.models.nodes`, `ctx.models.broadcast`, `ctx.models.project(projectId)`. The router builds one `Models` per request, so every route and group has it; don't construct `Sessions`, `Nodes`, `ProjectModel` or a broadcast in a route.

@@ -10,7 +10,6 @@
  * Components subscribe via `subscribe()` and read public state directly.
  */
 
-import type { InjectedSkillInfo } from "@backend/routes/skills.js";
 import type { SessionMoveTargetView } from "@backend/routes/sessions.js";
 import type { SessionListView as SessionListItem } from "@backend/models/sessions.js";
 import type { TaskWithDiffStats as TaskListItem } from "@backend/models/tasks.js";
@@ -22,15 +21,16 @@ export type ProjectStoreListener = () => void;
 
 type CachedSessionListItem = CachedSession & SessionListItem;
 
-function isSessionListItem(session: CachedSession): session is CachedSessionListItem {
-  return session.projectId != null &&
-    session.createdAt != null &&
+/** Whether the cached session is loaded enough to list. */
+export function isSessionListItem(session: CachedSession): session is CachedSessionListItem {
+  return session.createdAt != null &&
     session.updatedAt != null &&
     session.messageCount != null &&
     session.placement != null;
 }
 
-function compareSessionListItems(a: SessionListItem, b: SessionListItem): number {
+/** Pinned first, then the latest activity first. */
+export function compareSessionListItems(a: SessionListItem, b: SessionListItem): number {
   const pinned = Number(b.pinnedAt !== null) - Number(a.pinnedAt !== null);
   if (pinned !== 0) return pinned;
   const updated = b.updatedAt.localeCompare(a.updatedAt);
@@ -54,7 +54,6 @@ export class ProjectStore {
   sessionIds: string[] = [];
   /** Task IDs whose session sublists have been explicitly loaded and should be refreshed. */
   loadedTaskSessionIds: Set<number> = new Set();
-  skills: InjectedSkillInfo[] = [];
   loading = false;
   loaded = false;
 
@@ -260,12 +259,12 @@ export class ProjectStore {
   }
 
   /**
-   * Move a session to a node. The server answers with the session's placement on that node, which is
-   * cached here (the `session_updated` broadcast also refreshes it).
+   * Move a session to `path` on node `nodeId`. The server answers with the session's placement there, which
+   * is cached here (the `session_updated` broadcast also refreshes it).
    */
-  async moveSession(sessionId: string, nodeId: string): Promise<{ ok: true } | { error: string }> {
+  async moveSession(sessionId: string, nodeId: string, path: string): Promise<{ ok: true } | { error: string }> {
     try {
-      const placement = await api.sessions.move(sessionId, { nodeId });
+      const placement = await api.sessions.move(sessionId, { nodeId, path });
       this._sessionCache?.set(sessionId, { placement });
     } catch (error) {
       return { error: error instanceof ReinsHttpError ? error.message : "Network error" };
@@ -281,10 +280,9 @@ export class ProjectStore {
     this.notify();
 
     try {
-      const [tasksResult, sessionsResult, skillsResult] = await Promise.allSettled([
+      const [tasksResult, sessionsResult] = await Promise.allSettled([
         api.tasks.list(this.projectId),
         api.sessions.listForProject(this.projectId),
-        api.skills.list(this.projectId),
       ]);
 
       if (tasksResult.status === "fulfilled") {
@@ -294,9 +292,6 @@ export class ProjectStore {
         const sessions = sessionsResult.value;
         this._sessionCache?.setMany(sessions);
         this.sessionIds = sessions.map((session) => session.id);
-      }
-      if (skillsResult.status === "fulfilled" && skillsResult.value.available) {
-        this.skills = skillsResult.value.skills;
       }
       const allLoaded = [tasksResult, sessionsResult].every((result) => (
         result.status === "fulfilled" || result.reason instanceof ReinsHttpError
@@ -347,22 +342,6 @@ export class ProjectStore {
       return { ok: true };
     } catch (error) {
       return { error: error instanceof ReinsHttpError ? error.message : "Network error" };
-    }
-  }
-
-  /**
-   * Fetch the list of skills available for tab-completion.
-   * Safe to call repeatedly; updates the `skills` field and notifies subscribers.
-   */
-  async fetchSkills(): Promise<void> {
-    try {
-      const body = await api.skills.list(this.projectId);
-      // The node did not answer: the last known suggestions are kept.
-      if (!body.available) return;
-      this.skills = body.skills;
-      this.notify();
-    } catch {
-      // silent — skill autocomplete is best-effort
     }
   }
 

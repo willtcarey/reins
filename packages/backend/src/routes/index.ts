@@ -2,10 +2,11 @@ import { createRouter } from "../router.js";
 import type { RouteContext, Middleware } from "../router.js";
 import { API } from "../api-paths.js";
 import { notFound } from "../errors.js";
-import { getProject } from "../project-store.js";
 import { parseIntParam } from "./validate.js";
-import type { ProjectModel } from "../models/projects.js";
+import { ProjectNotFoundError, type ProjectModel } from "../models/projects.js";
 import { SourceNotFoundError } from "../models/sources.js";
+import { SessionNotFoundError } from "../models/sessions.js";
+import type { SessionModel } from "../models/session.js";
 import { registerHealthRoutes } from "./health.js";
 import { registerProjectRoutes } from "./projects.js";
 import { registerNodeRoutes } from "./nodes.js";
@@ -18,7 +19,6 @@ import { registerTaskRoutes } from "./tasks.js";
 import { registerGitRoutes } from "./git.js";
 import { registerPaletteRoutes } from "./palette.js";
 import { registerUploadRoutes } from "./upload.js";
-import { registerSourceRoutes } from "./sources.js";
 import { registerSkillRoutes } from "./skills.js";
 import { registerSettingsRoutes } from "./settings.js";
 import { registerModelsRoutes } from "./models.js";
@@ -32,22 +32,27 @@ import { registerSocketRoutes } from "./sockets.js";
 
 export type ProjectRouteContext = RouteContext & { project: ProjectModel };
 
-/** The project as a project request works with it: in the project's default source (until the frontend
- * picks among several, node-architecture.md). */
-function requestProject(ctx: RouteContext, projectId: number): ProjectModel {
+/** A session's views (files, diffs, git, uploads): `ctx.session`, whose `source` and `workspace` are its own
+ * checkout, so a session moved to another node shows that node's. */
+export type SessionRouteContext = RouteContext & { session: SessionModel };
+
+const projectMiddleware: Middleware<{ project: ProjectModel }> = (ctx: RouteContext) => {
   try {
-    return ctx.models.project(projectId);
+    Object.assign(ctx, { project: ctx.models.project(parseIntParam(ctx.params, "id")) });
   } catch (err) {
+    if (err instanceof ProjectNotFoundError) notFound("Project not found");
     if (err instanceof SourceNotFoundError) notFound(err.message);
     throw err;
   }
-}
+};
 
-const projectMiddleware: Middleware<{ project: ProjectModel }> = (ctx: RouteContext) => {
-  const projectId = parseIntParam(ctx.params, "id");
-  const project = getProject(projectId);
-  if (!project) notFound("Project not found");
-  Object.assign(ctx, { project: requestProject(ctx, project.id) });
+const sessionMiddleware: Middleware<{ session: SessionModel }> = (ctx: RouteContext) => {
+  try {
+    Object.assign(ctx, { session: ctx.models.sessions.get(ctx.params.sessionId!) });
+  } catch (err) {
+    if (err instanceof SessionNotFoundError) notFound(err.message);
+    throw err;
+  }
 };
 
 export function buildRouter() {
@@ -58,6 +63,7 @@ export function buildRouter() {
   if (process.env.REINS_DEV === "1") registerClientTelemetryRoutes(router);
   registerProjectRoutes(router);
   registerNodeRoutes(router);
+  registerSkillRoutes(router);
   registerPaletteRoutes(router);
   registerSettingsRoutes(router);
   registerModelsRoutes(router);
@@ -71,6 +77,12 @@ export function buildRouter() {
   router.group(API.sessions, (r) => {
     registerSessionRoutes(r);
     registerAttachmentRoutes(r);
+    r.group("/:sessionId", sessionMiddleware, (session) => {
+      registerDiffRoutes(session);
+      registerFileRoutes(session);
+      registerGitRoutes(session);
+      registerUploadRoutes(session);
+    });
   });
 
   router.group(API.tasks, (r) => {
@@ -79,14 +91,8 @@ export function buildRouter() {
 
   router.group(API.project, projectMiddleware, (r) => {
     registerProjectSessionRoutes(r);
-    registerDiffRoutes(r);
-    registerFileRoutes(r);
     registerTaskRoutes(r);
     registerCodeReviewRoutes(r);
-    registerGitRoutes(r);
-    registerUploadRoutes(r);
-    registerSourceRoutes(r);
-    registerSkillRoutes(r);
   });
 
   return router;

@@ -20,9 +20,9 @@ import { NodeHost } from "./node-host.js";
  * source, or when unknown). */
 export interface NodeView { id: string; name: string; connected: boolean; paired: boolean; hostname: string | null; pairedAt: string | null; revokedAt: string | null; sources: NodeSourceView[]; build: NodeBuild | null; failure: NodeFailure | null }
 
-/** One of a node's sources: a project's working copy on it (the server's sources are the only record of
- * them, ADR-026). */
-export interface NodeSourceView { path: string; project: { id: number; name: string; sourceId: number } }
+/** One of a node's sources in use: a location on it, with the projects whose sessions work there or whose default source it is
+ * (the server's sources are the only record of them, ADR-026; they belong to no project, ADR-034). */
+export interface NodeSourceView { id: number; path: string; projects: Array<{ id: number; name: string }> }
 
 /** The node checks that its new code builds before it answers. */
 const RELOAD_TIMEOUT_MS = 30_000;
@@ -102,9 +102,9 @@ export class NodeModel {
     return { ...node, paired: publicKey !== null, connected: remote.connected, sources: this.sources(), build: remote.build, failure: remote.failure };
   }
 
-  /** Its projects' sources, by path. */
+  /** Its sources in use, by path. */
   private sources(): NodeSourceView[] {
-    return listSourcesOnNode(this.id).map(source => ({ path: source.path, project: { id: source.projectId, name: source.projectName, sourceId: source.id } }));
+    return listSourcesOnNode(this.id);
   }
 
   /**

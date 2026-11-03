@@ -52,7 +52,7 @@ export interface SessionSettled {
  * committed, clearing the child's activity. A crash between them after Pi's end leaves the settlement
  * unapplied (Pi has nothing pending, so recovery does not see it); the parent heard of it once. A reply
  * that cannot be read, or a
- * parent that cannot receive it (outside the child's project/task, its node removed, admission failed), is
+ * parent that cannot receive it (its node removed, admission failed), is
  * logged and leaves the child `finished` without a report. It needs only the process (its database and
  * broadcast), so a runtime applies its own run's end with or without an app. Other errors propagate.
  */
@@ -78,6 +78,24 @@ export async function runSettled(serverProcess: ServerProcess, { sessionId, runI
     updateActivityState(sessionId, activityState);
   })();
   notifyUpdated(serverProcess, sessionId);
+  if (session.source_extension) tellExtension(serverProcess, session.source_extension, sessionId, tipId, outcome);
+}
+
+/** Tells the extension that started the session how its run ended, with its final reply (on the run's
+ * `tipId` branch), through the current app; none during a reload's gap. Never fails the settlement. */
+function tellExtension(serverProcess: ServerProcess, extension: string, sessionId: string, tipId: string | null, outcome: RunSettlement): void {
+  const app = serverProcess.app;
+  if (!app?.sessionSettled) return;
+  try {
+    const ended = outcome.status === "completed"
+      ? { status: "completed" as const, result: finalReply(loadBranchMessages(sessionId, tipId))?.text ?? null, error: null }
+      : outcome.status === "failed"
+        ? { status: "failed" as const, result: null, error: outcome.error?.message ?? "Runtime response failed" }
+        : { status: "cancelled" as const, result: null, error: outcome.error?.message ?? null };
+    app.sessionSettled({ extension, sessionId, ...ended });
+  } catch (failure) {
+    logger.error(`Failed to tell extension ${extension} that session ${sessionId}'s run ended:`, failure);
+  }
 }
 
 /** The key a child's report of a run end is steered to its parent under, which Pi recognises when it is
@@ -273,10 +291,9 @@ function requireSession(sessionId: string): SessionRow {
   return row;
 }
 
-/** Steers the child's outcome to its parent under `reinsId`; the parent must be in the child's project and task. */
+/** Steers the child's outcome to its parent under `reinsId`, wherever either works. */
 async function reportToParent(serverProcess: ServerProcess, child: SessionRow, parentSessionId: string, reinsId: string, reply: FinalReply | null, outcome: RunSettlement): Promise<void> {
   const parent = requireSession(parentSessionId);
-  if (parent.project_id !== child.project_id || parent.task_id !== child.task_id) throw new Error("Parent session is outside the child's project/task scope");
   const result = replyResult(child.id, reply, outcome);
   const content = result.status === "completed"
     ? result.result ?? "Session completed."

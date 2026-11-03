@@ -21,12 +21,12 @@ import type { NodeView } from "./node.js";
 export type ServerMessage =
   /** A session event, sent as `sessionEventFrame` builds it; `seq` lets a browser detect gaps and
    * `emittedAt` (the server's wall clock) measure latency. */
-  | { type: "event"; sessionId: string; projectId: number; seq: number; emittedAt: number; event: AgentRuntimeEvent<ImageReferenceBlock> }
+  | { type: "event"; sessionId: string; projectId: number | null; seq: number; emittedAt: number; event: AgentRuntimeEvent<ImageReferenceBlock> }
   | { type: "task_updated"; projectId: number }
-  | { type: "session_created"; projectId: number; sessionId: string; taskId: number | null; parentSessionId: string | null }
-  | { type: "session_updated"; sessionId: string; projectId: number }
+  | { type: "session_created"; projectId: number | null; sessionId: string; taskId: number | null; parentSessionId: string | null }
+  | { type: "session_updated"; sessionId: string; projectId: number | null }
   | { type: "code_review_updated"; projectId: number; taskId: number | null; reviewId: string; revision: number }
-  | { type: "open_file"; sessionId: string; projectId: number; path: string; startLine?: number; endLine?: number }
+  | { type: "open_file"; sessionId: string; projectId: number | null; path: string; startLine?: number; endLine?: number }
   /** The node as it is now: it was paired (by pairing code `pairingCodeId`, `POST /api/nodes/pairing-codes`'s
    * `id`), connected, disconnected or was revoked. */
   | { type: "node_updated"; node: NodeView; pairingCodeId?: number }
@@ -49,6 +49,6 @@ export function createBroadcast(serverProcess: Pick<ServerProcess, "broadcast">)
  * without parsing it. The envelope fields follow the payload: JSON.parse keeps the last of duplicate
  * keys, so nothing inside the payload can rewrite the session, project, sequence or message type.
  */
-export function sessionEventFrame(sessionId: string, projectId: number, seq: number, emittedAt: number, eventJson: string): string {
+export function sessionEventFrame(sessionId: string, projectId: number | null, seq: number, emittedAt: number, eventJson: string): string {
   return `{"event":${eventJson},"type":"event","sessionId":${JSON.stringify(sessionId)},"projectId":${projectId},"seq":${seq},"emittedAt":${emittedAt}}`;
 }

@@ -1,14 +1,20 @@
 /**
- * One session as its runtime opens it (`SessionModel`, from `Sessions.get`): where it runs and what its
- * runtime is opened with (`SessionContext`).
+ * One session (`SessionModel`, from `Sessions.get`, or the runtime opener's): where it works (its source on
+ * its node, the base branch its diffs compare with) and what its runtime is opened with (`SessionContext`).
  */
 import type { PromptContext } from "@reins/sdk/server";
 import type { SessionRow } from "../session-store.js";
 import { getNode, type Source } from "../node-store.js";
-import { getTask } from "../task-store.js";
+import type { NodeHub } from "../state.js";
+import { getProject } from "../project-store.js";
+import { getTask, updateTask, type TaskRow } from "../task-store.js";
 import { sessionKind, type SessionKindConfig } from "../sessions/session-kinds.js";
 import { piModelSetting } from "./model-settings.js";
-import { sessionSource } from "./sources.js";
+import { resolveSource, SourceModel } from "./sources.js";
+import type { Workspace } from "./workspace.js";
+
+/** A session of no project has no base branch: its diffs compare with HEAD, so they show uncommitted work. */
+const NO_BASE_BRANCH = "HEAD";
 
 /** Where a session runs (its source and the checkout's path) and the identity Pi's session is created with. */
 export interface SessionBinding { sourceId: number; cwd: string; createdAt: string; parentSessionId: string | null }
@@ -17,10 +23,18 @@ export interface SessionBinding { sourceId: number; cwd: string; createdAt: stri
  * Pi's own lane state is the selection. */
 export interface LaneSeed { model: { provider: string; modelId: string } | null; thinkingLevel: string | null }
 
+/**
+ * The branch a run works on, checked out first: its task's. A checkout that does not have it gets it
+ * (`Git.ensureBranch`: origin's, else new from `base`, the project's base branch), so a task's branch is
+ * made where its sessions work, not where it was created. `recordBaseCommit` keeps where it begins (its
+ * merge base with `base`) on the task, when it was made here or the task does not know it yet.
+ */
+export interface TaskBranch { name: string; base: string; baseCommitKnown: boolean; recordBaseCommit(commit: string): void }
+
 /** What a session's runtime is opened with: the binding, the lane seed, and what the session's kind
  * resolves, the runtime configuration (with the system prompt) and the branch checked out first (null:
  * none). */
-export interface SessionContext { binding: SessionBinding; branch: string | null; lane: LaneSeed; runtime: SessionKindConfig }
+export interface SessionContext { binding: SessionBinding; branch: TaskBranch | null; lane: LaneSeed; runtime: SessionKindConfig }
 
 /** The session's node was removed: no node runs its work until it is moved to another (`Sessions.move`). */
 export class SessionNodeRemovedError extends Error {
@@ -30,16 +44,42 @@ export class SessionNodeRemovedError extends Error {
   }
 }
 
-/** One session, as its row was when it was read. */
+/** One session, as its row was when it was read, on `nodes` (the app's, or the current app's for a runtime). */
 export class SessionModel {
-  constructor(readonly row: SessionRow) {}
+  private built: SourceModel | undefined;
+
+  constructor(
+    readonly row: SessionRow,
+    private readonly nodes: Pick<NodeHub, "get">,
+  ) {}
 
   get id(): string { return this.row.id; }
-  get projectId(): number { return this.row.project_id; }
+  /** Null for a session of no project. */
+  get projectId(): number | null { return this.row.project_id; }
+  /** Null for a session of no task (always, for a session of no project). */
+  get taskId(): number | null { return this.row.task_id; }
 
-  /** Where the session runs: its source, or null when that is gone. */
-  source(): Source | null {
-    return sessionSource(this.row);
+  /** Its task (one of its project's: `Sessions.create` checks it), or null. */
+  get task(): TaskRow | null {
+    return this.row.task_id === null ? null : getTask(this.row.task_id);
+  }
+
+  /** Where the session works: its source, on its node (`SourceNotFoundError` if it is gone; none is deleted). */
+  get source(): SourceModel {
+    return this.built ??= new SourceModel(this.nodes, resolveSource(this.row.source_id));
+  }
+
+  /** What its diffs compare with: its project's base branch, or `HEAD` for a session of no project. */
+  get baseBranch(): string {
+    if (this.row.project_id === null) return NO_BASE_BRANCH;
+    const project = getProject(this.row.project_id);
+    if (!project) throw new Error(`Project ${this.row.project_id} not found`);
+    return project.base_branch;
+  }
+
+  /** The files and diffs of its checkout, against its base branch: what its views read. */
+  get workspace(): Workspace {
+    return this.source.workspace(this.baseBranch);
   }
 
   /** Throws `SessionNodeRemovedError` when the node of `source` (the session's) was removed: the session
@@ -68,7 +108,11 @@ export class SessionModel {
         tools,
       }),
     });
-    return { binding: this.binding(source), branch, lane: laneSeed(this.row), runtime };
+    const project = branch && task && row.project_id !== null ? getProject(row.project_id) : null;
+    const taskBranch: TaskBranch | null = branch && task && project
+      ? { name: branch, base: project.base_branch, baseCommitKnown: task.base_commit !== null, recordBaseCommit: commit => { updateTask(task.id, { base_commit: commit }); } }
+      : null;
+    return { binding: this.binding(source), branch: taskBranch, lane: laneSeed(this.row), runtime };
   }
 }
 

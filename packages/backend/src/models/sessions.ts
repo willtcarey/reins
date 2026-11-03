@@ -42,11 +42,14 @@ import { readPendingPiOperation, type PendingPiOperation } from "../pi/run-state
 import { DEFAULT_COMPACTION_SETTINGS } from "@earendil-works/pi-agent-core";
 import { findPiModel } from "../pi/model-catalog.js";
 import { createDbCredentialStore } from "../pi/credential-store.js";
-import { getNode, getSource } from "../node-store.js";
+import { getNode, getSource, listNodePathsForProject } from "../node-store.js";
 import type { AppState, NodeHub, ServerProcess, SessionRuntime } from "../state.js";
 import { SessionModel } from "./session.js";
+import { NodeNotFoundError, Nodes } from "./nodes.js";
+import { CheckoutNotFoundError, ensureSource } from "./sources.js";
+import { assertPlace, createSession, inheritedSource, SessionCreationRefused, type SessionRequest } from "../sessions/create-session.js";
 import { sessionActivity } from "./session-activity.js";
-import { latestSettlement } from "../sessions/session-runs.js";
+import { latestSettlement, sessionRuns, type SessionWaitResult } from "../sessions/session-runs.js";
 import { requestSessionMove, sessionMoveTargets, type SessionMoveTarget } from "../sessions/session-ownership.js";
 import { closeSessionRuntime, liveSessionRuntime, withSessionRuntime } from "../session-runtime/live.js";
 
@@ -107,7 +110,8 @@ export class PromptTooLargeError extends Error {
 
 export interface SessionView {
   id: string;
-  projectId: number;
+  /** Null for a session of no project. */
+  projectId: number | null;
   taskId: number | null;
   parentSessionId: string | null;
   name: string | null;
@@ -117,6 +121,8 @@ export interface SessionView {
   placement: SessionPlacementView;
   pinnedAt: string | null;
   archivedAt: string | null;
+  /** The backend extension that started it, or null. */
+  sourceExtension: string | null;
 }
 
 /**
@@ -133,12 +139,14 @@ export interface SessionPlacementView {
 }
 
 /** Input submitted to a session: admitted by Pi under `clientId` (its `reinsId`, so a replay converges).
- * `sourceSessionId`: the session an addressed steer comes from. */
+ * `sourceSessionId`: the session an addressed steer comes from; `sourceExtension`: the backend extension a
+ * prompt or steer comes from. Both go into the input's metadata. */
 export interface SessionSubmission {
   op: "prompt" | "steer";
   content: ClientPromptContent;
   clientId: string;
   sourceSessionId?: string;
+  sourceExtension?: string;
 }
 
 function toPlacementView(row: SessionRow, nodes: Pick<NodeHub, "get">): SessionPlacementView {
@@ -200,6 +208,7 @@ function toSessionView(row: SessionRow, nodes: Pick<NodeHub, "get">): SessionVie
     placement: toPlacementView(row, nodes),
     pinnedAt: row.pinned_at,
     archivedAt: row.archived_at,
+    sourceExtension: row.source_extension,
   };
 }
 
@@ -254,7 +263,11 @@ function stripPersistedUserSkillBlocks(msg: PersistedMessage): PersistedMessage 
 export async function submitToSession(serverProcess: ServerProcess, sessionId: string, input: SessionSubmission): Promise<void> {
   const bytes = promptContentBytes(input.content);
   if (bytes > MAX_PROMPT_CONTENT_BYTES) throw new PromptTooLargeError(bytes);
-  const options = { reinsId: input.clientId, ...(input.sourceSessionId ? { metadata: { sourceSessionId: input.sourceSessionId } } : {}) };
+  const metadata = {
+    ...(input.sourceSessionId ? { sourceSessionId: input.sourceSessionId } : {}),
+    ...(input.sourceExtension ? { sourceExtension: input.sourceExtension } : {}),
+  };
+  const options = { reinsId: input.clientId, ...(Object.keys(metadata).length > 0 ? { metadata } : {}) };
   await inSessionRuntime(serverProcess, sessionId, async runtime => {
     if (input.op === "prompt") await runtime.prompt(input.content, options);
     else await runtime.steer(input.content, options);
@@ -265,6 +278,14 @@ export async function submitToSession(serverProcess: ServerProcess, sessionId: s
  * are done (`inSessionOrder`). */
 function inSessionRuntime<T>(serverProcess: ServerProcess, sessionId: string, use: (runtime: SessionRuntime) => Promise<T>): Promise<T> {
   return inSessionOrder(serverProcess, sessionId, () => withSessionRuntime(serverProcess, sessionId, use));
+}
+
+/** Where a new session of a project can work: every node not removed, with the paths the project's
+ * sessions used there (the latest first; its default source too), and where it works when none is chosen
+ * (`inheritedSource`). */
+export interface ProjectLocationsView {
+  default: { nodeId: string; path: string };
+  nodes: Array<{ nodeId: string; name: string; connected: boolean; paths: string[] }>;
 }
 
 /** Runs `work` once the session's earlier submissions are done (`OpenSessions.submissions`). Enters the
@@ -288,6 +309,59 @@ export class Sessions {
   private get nodes(): Pick<NodeHub, "get"> { return this.state.nodes; }
 
   private listView = (row: SessionRow) => toSessionListView(row, this.nodes);
+
+  /**
+   * Creates a session as a client asks for one (an HTTP request, a script's `sessions.start`, an extension's
+   * `reins.sessions.start`): everything is checked before anything is kept, cheap checks first (a blank
+   * title, the project and the task, a model the catalog does not have), then the location, made a source
+   * if it is new (so a refused request leaves no source either), then the row (`createSession`). Throws
+   * `SessionCreationRefused` for what the caller asked wrong (the router's 400); a node that cannot answer about a new
+   * location fails as it is (the router's 503). It takes no prompt: a refused first prompt leaves the
+   * session, to be prompted again or moved.
+   */
+  async create({ source, model, ...options }: SessionRequest): Promise<{ id: string }> {
+    if (options.title !== undefined && !options.title.trim()) throw new SessionCreationRefused("A session's title must not be blank");
+    assertPlace(options.projectId ?? null, options.taskId, source !== undefined || options.parentSessionId !== undefined);
+    if (model && !await findPiModel(createDbCredentialStore(this.state.process), model.provider, model.modelId)) {
+      throw new SessionCreationRefused(`Model '${model.modelId}' not found for provider '${model.provider}'`);
+    }
+    const sourceId = source === undefined ? undefined : await this.requestedSource(source);
+    return createSession(this.state, {
+      ...options,
+      ...(options.title === undefined ? {} : { title: options.title.trim() }),
+      ...(model ? { model: { provider: model.provider, modelId: model.modelId }, thinkingLevel: model.thinkingLevel } : {}),
+      ...(sourceId === undefined ? {} : { sourceId }),
+    }, this.broadcast);
+  }
+
+  private async requestedSource(source: NonNullable<SessionRequest["source"]>): Promise<number> {
+    if (typeof source === "number") {
+      if (!getSource(source)) throw new SessionCreationRefused(`Source not found: ${source}`);
+      return source;
+    }
+    try {
+      return (await ensureSource(source.nodeId, source.path, new Nodes(this.state, this.broadcast))).id;
+    } catch (error) {
+      if (error instanceof NodeNotFoundError || error instanceof CheckoutNotFoundError) throw new SessionCreationRefused(error.message);
+      throw error;
+    }
+  }
+
+  /** Where a new session of the project (of `taskId`, a task of the project) can work, and works when none
+   * is chosen. Throws `SessionCreationRefused` for a task of another project, as `create` does. */
+  locations(projectId: number, taskId?: number): ProjectLocationsView {
+    assertPlace(projectId, taskId, true);
+    const fallback = inheritedSource(projectId, taskId);
+    return {
+      default: { nodeId: fallback.node_id, path: fallback.path },
+      nodes: listNodePathsForProject(projectId).map(({ id, name, paths }) => ({ nodeId: id, name, connected: this.nodes.get(id).connected, paths })),
+    };
+  }
+
+  /** Waits up to `timeoutMs` for the session's run to settle (`SessionRuns.waitForSettlement`). */
+  waitForSettlement(sessionId: string, timeoutMs: number, options: { signal?: AbortSignal } = {}): Promise<SessionWaitResult> {
+    return sessionRuns(this.state).waitForSettlement(sessionId, timeoutMs, options);
+  }
 
   /** Submits input to the session's live runtime: `submitToSession`. */
   submit(sessionId: string, input: SessionSubmission): Promise<void> {
@@ -335,7 +409,7 @@ export class Sessions {
   get(sessionId: string): SessionModel {
     const row = getSession(sessionId);
     if (!row) throw new SessionNotFoundError(`Session not found: ${sessionId}`);
-    return new SessionModel(row);
+    return new SessionModel(row, this.nodes);
   }
 
   getDetail(sessionId: string): SessionDetailView | null {
@@ -448,6 +522,11 @@ export class Sessions {
     return listSessions({ projectId, taskId: null }).map(this.listView);
   }
 
+  /** The sessions of no project the browser shows: not archived, not background. */
+  listUnowned(): SessionListView[] {
+    return listSessions({ projectId: null, includeTaskSessions: true }).map(this.listView);
+  }
+
   listArchivedByProject(
     projectId: number,
     options: { limit?: number; offset?: number; search?: string } = {},
@@ -519,7 +598,7 @@ export class Sessions {
   }
 
 
-  /** Every node, with whether the session can move there (eligible first). */
+  /** Every node not removed, with the paths its project's sessions used there. */
   moveTargets(sessionId: string): SessionMoveTarget[] {
     const row = getSession(sessionId);
     if (!row) throw new SessionNotFoundError();
@@ -527,15 +606,22 @@ export class Sessions {
   }
 
   /**
-   * Moves the idle session to a node (`nodeId`): it is re-pointed at the target's source at once (see
-   * `requestSessionMove`), and its live runtime, bound to the source it left, is closed, so its next
-   * submission opens it there. Returns the session's placement; throws `SessionMoveConflict` while the
-   * session is busy.
+   * Moves the idle session to `path` on node `to.nodeId` (`ensureSource`: a location not known yet must be
+   * a directory there): it is re-pointed at that source at once (see `requestSessionMove`), and its live
+   * runtime, bound to the source it left, is closed, so its next submission opens it there. Returns the
+   * session's placement; throws `SessionMoveConflict` while the session is busy, `NodeNotFoundError` for a
+   * removed node, and what `ensureSource` throws.
    */
-  async move(sessionId: string, nodeId: string): Promise<SessionPlacementView> {
-    const moved = requestSessionMove(sessionId, nodeId, this.state.process.sessions);
+  async move(sessionId: string, to: { nodeId: string; path: string }): Promise<SessionPlacementView> {
+    if (!getSession(sessionId)) throw new SessionNotFoundError();
+    if (getNode(to.nodeId)?.removedAt) throw new NodeNotFoundError(to.nodeId);
+    const nodes = new Nodes(this.state, this.broadcast);
+    const source = await ensureSource(to.nodeId, to.path, nodes);
+    const sources = nodes.watchSources();
+    const moved = requestSessionMove(sessionId, source.id, this.state.process.sessions);
     if (!moved) throw new SessionNotFoundError();
-    if (moved.previousNodeId) await closeSessionRuntime(this.state.process, sessionId);
+    sources.publishChanged();
+    if (moved.moved) await closeSessionRuntime(this.state.process, sessionId);
     const row = getSession(sessionId);
     if (!row) throw new SessionNotFoundError();
     this.broadcast({ type: "session_updated", sessionId, projectId: row.project_id });

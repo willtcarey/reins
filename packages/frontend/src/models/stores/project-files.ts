@@ -27,9 +27,10 @@ const NO_LISTING = Loadable.idle<readonly string[]>();
 // drop and reload each other's listing on every render.
 const KEPT_LISTINGS = 2;
 
-/** How a source is reached today, and whether its node is connected. */
+/** How a source is reached: through a session on it, whose checkout routes read its source, and whether
+ * its node is connected. */
 interface Route {
-  projectId: number;
+  sessionId: string;
   available: boolean;
 }
 
@@ -54,9 +55,8 @@ function sameFiles(a: readonly string[] | null, b: readonly string[]): boolean {
  * Application-lifetime: listings are cached for the sources asked for last, and reloaded only when
  * asked for, so a source nobody shows costs neither memory nor requests. Sessions carry no source
  * ID, so a source is named by its node and path, and the sessions known on it say how to reach it:
- * today through their project's file routes, which read the project's default source
- * (node-contract.md *Which checkout a call works in*), whichever source is named. Only this changes
- * once a route reads a source by node and path.
+ * the file routes of a session read that session's source. Only this changes once a route reads a
+ * source by node and path.
  */
 export class ProjectFiles implements Files {
   private listings = new Map<string, Listing>();
@@ -115,7 +115,7 @@ export class ProjectFiles implements Files {
     const route = this.route(source);
     if (!route) throw new FileReadError(false);
     try {
-      const response = await api.files.content(route.projectId, path);
+      const response = await api.files.content(route.sessionId, path);
       const contentType = response.headers.get("content-type") || "";
       if (isTextMimeType(contentType)) return { text: await response.text(), isBinary: false };
       return { text: `Binary file (${formatBytes((await response.blob()).size)})`, isBinary: true };
@@ -127,12 +127,20 @@ export class ProjectFiles implements Files {
   async listDirectory(source: Source, path: string): Promise<DirectoryEntry[]> {
     const route = this.route(source);
     if (!route) throw new Error("Unknown source");
-    return (await api.files.tree(route.projectId, path)).entries;
+    return (await api.files.tree(route.sessionId, path)).entries;
   }
 
   contentUrl(source: Source, path: string, { download = false } = {}): string | null {
     const route = this.route(source);
-    return route ? api.files.contentUrl(route.projectId, path, { download }) : null;
+    return route ? api.files.contentUrl(route.sessionId, path, { download }) : null;
+  }
+
+  async upload(source: Source, files: FileList | readonly File[], { folder = ".", onProgress }: { folder?: string; onProgress?: (percent: number) => void } = {}): Promise<string[]> {
+    const route = this.route(source);
+    if (!route) throw new Error("Unknown source");
+    const { uploaded } = await api.files.upload(route.sessionId, files, { path: folder === "." ? undefined : folder, ...(onProgress ? { onProgress } : {}) });
+    this.announceChanged(source);
+    return uploaded;
   }
 
   dispose(): void {
@@ -148,13 +156,10 @@ export class ProjectFiles implements Files {
     const key = sourceKey(source);
     const cached = this.routes.get(key);
     if (cached !== undefined) return cached;
-    const placed = this.sessions.entries().filter(({ projectId, placement }) => projectId != null
-      && placement?.nodeId === source.nodeId && placement.path === source.path);
-    const projectId = placed[0]?.projectId;
-    const route = projectId == null ? null : {
-      projectId,
-      available: placed.some(({ placement }) => placement != null && placement.available && !placement.removed),
-    };
+    const placed = this.sessions.entries().filter(({ placement }) => placement?.nodeId === source.nodeId && placement.path === source.path);
+    const reachable = placed.find(({ placement }) => placement != null && placement.available && !placement.removed);
+    const sessionId = (reachable ?? placed[0])?.id;
+    const route = sessionId == null ? null : { sessionId, available: reachable != null };
     this.routes.set(key, route);
     return route;
   }
@@ -178,14 +183,18 @@ export class ProjectFiles implements Files {
     if (this.pendingChanges.has(key)) return;
     this.pendingChanges.set(key, setTimeout(() => {
       this.pendingChanges.delete(key);
-      const listing = this.listings.get(key);
-      // Whoever shows it asks for it again on hearing this, which reloads it.
-      if (listing?.available) {
-        listing.stale = true;
-        this.notify();
-      }
-      for (const listener of this.changeListeners) listener(source);
+      this.announceChanged(source);
     }, SETTLE_MS));
+  }
+
+  private announceChanged(source: Source): void {
+    const listing = this.listings.get(sourceKey(source));
+    // Whoever shows it asks for it again on hearing this, which reloads it.
+    if (listing?.available) {
+      listing.stale = true;
+      this.notify();
+    }
+    for (const listener of this.changeListeners) listener(source);
   }
 
   private load(listing: Listing): void {
@@ -194,7 +203,7 @@ export class ProjectFiles implements Files {
     const request = ++listing.request;
     listing.stale = false;
     listing.state = listing.state.asLoading();
-    api.files.list(route.projectId).then(
+    api.files.list(route.sessionId).then(
       ({ files }) => {
         if (request !== listing.request) return;
         listing.state = listing.state.asLoaded(sameFiles(listing.state.data, files) ? listing.state.data ?? files : files);

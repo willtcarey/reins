@@ -19,7 +19,7 @@ import { navigate, navigateToSession, newSessionHash } from "../routing/app-rout
 import type { WorkspaceStore } from "../models/stores/workspace-store.js";
 import type { TaskWithDiffStats as TaskListItem } from "@backend/models/tasks.js";
 
-import type { Project as ProjectInfo } from "@backend/project-store.js";
+import type { ProjectView as ProjectInfo } from "@backend/routes/projects.js";
 import { chevronLeftIcon, chevronRightIcon } from "../ui/icons.js";
 import type { TaskForm } from "./task-form.js";
 import type { TaskDetail } from "./task-detail.js";
@@ -48,8 +48,6 @@ export class SessionSidebar extends LitElement {
   @property({ attribute: false }) onToggleCollapse: (() => void) | null = null;
   @state() private expandedProjects = new Set<number>();
 
-  /** Upload progress per project: 0–100 while uploading, null when idle. */
-  @state() private uploadProgress = new Map<number, number>();
 
   private _unsubscribe: (() => void) | null = null;
   private viewport = new ViewportController(this);
@@ -207,51 +205,6 @@ export class SessionSidebar extends LitElement {
     this.projectSidebar?.openEdit(e.detail);
   }
 
-  private handleUploadFiles(e: CustomEvent<ProjectInfo>) {
-    const project = e.detail;
-    const store = this.store;
-    if (!store) return;
-
-    const input = document.createElement("input");
-    input.type = "file";
-    input.multiple = true;
-    input.addEventListener("change", async () => {
-      const files = input.files;
-      if (!files || files.length === 0) return;
-
-      const onProgress = (pct: number) => {
-        this.uploadProgress = new Map(this.uploadProgress).set(project.id, pct);
-      };
-
-      const result = await store.projectsStore.uploadFiles(
-        project.id,
-        files,
-        onProgress,
-      );
-
-      // Show 100% briefly, then clear
-      this.uploadProgress = new Map(this.uploadProgress).set(project.id, 100);
-      setTimeout(() => {
-        const next = new Map(this.uploadProgress);
-        next.delete(project.id);
-        this.uploadProgress = next;
-      }, 600);
-
-      if ("uploaded" in result) {
-        const count = result.uploaded.length;
-        showToast(
-          `Uploaded ${count} file${count !== 1 ? "s" : ""} successfully.`,
-          "success",
-        );
-        // Refresh the diff view so uploaded files appear in the changes tab
-        store.diffStore.refresh({ trigger: "upload" });
-      } else {
-        showToast(result.error, "error");
-      }
-    });
-    input.click();
-  }
-
   private async handleDeleteProject(e: CustomEvent<ProjectInfo>) {
     const project = e.detail;
     const confirmed = await confirmDialog({
@@ -291,6 +244,29 @@ export class SessionSidebar extends LitElement {
 
   // ---- Render ---------------------------------------------------------------
 
+  /** Sessions of no project (Reins features such as extensions create them; the browser does not), so a
+   * visible one stays reachable. Listed only when there is one; opening one is all they offer here. */
+  private renderOtherSessions() {
+    const sessions = this.store?.projectsStore.unownedSessions ?? [];
+    if (sessions.length === 0) return nothing;
+    return html`
+      <section class="mt-2" aria-label="Other sessions">
+        <div class="px-3 py-1.5 text-[11px] font-medium text-zinc-400">Other sessions</div>
+        <div class="mx-2 mb-1 divide-y divide-zinc-800/80 rounded-md border border-zinc-800/80 bg-zinc-950/30 overflow-hidden">
+          ${sessions.map((session) => html`
+            <session-list-item
+              class="block"
+              .session=${session}
+              .active=${session.id === this.store?.sessionId}
+              .activeSessionId=${this.store?.sessionId ?? ""}
+              .movable=${false}
+            ></session-list-item>
+          `)}
+        </div>
+      </section>
+    `;
+  }
+
   override render() {
     const store = this.store;
     const isCollapsed = !this.viewport.isMobileLayout && this.collapsed;
@@ -307,7 +283,6 @@ export class SessionSidebar extends LitElement {
         @new-task-session=${this.handleNewTaskSession}
         @toggle-project=${this.handleToggleProject}
         @edit-project=${this.handleEditProject}
-        @upload-project-files=${this.handleUploadFiles}
         @delete-project=${this.handleDeleteProject}
         @save-task=${this.handleSaveTask}
         @edit-task=${this.handleEditTask}
@@ -368,10 +343,11 @@ export class SessionSidebar extends LitElement {
                   .active=${project.id === store?.projectId}
                   .activeSessionId=${store?.sessionId ?? ""}
                   .activityState=${store?.projectsStore.activityForProject(project.id)}
-                  .uploadProgress=${this.uploadProgress.get(project.id) ?? null}
                 ></sidebar-project>
               `,
             )}
+
+            ${this.renderOtherSessions()}
 
             <!-- Add Project at the bottom of the list -->
             <project-sidebar .store=${store}></project-sidebar>

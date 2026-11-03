@@ -60,7 +60,7 @@ export function registerTaskRoutes(router: RouterGroup<ProjectRouteContext>) {
   router.post("/tasks/generate", async (ctx) => {
     const body = await parseBody(GenerateTaskBody, ctx.req);
 
-    const generated = await generateTask(ctx.state, ctx.project.source.record, body.prompt.trim());
+    const generated = await generateTask(ctx.state, { projectId: ctx.project.projectId, sourceId: ctx.project.defaultSource.id }, body.prompt.trim());
 
     try {
       const task = await ctx.project.tasks().create({

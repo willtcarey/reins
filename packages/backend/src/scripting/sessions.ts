@@ -12,6 +12,7 @@ import {
 } from "../session-store.js";
 import { listSessionEntries } from "../messages-store.js";
 import { ThinkingLevelSchema } from "../models/model-settings.js";
+import { LocationSchema } from "./nodes.js";
 import { type ApiContext, type ApiFunctionDef, defineFunction } from "./define-function.js";
 
 // ---------------------------------------------------------------------------
@@ -50,7 +51,9 @@ function assertSessionExists(sessionId: string) {
 
 export const SessionSchema = Type.Object({
   id: Type.String(),
-  project_id: Type.Number(),
+  project_id: Type.Union([Type.Number(), Type.Null()], { description: "Its project; null for a session of no project, which has no task." }),
+  source_id: Type.Number({ description: "Its source: the location (a node and a path) it works in." }),
+  source_extension: Type.Union([Type.String(), Type.Null()], { description: "The backend extension that started it (reins.sessions.start), or null." }),
   name: Type.Union([Type.String(), Type.Null()]),
   created_at: Type.String(),
   updated_at: Type.String(),
@@ -144,7 +147,8 @@ export const SessionEntrySchema = Type.Union([MessageEntrySchema, ToolCallEntryS
 const sessionsListFunction = defineFunction({
   name: "sessions.list",
   description:
-    "List sessions for a project. Call without options for all sessions in the current project. " +
+    "List sessions for a project. Call without options for all sessions in the current project " +
+    "(from a session of no project: the sessions of no project on its source). " +
     "Pass projectId to inspect another project, taskId for one task's sessions, or taskId: null " +
     "for scratch sessions only. Use taskId: \"current\" from a task session to list that task's sessions.",
   parameters: Type.Object({ options: Type.Optional(SessionListOptionsSchema) }),
@@ -153,12 +157,14 @@ const sessionsListFunction = defineFunction({
   execute: (params, ctx) => {
     const options = params.options;
     const projectId = options?.projectId === "current" || options?.projectId === undefined
-      ? ctx.projectId
+      ? ctx.session.projectId
       : options.projectId;
-    const taskId = options?.taskId === "current" ? ctx.taskId : options?.taskId;
+    const taskId = options?.taskId === "current" ? ctx.session.taskId : options?.taskId;
 
     return listSessions({
       projectId,
+      // Without a project, the default list is the sessions of no project on the caller's source.
+      ...(projectId === null ? { sourceId: ctx.session.row.source_id } : {}),
       taskId,
       includeTaskSessions: taskId === undefined,
       since: options?.since,
@@ -177,8 +183,8 @@ const sessionsCurrentFunction = defineFunction({
   returns: SessionSchema,
   tags: ["sessions", "current", "read", "self", "context"],
   execute: (_params, ctx) => {
-    const session = getSession(ctx.sessionId);
-    if (!session) throw new Error(`Session ${ctx.sessionId} not found`);
+    const session = getSession(ctx.session.id);
+    if (!session) throw new Error(`Session ${ctx.session.id} not found`);
     return toScriptingSession(session);
   },
 });
@@ -226,7 +232,8 @@ export const sessionsSetModelFunction = defineFunction({
   async: true,
   tags: ["sessions", "model", "set", "write", "switch", "provider"],
   execute: async (params, ctx) => {
-    return toScriptingSession(await ctx.models.sessions.setModel({ ...params, projectId: ctx.projectId }));
+    assertSessionExists(params.sessionId);
+    return toScriptingSession(await ctx.models.sessions.setModel(params));
   },
 });
 
@@ -235,10 +242,7 @@ function updateMetadata(
   sessionId: string,
   updates: SessionMetadataUpdates,
 ) {
-  const session = assertSessionExists(sessionId);
-  if (session.project_id !== ctx.projectId) {
-    throw new Error(`Session ${sessionId} is outside the current project scope`);
-  }
+  assertSessionExists(sessionId);
   ctx.models.sessions.updateMetadata(sessionId, updates);
   return toScriptingSession(assertSessionExists(sessionId));
 }
@@ -253,7 +257,7 @@ const SetNameParameters = Type.Object({
 
 const sessionsSetNameFunction = defineFunction({
   name: "sessions.setName",
-  description: "Rename a session in the current project, or pass null to clear its explicit name. Names are trimmed and must not be empty.",
+  description: "Rename a session, or pass null to clear its explicit name. Names are trimmed and must not be empty.",
   parameters: SetNameParameters,
   returns: SessionSchema,
   tags: ["sessions", "session", "name", "rename", "title", "set", "write", "metadata"],
@@ -269,7 +273,7 @@ const sessionsSetNameFunction = defineFunction({
 
 const sessionsSetPinnedFunction = defineFunction({
   name: "sessions.setPinned",
-  description: "Pin or unpin a session in the current project. Pinning is independent of archive state and does not affect parent or child sessions.",
+  description: "Pin or unpin a session. Pinning is independent of archive state and does not affect parent or child sessions.",
   parameters: Type.Object({
     sessionId: Type.String(),
     pinned: Type.Boolean(),
@@ -281,7 +285,7 @@ const sessionsSetPinnedFunction = defineFunction({
 
 const sessionsSetArchivedFunction = defineFunction({
   name: "sessions.setArchived",
-  description: "Archive or unarchive a session in the current project. Archiving preserves history, pin state, and parent/child state; archived sessions are omitted from normal lists.",
+  description: "Archive or unarchive a session. Archiving preserves history, pin state, and parent/child state; archived sessions are omitted from normal lists.",
   parameters: Type.Object({
     sessionId: Type.String(),
     archived: Type.Boolean(),
@@ -299,6 +303,7 @@ const StartParameters = Type.Object({
       description: 'The task to start the session in, of the current project: the caller\'s task when omitted or "current"; null for a scratch session.',
     })),
     title: Type.Optional(Type.String({ minLength: 1 })),
+    source: Type.Optional(Type.Union([LocationSchema, Type.Null()])),
     modelProvider: Type.Optional(Type.String({ minLength: 1 })),
     modelId: Type.Optional(Type.String({ minLength: 1 })),
     thinkingLevel: Type.Optional(ThinkingLevelSchema),
@@ -330,6 +335,7 @@ const sessionsStartFunction = defineFunction({
   description: "Start a fresh session in the caller's project and return its sessionId without waiting for completion. " +
     "It starts in the caller's task unless options.taskId names another task (or null for scratch). " +
     "Optional title uses the session name; omitted title preserves normal naming. Model/thinking default to the caller. " +
+    "options.source ({ nodeId, path }) starts it elsewhere than the caller's checkout (a directory not used yet is checked on its node). " +
     "Sessions share the checkout: coordinate file edits. Only start other agents when the user explicitly asks for delegation or parallel sessions. Children report their latest outcome on runtime settlement, durably prompting idle parents or steering busy ones. Reports are not queued or retried. Continue other work or end your turn rather than polling. Independent sessions require explicit result retrieval.",
   parameters: StartParameters,
   returns: SessionHandleSchema,
@@ -376,7 +382,7 @@ const sessionsWaitFunction = defineFunction({
 export const sessionsCompactFunction = defineFunction({
   name: "sessions.compact",
   description:
-    "Compact an idle session of the current project now: its context is replaced by a summary, focused on instructions when given. " +
+    "Compact an idle session now: its context is replaced by a summary, focused on instructions when given. " +
     "Returns once the compaction started; it runs in the background (sessions.wait observes its end). " +
     "Throws while the session is running (a session cannot compact itself from a script) or has nothing to compact.",
   parameters: Type.Object({
@@ -387,10 +393,7 @@ export const sessionsCompactFunction = defineFunction({
   async: true,
   tags: ["sessions", "compact", "compaction", "summary", "context", "write"],
   execute: async (params, ctx) => {
-    const session = assertSessionExists(params.sessionId);
-    if (session.project_id !== ctx.projectId) {
-      throw new Error(`Session ${params.sessionId} is outside the current project scope`);
-    }
+    assertSessionExists(params.sessionId);
     await ctx.models.sessions.compact(params.sessionId, params.instructions ? { instructions: params.instructions } : {});
     return { sessionId: params.sessionId };
   },

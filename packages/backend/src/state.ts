@@ -30,6 +30,7 @@ import { createNodeLinks, type NodeLinks } from "./nodes/node-link.js";
 import type { NodeBundleDelivery } from "./node-bundle/delivery.js";
 import { ExtensionHost, type ExtensionRegistration } from "./extensions/host.js";
 import { BUILT_IN_EXTENSIONS } from "./extensions/built-in.js";
+import { extensionSessions } from "./extensions/sessions.js";
 import { API_FUNCTIONS, fnNamespace } from "./scripting/api-registry.js";
 import type { PromptContext } from "@reins/sdk/server";
 import { logger } from "./logger.js";
@@ -169,6 +170,18 @@ export interface App {
   createTask(sessionId: string, input: CreateTaskInput, signal?: AbortSignal): Promise<CreateTaskResult>;
   /** The system prompt sections this app's extensions give a session whose runtime opens. */
   promptSections(context: PromptContext): Promise<string[]>;
+  /** A run of a session an extension started ended, its end recorded: tells that extension's settlement
+   * listeners (`reins.sessions.onSettled`). Optional: a runtime on newer code may call an app on older code. */
+  sessionSettled?(notice: SessionSettledNotice): void;
+}
+
+/** A run's end as an extension hears of it, for the extension that started the session. */
+export interface SessionSettledNotice {
+  extension: string;
+  sessionId: string;
+  status: "completed" | "failed" | "cancelled";
+  result: string | null;
+  error: string | null;
 }
 
 /** What an app calls on a live session runtime, whichever app built it. */
@@ -297,7 +310,7 @@ export function createAppState(serverProcess: ServerProcess, nodeBundle: NodeBun
     nodes: createNodeHub(() => state, hub),
     nodeLinks: createNodeLinks((socket, options) => state.nodes.accept(socket, options)),
     nodeBundle,
-    extensions: new ExtensionHost(serverProcess, new Set(API_FUNCTIONS.map(fnNamespace)), onExtensionError),
+    extensions: new ExtensionHost(serverProcess, new Set(API_FUNCTIONS.map(fnNamespace)), onExtensionError, extension => extensionSessions(state, extension)),
   };
   for (const extension of extensions) state.extensions.register(extension);
   return state;

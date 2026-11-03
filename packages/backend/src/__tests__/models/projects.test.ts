@@ -3,10 +3,8 @@ import { useTestDb } from "../helpers/test-db.js";
 import { useTestRepo } from "../helpers/test-repo.js";
 import { createAppState } from "../helpers/app-state.js";
 import { createProject } from "../project-fixture.js";
-import { ProjectModel } from "../../models/projects.js";
-import { SourceModel } from "../../models/sources.js";
-import { defaultSource } from "../../node-store.js";
-import { Workspace } from "../../models/workspace.js";
+import { ProjectModel, ProjectNotFoundError } from "../../models/projects.js";
+import { Nodes } from "../../models/nodes.js";
 import type { Broadcast, ServerMessage } from "../../models/broadcast.js";
 
 describe("ProjectModel scoped models", () => {
@@ -18,12 +16,15 @@ describe("ProjectModel scoped models", () => {
   beforeEach(() => {
     const project = createProject("Test", repo.dir, "main");
     const broadcastSpy: Broadcast = mock<(msg: ServerMessage) => void>();
-    model = new ProjectModel(project.id, broadcastSpy, new SourceModel(createAppState().nodes, defaultSource(project.id)!));
+    model = new ProjectModel(project.id, new Nodes(createAppState(), broadcastSpy));
   });
 
-  test("returns a Workspace of its source's checkout, against the project's base branch", () => {
-    expect(model.workspace).toBeInstanceOf(Workspace);
-    expect(model.workspace.root).toBe(repo.dir);
-    expect(model.workspace.baseBranch).toBe("main");
+  test("an unknown project is ProjectNotFoundError", () => {
+    expect(() => new ProjectModel(9999, new Nodes(createAppState(), mock()))).toThrow(ProjectNotFoundError);
+  });
+
+  test("works in its default source, against its base branch", () => {
+    expect(model.defaultSource.path).toBe(repo.dir);
+    expect(model.baseBranch).toBe("main");
   });
 });

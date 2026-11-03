@@ -2,7 +2,6 @@ import { Type } from "@sinclair/typebox";
 import { asyncIterableToText } from "../async-iterable.js";
 import { CodeReviewStateSchema } from "../models/code-review.js";
 import type { ProjectModel } from "../models/projects.js";
-import { getTask } from "../task-store.js";
 import { type ApiFunctionDef, defineFunction, type ApiContext } from "./define-function.js";
 
 const ReviewCommentOptionsSchema = Type.Object({
@@ -11,15 +10,11 @@ const ReviewCommentOptionsSchema = Type.Object({
   author: Type.Optional(Type.String({ minLength: 1 })),
 });
 
+/** The caller's project; throws for a session of no project: code reviews belong to projects. */
 function projectModel(ctx: ApiContext): ProjectModel {
-  return ctx.models.project(ctx.projectId, ctx.sourceId);
-}
-
-function taskBranch(ctx: ApiContext): string | undefined {
-  if (ctx.taskId === null) return undefined;
-  const task = getTask(ctx.taskId);
-  if (!task || task.project_id !== ctx.projectId) throw new Error("Current review task not found");
-  return task.branch_name;
+  const { projectId } = ctx.session;
+  if (projectId === null) throw new Error("This session has no project, and code reviews belong to projects");
+  return ctx.models.project(projectId);
 }
 
 export const REVIEW_FUNCTIONS: ApiFunctionDef[] = [
@@ -30,7 +25,7 @@ export const REVIEW_FUNCTIONS: ApiFunctionDef[] = [
     returns: Type.Union([CodeReviewStateSchema, Type.Null()]),
     async: true,
     tags: ["reviews", "code", "comments", "current", "read"],
-    execute: async (_params, ctx) => projectModel(ctx).codeReviews().getOpen({ taskId: ctx.taskId }),
+    execute: async (_params, ctx) => projectModel(ctx).codeReviews().getOpen({ taskId: ctx.session.taskId }),
   }),
   defineFunction({
     name: "reviews.addComment",
@@ -51,10 +46,10 @@ export const REVIEW_FUNCTIONS: ApiFunctionDef[] = [
       if (!body) throw new Error("Review comment body cannot be empty");
       const project = projectModel(ctx);
       const patch = await asyncIterableToText(
-        project.workspace.getDiffPatchStream(3, "branch", taskBranch(ctx)),
+        ctx.session.workspace.getDiffPatchStream(3, "branch", ctx.session.task?.branch_name),
       );
       const review = project.codeReviews().addComment({
-        scope: { taskId: ctx.taskId },
+        scope: { taskId: ctx.session.taskId },
         author: params.options?.author?.trim() || "Agent",
         comment: {
           path: params.path,

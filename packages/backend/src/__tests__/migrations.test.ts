@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { runMigrations } from "../migrations.js";
+import { MIGRATIONS, runMigrations } from "../migrations.js";
 import { openDatabase } from "../database.js";
 import { decrypt, encrypt, initEncryptionSecret } from "../crypto.js";
 import { mcp } from "../extensions/mcp/index.js";
@@ -381,50 +381,35 @@ describe("migrations", () => {
 
   test("043 and 044 leave a project's sources to its creator: no triggers, and the path lives on sources only", () => {
     const db = new Database(":memory:");
-    setDb(db);
     try {
       db.exec("PRAGMA foreign_keys = ON");
-      runMigrations(db);
+      runMigrations(db, MIGRATIONS.filter(([name]) => name < "045"));
       expect(db.query("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'internal_project_source_%'").all()).toEqual([]);
       expect(db.query("SELECT name FROM pragma_table_info('projects')").all().map((column: any) => column.name)).not.toContain("path");
       const bare = db.query<{ id: number }, []>("INSERT INTO projects (name) VALUES ('Bare') RETURNING id").get()!;
       expect(db.query("SELECT * FROM sources WHERE project_id = ?").all(bare.id)).toEqual([]);
     } finally {
-      resetDb();
+      db.close();
     }
   });
 
   test("044 rebuilds projects without their path, keeping every row and what references it, and makes a checkout belong to one project", () => {
     const db = new Database(":memory:");
-    setDb(db);
     try {
       db.exec("PRAGMA foreign_keys = ON");
-      runMigrations(db);
-      // As 043 left the schema: projects with their path.
-      db.exec(`PRAGMA foreign_keys = OFF;
-        DELETE FROM migrations WHERE name = '044_paths_belong_to_sources';
-        DROP INDEX idx_sources_checkout;
-        CREATE TABLE projects_043 (
-          id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, path TEXT NOT NULL UNIQUE,
-          created_at TEXT NOT NULL DEFAULT (datetime('now')), last_opened_at TEXT NOT NULL DEFAULT (datetime('now')),
-          base_branch TEXT NOT NULL DEFAULT 'main');
-        DROP TABLE projects;
-        ALTER TABLE projects_043 RENAME TO projects;
-        PRAGMA foreign_keys = ON;
-        INSERT INTO projects (id, name, path, base_branch) VALUES (7, 'Kept', '/tmp/kept-044', 'develop');
-        INSERT INTO sources (project_id, node_id, path) VALUES (7, 'internal', '/tmp/kept-044');`);
-      const source = defaultSource(7)!;
-      createSession("s", 7, { sourceId: source.id, agentRuntimeType: "pi" });
+      runMigrations(db, MIGRATIONS.filter(([name]) => name < "044"));
+      db.exec(`INSERT INTO projects (id, name, path, base_branch) VALUES (7, 'Kept', '/tmp/kept-044', 'develop');
+        INSERT INTO sources (id, project_id, node_id, path) VALUES (3, 7, 'internal', '/tmp/kept-044');
+        INSERT INTO sessions (id, project_id, source_id, agent_runtime_type) VALUES ('s', 7, 3, 'pi');`);
 
-      runMigrations(db);
+      runMigrations(db, MIGRATIONS.filter(([name]) => name < "045"));
 
       expect(db.query("SELECT id, name, base_branch FROM projects").all()).toEqual([{ id: 7, name: "Kept", base_branch: "develop" }]);
-      expect(db.query("SELECT id, project_id, source_id FROM sessions").all()).toEqual([{ id: "s", project_id: 7, source_id: source.id }]);
-      expect(defaultSource(7)).toEqual(source);
+      expect(db.query("SELECT id, project_id, source_id FROM sessions").all()).toEqual([{ id: "s", project_id: 7, source_id: 3 }]);
       expect(() => db.exec("INSERT INTO projects (name) VALUES ('Other'); INSERT INTO sources (project_id, node_id, path) VALUES (last_insert_rowid(), 'internal', '/tmp/kept-044')")).toThrow("UNIQUE constraint");
       expect(db.query("PRAGMA foreign_key_check").all()).toEqual([]);
     } finally {
-      resetDb();
+      db.close();
     }
   });
 
@@ -761,6 +746,90 @@ describe("migrations", () => {
       expect(db.query("SELECT name FROM sqlite_master WHERE name LIKE 'mcp_%'").all()).toEqual([]);
     } finally {
       resetDb();
+    }
+  });
+
+  test("062 moves sources off projects, gives each project its default source as its home, and keeps every session, its task and its transcript", () => {
+    const db = new Database(":memory:");
+    try {
+      db.exec("PRAGMA foreign_keys = ON");
+      runMigrations(db, MIGRATIONS.filter(([name]) => name < "062"));
+      db.exec(`
+        INSERT INTO nodes (id, name, removed_at) VALUES ('gone', 'Gone', '2026-10-01T00:00:00.000Z'), ('laptop', 'Laptop', NULL);
+        INSERT INTO projects (id, name) VALUES (1, 'Moved'), (2, 'Plain'), (3, 'Abandoned');
+        INSERT INTO sources (id, project_id, node_id, path) VALUES
+          (10, 1, 'gone', '/old/moved'), (11, 1, 'laptop', '/work/moved'), (12, 1, 'internal', '/home/moved'),
+          (20, 2, 'internal', '/home/plain'),
+          (30, 3, 'gone', '/old/abandoned');
+        INSERT INTO tasks (id, project_id, title, branch_name) VALUES (5, 1, 'A task', 'task/a');
+        INSERT INTO sessions (id, project_id, source_id, task_id, name, agent_runtime_type, activity_state, pinned_at, background, kind, settlement_json)
+          VALUES ('parent', 1, 11, 5, 'Parent', 'pi', 'finished', '2026-10-02T00:00:00.000Z', 0, 'agent', '{"status":"completed"}');
+        INSERT INTO sessions (id, project_id, source_id, parent_session_id, agent_runtime_type, background, kind)
+          VALUES ('child', 1, 10, 'parent', 'pi', 1, 'task-generator'), ('plain', 2, 20, NULL, 'pi', 0, 'agent');
+        INSERT INTO session_messages (session_id, seq, role, message_json) VALUES ('parent', 1, 'reinsInput', '{}');
+      `);
+      const sessionsBefore = db.query("SELECT * FROM sessions ORDER BY id").all();
+
+      runMigrations(db, MIGRATIONS.filter(([name]) => name < "063"));
+
+      expect(db.query("SELECT * FROM sessions ORDER BY id").all()).toEqual(sessionsBefore);
+      expect(db.query("SELECT session_id, seq FROM session_messages").all()).toEqual([{ session_id: "parent", seq: 1 }]);
+      expect(db.query("SELECT id, home_source_id FROM projects ORDER BY id").all()).toEqual([
+        { id: 1, home_source_id: 11 },
+        { id: 2, home_source_id: 20 },
+        { id: 3, home_source_id: 30 },
+      ]);
+      expect(db.query("SELECT * FROM sources WHERE id IN (10, 11)").all()).toEqual([
+        { id: 10, node_id: "gone", path: "/old/moved" },
+        { id: 11, node_id: "laptop", path: "/work/moved" },
+      ]);
+      expect(db.query("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'session_source_%'").all()).toEqual([]);
+      expect(db.query("PRAGMA foreign_key_check").all()).toEqual([]);
+
+      // A session needs a source, may have no project, and has a task only with a project.
+      db.exec("INSERT INTO sessions (id, project_id, source_id) VALUES ('anywhere', NULL, 12), ('other-project', 2, 11)");
+      expect(() => db.exec("INSERT INTO sessions (id, project_id, source_id) VALUES ('nowhere', 1, NULL)")).toThrow("NOT NULL");
+      expect(() => db.exec("INSERT INTO sessions (id, project_id, source_id, task_id) VALUES ('stray', NULL, 12, 5)")).toThrow("CHECK constraint");
+      expect(() => db.exec("INSERT INTO sources (node_id, path) VALUES ('laptop', '/work/moved')")).toThrow("UNIQUE constraint");
+
+      // Deleting a project still deletes its sessions, and keeps the locations they used.
+      db.exec("DELETE FROM projects WHERE id = 1");
+      expect(db.query("SELECT id FROM sessions ORDER BY id").all()).toEqual([{ id: "anywhere" }, { id: "other-project" }, { id: "plain" }]);
+      expect(db.query("SELECT COUNT(*) AS count FROM sources").get()).toEqual({ count: 5 });
+    } finally {
+      db.close();
+    }
+  });
+
+  test("063 records no extension as the origin of existing sessions", () => {
+    const db = new Database(":memory:");
+    try {
+      db.exec("PRAGMA foreign_keys = ON");
+      runMigrations(db, MIGRATIONS.filter(([name]) => name < "063"));
+      db.exec(`INSERT INTO sources (id, node_id, path) VALUES (1, 'internal', '/home/notes');
+        INSERT INTO sessions (id, project_id, source_id) VALUES ('existing', NULL, 1);`);
+
+      runMigrations(db, MIGRATIONS.filter(([name]) => name < "064"));
+
+      expect(db.query("SELECT id, source_extension FROM sessions").all()).toEqual([{ id: "existing", source_extension: null }]);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("064 renames a project's home source its default source, keeping it", () => {
+    const db = new Database(":memory:");
+    try {
+      db.exec("PRAGMA foreign_keys = ON");
+      runMigrations(db, MIGRATIONS.filter(([name]) => name < "064"));
+      db.exec(`INSERT INTO sources (id, node_id, path) VALUES (1, 'internal', '/home/app');
+        INSERT INTO projects (id, name, home_source_id) VALUES (1, 'App', 1);`);
+
+      runMigrations(db);
+
+      expect(db.query("SELECT id, default_source_id FROM projects").all()).toEqual([{ id: 1, default_source_id: 1 }]);
+    } finally {
+      db.close();
     }
   });
 });

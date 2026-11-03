@@ -6,15 +6,16 @@ import { join } from "path";
 import type { HttpApi, ServerSdk, ToolResult } from "@reins/sdk/server";
 import { runScript } from "../../tools/execute.js";
 import { searchScriptApi } from "../../tools/search.js";
-import { Models } from "../../models/models.js";
 import { buildRouter } from "../../routes/index.js";
-import type { ApiContext } from "../../scripting/define-function.js";
 import { createAppState, type TestAppState } from "../helpers/app-state.js";
 import { makeRequest } from "../helpers/request.js";
 import { testExtensionsDir, useTestDb } from "../helpers/test-db.js";
 import { decrypt } from "../../crypto.js";
 import { getDb } from "../../app-globals.js";
 import { testExtension, testTool } from "../helpers/test-extension.js";
+import { scriptContext, type ScriptCaller } from "../helpers/script-context.js";
+import { createProject } from "../project-fixture.js";
+import { createTask } from "../../task-store.js";
 
 const router = buildRouter();
 /** The first tool a search's answer documents. */
@@ -23,11 +24,9 @@ const firstId = (text: string) => /^ {2}(\w+)\(/m.exec(text)?.[1];
 const untyped = (value: unknown) => JSON.parse(JSON.stringify({ value })).value;
 const fn = (name: string) => ({ name, description: "", parameters: { type: "object", properties: {} }, returns: {}, tags: [], execute: () => null });
 
-function script(state: TestAppState, signal?: AbortSignal) {
-  const models = new Models(state);
-  const ctx: ApiContext = { projectId: 7, sessionId: "caller", taskId: 3, broadcast: models.broadcast, sourceId: 0, nodes: state.nodes, models, signal };
+function script(state: TestAppState, signal?: AbortSignal, caller: ScriptCaller = {}) {
   return async (code: string) => {
-    const result = await runScript(ctx, code);
+    const result = await runScript(scriptContext(state, { sessionId: "caller", ...caller, ...(signal ? { signal } : {}) }), code);
     if (!result.ok) throw new Error(result.error);
     return result.text;
   };
@@ -187,9 +186,11 @@ describe("the server SDK's host", () => {
         }],
       });
       const signal = new AbortController().signal;
+      const project = createProject("Notes", "/tmp/notes");
+      const task = createTask(project.id, "Notes", null, "task/notes");
 
-      expect(JSON.parse(await script(state, signal)(`return await api.notes.find("x", 2)`))).toEqual({ label: "found x" });
-      expect(seen).toEqual([{ params: { label: "x", limit: 2 }, context: { sessionId: "caller", projectId: 7, taskId: 3, signal: true } }]);
+      expect(JSON.parse(await script(state, signal, { projectId: project.id, taskId: task.id })(`return await api.notes.find("x", 2)`))).toEqual({ label: "found x" });
+      expect(seen).toEqual([{ params: { label: "x", limit: 2 }, context: { sessionId: "caller", projectId: project.id, taskId: task.id, signal: true } }]);
       const docs = searchScriptApi("notes find", state.extensions).text;
       expect(docs).toContain("find(label: string, limit?: number): Promise<Note>;");
       expect(docs).toContain("interface Note {");
@@ -523,6 +524,7 @@ describe("the server SDK's host", () => {
         registrations: {
           tools: { title: "Notes tools" },
           promptSections: 2,
+          settlementListeners: 0,
           scriptFunctions: ["notes.add", "notes.list"],
           httpMethods: ["add", "list"],
           pages: ["/extensions/notes/callback"],
@@ -539,7 +541,7 @@ describe("the server SDK's host", () => {
       expect(second).toMatchObject({
         name: "quiet",
         status: "loaded",
-        registrations: { tools: null, promptSections: 0, scriptFunctions: [], httpMethods: [], pages: [] },
+        registrations: { tools: null, promptSections: 0, settlementListeners: 0, scriptFunctions: [], httpMethods: [], pages: [] },
       });
     });
 

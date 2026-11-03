@@ -65,6 +65,7 @@ function blankSessionData(sessionId = ""): SessionData {
     activityState: null,
     pinnedAt: null,
     archivedAt: null,
+    sourceExtension: null,
     background: false,
     placement: { available: true, removed: false, nodeId: "", nodeName: "", path: "" },
     pendingOperation: null,

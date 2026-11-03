@@ -141,15 +141,14 @@ describe("execute tool", () => {
       }
     });
 
-    test("projects.create() throws on duplicate path", async () => {
+    test("projects.create() may make a project at home where another project's is", async () => {
       const tool = makeTool();
-      // repo.dir is already used by the project created in beforeEach
+      // repo.dir is the home of the project created in beforeEach
       const result = await executeTool(tool, "c-dup", {
-        code: `return await api.projects.create("Dupe", ${JSON.stringify(repo.dir)})`,
+        code: `return (await api.projects.create("Shared", ${JSON.stringify(repo.dir)})).default_source_id`,
       }, undefined, undefined);
 
-      expect(textOf(result)).toContain("Error:");
-      expect(textOf(result)).toContain("already a source of another project");
+      expect(textOf(result)).toBe(String(project.default_source_id));
     });
   });
 
@@ -237,6 +236,7 @@ describe("execute tool", () => {
     test("creates a pending review comment from the current Git diff", async () => {
       await Bun.write(`${repo.dir}/README.md`, "# Reviewed\n");
       const task = createTask(project.id, "Review task", "", "main", null);
+      storeCreateSession("review-session", project.id, { agentRuntimeType: "pi", taskId: task.id });
       const tool = makeTool("review-session", task.id);
 
       const result = await executeTool(tool, "c-review", {
@@ -291,7 +291,7 @@ describe("execute tool", () => {
 
       const parsed = JSON.parse(textOf(result));
       expect(parsed).toBeArray();
-      expect(parsed.map((s: any) => s.id).toSorted()).toEqual(["sess-1", "sess-2", "task-sess"]);
+      expect(parsed.map((s: any) => s.id).toSorted()).toEqual(["sess-1", "sess-2", "task-sess", "test-session"]);
     });
 
     test("sessions.current() returns the current session", async () => {
@@ -433,7 +433,7 @@ describe("execute tool", () => {
       }, undefined, undefined);
 
       const parsed = JSON.parse(textOf(result));
-      expect(parsed.map((s: any) => s.id)).toEqual(["scratch-only"]);
+      expect(parsed.map((s: any) => s.id).toSorted()).toEqual(["scratch-only", "test-session"]);
     });
 
     test("sessions.list(options) accepts current project and task identifiers", async () => {

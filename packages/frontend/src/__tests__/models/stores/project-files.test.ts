@@ -65,7 +65,7 @@ describe("ProjectFiles listing", () => {
     expect(files.listing(source).data).toEqual(["README.md", "src/app.ts"]);
     expect(files.listing({ ...source }).data).toEqual(["README.md", "src/app.ts"]);
     // The project of the session placed on the source routes the request.
-    expect(requests).toEqual(["/api/projects/1/files"]);
+    expect(requests).toEqual(["/api/sessions/here/files"]);
     expect(notified).toBe(1);
   });
 
@@ -89,7 +89,7 @@ describe("ProjectFiles listing", () => {
     expect(notified).toBe(1);
     files.listing(source);
     await settle();
-    expect(requests).toEqual(["/api/projects/1/files"]);
+    expect(requests).toEqual(["/api/sessions/here/files"]);
     expect(files.listing(source).data).toEqual(["README.md"]);
 
     sessions.set("here", { placement: { ...placement, available: false } });
@@ -122,8 +122,8 @@ describe("ProjectFiles listing", () => {
     files.listing(other);
     await settle();
 
-    expect(files.listing(source).data).toEqual(["/api/projects/1/files"]);
-    expect(files.listing(other).data).toEqual(["/api/projects/2/files"]);
+    expect(files.listing(source).data).toEqual(["/api/sessions/here/files"]);
+    expect(files.listing(other).data).toEqual(["/api/sessions/there/files"]);
   });
 
   test("keeps only the listings of the two sources asked for last", async () => {
@@ -143,12 +143,12 @@ describe("ProjectFiles listing", () => {
       files.listing(asked);
       await settle();
     }
-    expect(requests).toEqual(["/api/projects/1/files", "/api/projects/2/files", "/api/projects/3/files"]);
+    expect(requests).toEqual(["/api/sessions/here/files", "/api/sessions/there/files", "/api/sessions/third/files"]);
 
-    expect(files.listing(source).data).toEqual(["/api/projects/1/files"]);
+    expect(files.listing(source).data).toEqual(["/api/sessions/here/files"]);
     expect(files.listing(other).data).toBeNull();
     await settle();
-    expect(requests.at(-1)).toBe("/api/projects/2/files");
+    expect(requests.at(-1)).toBe("/api/sessions/there/files");
   });
 
   test("reloads a source's listing when it is next asked for after a file-modifying tool or a turn of its session ends", async () => {
@@ -244,7 +244,7 @@ describe("ProjectFiles reads", () => {
 
     expect(await files.read(source, "src/index.ts")).toEqual({ text: "v1", isBinary: false });
     expect(await files.read(source, "src/index.ts")).toEqual({ text: "v2", isBinary: false });
-    expect(requests).toEqual(["/api/projects/1/files/content?path=src%2Findex.ts", "/api/projects/1/files/content?path=src%2Findex.ts"]);
+    expect(requests).toEqual(["/api/sessions/here/files/content?path=src%2Findex.ts", "/api/sessions/here/files/content?path=src%2Findex.ts"]);
   });
 
   test("describes images and PDFs as binary", async () => {
@@ -276,7 +276,7 @@ describe("ProjectFiles reads", () => {
     const files = filesOnSource();
 
     expect(await files.listDirectory(source, "src/components")).toEqual([{ name: "app.ts", type: "file" }]);
-    expect(requests).toEqual(["/api/projects/1/files/tree?path=src%2Fcomponents"]);
-    expect(files.contentUrl(source, "docs/a b.pdf", { download: true })).toBe("/api/projects/1/files/content?path=docs%2Fa+b.pdf&download=1");
+    expect(requests).toEqual(["/api/sessions/here/files/tree?path=src%2Fcomponents"]);
+    expect(files.contentUrl(source, "docs/a b.pdf", { download: true })).toBe("/api/sessions/here/files/content?path=docs%2Fa+b.pdf&download=1");
   });
 });

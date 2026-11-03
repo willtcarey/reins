@@ -1,5 +1,5 @@
 /**
- * Git Remote Sync Routes (project-scoped)
+ * Git Remote Sync Routes (session-scoped: the session's checkout)
  *
  * Endpoints for commit spread queries, push, and rebase operations.
  *
@@ -10,7 +10,7 @@
 
 import { Type } from "@sinclair/typebox";
 import type { RouterGroup } from "../router.js";
-import type { ProjectRouteContext } from "./index.js";
+import type { SessionRouteContext } from "./index.js";
 import { badRequest } from "../errors.js";
 import type { Spread } from "../git.js";
 import { parseBody } from "./validate.js";
@@ -21,7 +21,7 @@ const GitBranchBody = Type.Object({
   branch: Type.String({ minLength: 1, pattern: "\\S" }),
 });
 
-export function registerGitRoutes(router: RouterGroup<ProjectRouteContext>) {
+export function registerGitRoutes(router: RouterGroup<SessionRouteContext>) {
   /**
    * GET /git/spread?branch=feature/foo&fetch=false
    *
@@ -36,10 +36,10 @@ export function registerGitRoutes(router: RouterGroup<ProjectRouteContext>) {
     const shouldFetch = ctx.url.searchParams.get("fetch") === "true";
 
     if (shouldFetch) {
-      await ctx.project.source.sync(ctx.project.baseBranch);
+      await ctx.session.source.sync(ctx.session.baseBranch);
     }
 
-    const spread = await ctx.project.source.git.getSpread(branch, ctx.project.baseBranch);
+    const spread = await ctx.session.source.git.getSpread(branch, ctx.session.baseBranch);
 
     return Response.json({ branch, ...spread } satisfies SpreadResponse);
   });
@@ -53,7 +53,7 @@ export function registerGitRoutes(router: RouterGroup<ProjectRouteContext>) {
   router.post("/git/push", async (ctx) => {
     const body = await parseBody(GitBranchBody, ctx.req);
 
-    await ctx.project.source.git.pushBranch(body.branch.trim());
+    await ctx.session.source.git.pushBranch(body.branch.trim());
     return Response.json({ ok: true });
   });
 
@@ -66,7 +66,7 @@ export function registerGitRoutes(router: RouterGroup<ProjectRouteContext>) {
   router.post("/git/rebase", async (ctx) => {
     const body = await parseBody(GitBranchBody, ctx.req);
 
-    await ctx.project.source.git.rebaseBranch(body.branch.trim(), ctx.project.baseBranch);
+    await ctx.session.source.git.rebaseBranch(body.branch.trim(), ctx.session.baseBranch);
     return Response.json({ ok: true });
   });
 }

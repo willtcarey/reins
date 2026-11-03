@@ -7,7 +7,7 @@ import { ProjectStore } from "../../models/stores/project-store.js";
 import { SessionCache } from "../../models/stores/session-cache.js";
 import type { SessionListView as SessionListItem } from "@backend/models/sessions.js";
 import type { SessionMoveTargetView } from "@backend/routes/sessions.js";
-import type { Project as ProjectInfo } from "@backend/project-store.js";
+import type { ProjectView as ProjectInfo } from "@backend/routes/projects.js";
 import {
   collectTemplateEventListeners,
   collectTemplateValues,
@@ -25,6 +25,8 @@ const projectInfo: ProjectInfo = {
   id: 7,
   name: "Reins",
   base_branch: "master",
+  default_source_id: 1,
+  defaultSource: { nodeId: "internal", path: "/home/me/reins" },
   created_at: "2026-01-01T00:00:00Z",
   last_opened_at: "2026-01-01T00:00:00Z",
 };
@@ -43,6 +45,7 @@ function session(id: string, overrides: Partial<SessionListItem> = {}): SessionL
     activityState: null,
     pinnedAt: null,
     archivedAt: null,
+    sourceExtension: null,
     placement: { available: true, removed: false, nodeId: "internal", nodeName: "Internal", path: "" },
     ...overrides,
   };
@@ -204,25 +207,25 @@ describe("SidebarProject", () => {
     const cache = new SessionCache();
     cache.setMany([session("own-session"), session("other-session", { projectId: 8 })]);
     const store = new ProjectStore(7, cache);
-    const targets: SessionMoveTargetView[] = [{ nodeId: "internal", name: "Internal", connected: true, eligible: true }];
+    const targets: SessionMoveTargetView[] = [{ nodeId: "internal", name: "Internal", connected: true, current: false, paths: ["/home/me/reins"] }];
     store.loadMoveTargets = mock(async () => targets);
     store.moveSession = mock(async () => ({ ok: true as const }));
     const project = new SidebarProject();
     project.project = projectInfo;
     project.projectStore = store;
-    const dialog = { open: mock(async (_session: unknown, _actions: { loadTargets: () => Promise<unknown>; move: (nodeId: string) => Promise<unknown> }) => {}) };
-    Object.defineProperty(project, "sessionMoveDialog", { value: dialog });
+    const dialog = { open: mock(async (_options: { heading: string; subtitle: string; loadTargets: () => Promise<unknown>; choose: (nodeId: string, path: string) => Promise<unknown> }) => {}) };
+    Object.defineProperty(project, "moveDialog", { value: dialog });
     const [openMove] = collectTemplateEventListeners(project.render(), "move-session");
 
     await openMove?.call(project, moveSessionEvent("other-session"));
     expect(dialog.open).not.toHaveBeenCalled();
     await openMove?.call(project, moveSessionEvent("own-session"));
 
-    const [opened, actions] = dialog.open.mock.calls[0]!;
-    expect(opened).toMatchObject({ id: "own-session" });
+    const [actions] = dialog.open.mock.calls[0]!;
+    expect(actions).toMatchObject({ heading: "Move Session" });
     expect(await actions.loadTargets()).toEqual(targets);
-    await actions.move("internal");
+    await actions.choose("internal", "/home/me/reins");
     expect(store.loadMoveTargets).toHaveBeenCalledWith("own-session");
-    expect(store.moveSession).toHaveBeenCalledWith("own-session", "internal");
+    expect(store.moveSession).toHaveBeenCalledWith("own-session", "internal", "/home/me/reins");
   });
 });

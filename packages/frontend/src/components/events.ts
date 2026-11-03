@@ -2,7 +2,7 @@ import type { SendAnimationSource } from "../helpers/chat-send-animation.js";
 import type { ClientPromptContent } from "../models/chat-content.js";
 import type { TaskWithDiffStats as TaskListItem } from "@backend/models/tasks.js";
 import type { ModelSetting } from "@backend/settings-store.js";
-import type { Project as ProjectInfo } from "@backend/project-store.js";
+import type { ProjectView as ProjectInfo } from "@backend/routes/projects.js";
 import type { Source } from "@reins/sdk";
 import type { FileView, FileViewerMode } from "./file-viewer/file-viewer.js";
 import type { WorkspacePane } from "../models/workspace-pages.js";
@@ -207,7 +207,7 @@ export function deleteTaskEvent(projectId: number | null, taskId: number) {
   return componentEvent("delete-task", { projectId, taskId });
 }
 
-export type ProjectEventName = "toggle-project" | "edit-project" | "upload-project-files" | "delete-project";
+export type ProjectEventName = "toggle-project" | "edit-project" | "delete-project";
 
 export function projectEvent(name: ProjectEventName, project: ProjectInfo) {
   return componentEvent(name, project);

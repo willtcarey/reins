@@ -10,13 +10,14 @@ import { KindGuard, type TObject, type TProperties, type TSchema } from "@sincla
 import { Value } from "@sinclair/typebox/value";
 import type {
   Database, Disposer, HttpApi, HttpCall, Logger, Migration, PageHandler, PromptContext, PromptContribution, ScriptFunction, ScriptType, SecretStorage, ServerExtension, ServerSdk,
-  Service, ToolFilters, ToolResult, ToolProvider,
+  Service, SessionSettlement, ToolFilters, ToolResult, ToolProvider,
 } from "@reins/sdk/server";
 import { statSync } from "fs";
 import type { ExtensionStorage } from "../database.js";
 import type { ApiFunctionDef } from "../scripting/define-function.js";
 import type { NamedType } from "../scripting/api-registry.js";
-import type { ServerProcess } from "../state.js";
+import type { ServerProcess, SessionSettledNotice } from "../state.js";
+import type { ExtensionSessionAccess } from "./sessions.js";
 import { createBroadcast } from "../models/broadcast.js";
 import { requestOrigin } from "../nodes/node-link.js";
 import { logger } from "../logger.js";
@@ -58,6 +59,7 @@ interface Method {
 }
 interface Script { extension: string; namespace: string; functions: ApiFunctionDef[]; types: NamedType[] }
 interface RegisteredService { extension: string; runner: ServiceRunner }
+interface SettlementListener { extension: string; listener: (settlement: SessionSettlement) => void | Promise<void> }
 
 /** What the host knows of an extension of this app: its storage once opened, and what went wrong. */
 interface ExtensionRecord {
@@ -89,6 +91,8 @@ export interface ExtensionView {
     /** Its tool provider. No count of tools: that would ask the provider, which may go to the network. */
     tools: { title: string } | null;
     promptSections: number;
+    /** Its `reins.sessions.onSettled` listeners. */
+    settlementListeners: number;
     scriptFunctions: string[];
     httpMethods: string[];
     /** Each page's path from the server's root. */
@@ -130,16 +134,18 @@ export class ExtensionHost {
   private readonly pages: Page[] = [];
   private readonly methods: Method[] = [];
   private readonly services: RegisteredService[] = [];
+  private readonly settlementListeners: SettlementListener[] = [];
   private readonly disposers: { name: string; dispose: Disposer }[] = [];
   private readonly records = new Map<string, ExtensionRecord>();
 
   /** `process`: each extension's directory and database, and the broadcast. `reservedNamespaces`: the core's `api`
    * namespaces, which no extension may take. `onError`: what an extension's failure to register or dispose
-   * is told to. */
+   * is told to. `sessions`: each extension's `reins.sessions` (the app's sessions; `extensions/sessions.ts`). */
   constructor(
     private readonly process: Pick<ServerProcess, "extensionData" | "broadcast">,
     private readonly reservedNamespaces: ReadonlySet<string>,
     private readonly onError: (extension: string, error: unknown) => void,
+    private readonly sessions: (extension: string) => ExtensionSessionAccess,
   ) {}
 
   /** Opens the extension's directory and database, applies its pending migrations, then calls its register
@@ -203,6 +209,7 @@ export class ExtensionHost {
         registrations: {
           tools: provider ? { title: provider.title } : null,
           promptSections: this.contributions.filter(own).length,
+          settlementListeners: this.settlementListeners.filter(own).length,
           scriptFunctions: this.scripts.filter(own).flatMap(script => script.functions.map(fn => fn.name)).toSorted(),
           httpMethods: this.methods.filter(own).map(method => method.name).toSorted(),
           pages: this.pages.filter(own).map(page => page.path).toSorted(),
@@ -295,6 +302,18 @@ export class ExtensionHost {
     return sections.filter((section): section is string => !!section);
   }
 
+  /** Tells the settlement listeners of the extension that started the session how its run ended; a throw or
+   * rejection is that extension's error. */
+  sessionSettled({ extension, ...settlement }: SessionSettledNotice): void {
+    for (const entry of this.settlementListeners.filter(candidate => candidate.extension === extension)) {
+      try {
+        void Promise.resolve(entry.listener(settlement)).catch((error: unknown) => this.report(extension, error));
+      } catch (error) {
+        this.report(extension, error);
+      }
+    }
+  }
+
   /** Answers a request under `/api/extensions/<extension>/` (a method's call) or `/extensions/<extension>/` (a
    * page); null when no method or page is there. */
   async handle(scope: RouteScope, req: Request, url: URL): Promise<Response | null> {
@@ -380,6 +399,7 @@ export class ExtensionHost {
       return () => { for (const remove of removals) void remove(); };
     };
     const broadcast = createBroadcast(this.process);
+    const sessions = this.sessions(name);
     return Object.freeze({
       name,
       dataDir,
@@ -398,6 +418,15 @@ export class ExtensionHost {
         match: matchTools,
       }),
       services: Object.freeze({ register: registerService }),
+      sessions: Object.freeze({
+        get: (sessionId: string) => sessions.get(sessionId),
+        start: (session: Parameters<ExtensionSessionAccess["start"]>[0]) => sessions.start(session),
+        send: (sessionId: string, message: string) => sessions.send(sessionId, message),
+        onSettled: (listener: SettlementListener["listener"]) => {
+          if (typeof listener !== "function") throw new Error("A settlement listener is a function");
+          return add(this.settlementListeners, { extension: name, listener });
+        },
+      }),
       prompt: Object.freeze({
         register: (contribution: PromptContribution) => add(this.contributions, { extension: name, contribution }),
       }),
@@ -432,7 +461,7 @@ export class ExtensionHost {
         if (!isObjectSchema(fn.parameters)) throw new Error(`${fn.name}: its parameters must be an object schema`);
         return {
           name: fn.name, description: fn.description, parameters: fn.parameters, returns: schemaOf(fn.name, fn.returns), async: fn.async, tags: fn.tags,
-          execute: (params, ctx) => fn.execute(params, { sessionId: ctx.sessionId, projectId: ctx.projectId, taskId: ctx.taskId, signal: ctx.signal }),
+          execute: (params, ctx) => fn.execute(params, { sessionId: ctx.session.id, projectId: ctx.session.projectId, taskId: ctx.session.taskId, signal: ctx.signal }),
         };
       }),
       types: types.map(type => ({ name: type.name, schema: schemaOf(type.name, type.schema) })),

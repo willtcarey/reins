@@ -13,7 +13,8 @@ const TEXT_APPLICATION_TYPES = new Set([
 ]);
 
 export interface FileDiffContextScope {
-  projectId: number;
+  /** The session whose checkout the file is read from. */
+  sessionId: string;
   mode: "branch" | "uncommitted";
   branch?: string | null;
 }
@@ -53,7 +54,7 @@ export async function loadFileContents(
 
   const client = fetchResponse ? new ReinsClient({ fetch: fetchResponse }) : api;
   const response = await client.files.content(
-    scope.projectId,
+    scope.sessionId,
     change.path,
     scope.branch ? { ref: scope.branch } : {},
   );

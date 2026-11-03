@@ -48,7 +48,7 @@ export class UnknownToolsError extends Error {
 export interface RuntimeOpening {
   serverProcess: ServerProcess;
   sessionId: string;
-  projectId: number;
+  projectId: number | null;
   /** The node of the session's source. */
   nodeId: string;
   context: SessionContext;

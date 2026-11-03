@@ -8,6 +8,7 @@ import { customElement, property, query, state } from "lit/decorators.js";
 import { repeat } from "lit/directives/repeat.js";
 import { ActiveSessionStore } from "../models/stores/active-session-store.js";
 import type { ProjectStore } from "../models/stores/project-store.js";
+import type { LocationSkills } from "../models/stores/location-skills.js";
 import type { CachedSession } from "../models/stores/session-cache.js";
 import type { Source } from "@reins/sdk";
 import type { CommandRegistry } from "../sdk-host/commands.js";
@@ -45,6 +46,8 @@ export class ChatPanel extends LitElement {
   @property({ attribute: false }) parentSession: CachedSession | null = null;
   @property({ attribute: false }) runningChildSessions: SessionListItem[] = [];
   @property({ attribute: false }) source: Source | null = null;
+  /** The skills of each location: its composer suggests its source's. */
+  @property({ attribute: false }) skills: LocationSkills | null = null;
   /** The message decorators, which its messages are decorated with for its source. */
   @property({ attribute: false }) decorators: DecoratorRegistry | null = null;
   /** The registered commands, which its composer runs and suggests. */
@@ -477,7 +480,8 @@ export class ChatPanel extends LitElement {
             </div>
           ` : nothing}
           <chat-composer
-            .projectStore=${this.projectStore}
+            .skills=${this.skills}
+            .location=${this.source}
             .commands=${this.commands}
             .uploadAttachments=${typeof this.store?.uploadAttachments === "function" ? this.store.uploadAttachments.bind(this.store) : null}
             ?disabled=${!sessionId}

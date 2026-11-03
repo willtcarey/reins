@@ -4,7 +4,7 @@ import { StoreController } from "../controllers/store-controller.js";
 import { springCollapse } from "../directives/spring-collapse.js";
 import type { ActivityState } from "../models/stores/session-cache.js";
 import type { ProjectStore } from "../models/stores/project-store.js";
-import type { Project as ProjectInfo } from "@backend/project-store.js";
+import type { ProjectView as ProjectInfo } from "@backend/routes/projects.js";
 import { navigateToProjectHistory } from "../routing/app-router.js";
 import {
   newSessionEvent,
@@ -21,9 +21,9 @@ import {
 } from "./task-list.js";
 import "../ui/popover-menu.js";
 import type { SessionRenameDialog } from "./session-rename-dialog.js";
-import type { SessionMoveDialog } from "./session-move-dialog.js";
+import type { LocationDialog } from "./location-dialog.js";
 import "./session-list-item.js";
-import "./session-move-dialog.js";
+import "./location-dialog.js";
 import "./session-rename-dialog.js";
 import "./task-list.js";
 import { statusDot } from "../ui/status-dot.js";
@@ -51,10 +51,9 @@ export class SidebarProject extends LitElement {
   @property({ type: Boolean }) active = false;
   @property({ type: String }) activeSessionId = "";
   @property({ attribute: false }) activityState: ActivityState | undefined = undefined;
-  @property({ type: Number }) uploadProgress: number | null = null;
 
   @query("session-rename-dialog") private sessionRenameDialog!: SessionRenameDialog;
-  @query("session-move-dialog") private sessionMoveDialog!: SessionMoveDialog;
+  @query("location-dialog") private moveDialog!: LocationDialog;
 
   private taskListDisclosureState: TaskListDisclosureState = createTaskListDisclosureState();
 
@@ -89,9 +88,13 @@ export class SidebarProject extends LitElement {
     const store = this.projectStore;
     const session = store?.getSession(event.detail.sessionId);
     if (!store || !session) return;
-    void this.sessionMoveDialog?.open(session, {
+    void this.moveDialog?.open({
+      heading: "Move Session",
+      subtitle: session.name || session.firstMessage || "Empty session",
+      confirmLabel: "Move",
+      busyLabel: "Moving…",
       loadTargets: () => store.loadMoveTargets(session.id),
-      move: (nodeId) => store.moveSession(session.id, nodeId),
+      choose: (nodeId, path) => store.moveSession(session.id, nodeId, path),
     });
   }
 
@@ -189,30 +192,12 @@ export class SidebarProject extends LitElement {
                 @click=${() => this.dispatchProjectEvent("edit-project")}
               >Edit</button>
               <button
-                class="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 cursor-pointer transition-colors"
-                @click=${() => this.dispatchProjectEvent("upload-project-files")}
-              >Upload files</button>
-              <button
                 class="w-full text-left px-3 py-1.5 text-xs text-red-400 hover:bg-zinc-700 cursor-pointer transition-colors"
                 @click=${() => this.dispatchProjectEvent("delete-project")}
               >Remove</button>
             `}
           ></popover-menu>
         </div>
-
-        ${this.uploadProgress !== null ? html`
-          <div class="px-3 py-1.5 bg-zinc-800/80 border-b border-zinc-700/50">
-            <div class="flex items-center gap-2 text-xs text-zinc-300">
-              <span>Uploading… ${this.uploadProgress}%</span>
-            </div>
-            <div class="mt-1 h-1.5 rounded-full bg-zinc-700 overflow-hidden">
-              <div
-                class="h-full rounded-full bg-blue-500 transition-[width] duration-200 ease-out"
-                style="width: ${this.uploadProgress}%"
-              ></div>
-            </div>
-          </div>
-        ` : nothing}
 
         ${springCollapse(!this.expanded, () => html`
           <div class="mt-1 rounded-lg bg-black/25 border border-zinc-800/80 overflow-hidden shadow-[inset_0_6px_8px_-4px_rgba(0,0,0,0.6),inset_0_-6px_8px_-4px_rgba(0,0,0,0.6)]">
@@ -232,7 +217,7 @@ export class SidebarProject extends LitElement {
         `)}
 
         <session-rename-dialog></session-rename-dialog>
-        <session-move-dialog></session-move-dialog>
+        <location-dialog></location-dialog>
       </div>
     `;
   }

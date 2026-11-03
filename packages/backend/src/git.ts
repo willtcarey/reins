@@ -198,6 +198,21 @@ export class Git {
   }
 
   /**
+   * Makes the local branch exist, without checking it out: as it is (`existing`), else tracking origin's
+   * (`tracked`: someone pushed it, from this checkout or another), else new from the base branch
+   * (`created`, as `createBranch`).
+   */
+  async ensureBranch(branchName: string, baseBranch: string): Promise<"existing" | "tracked" | "created"> {
+    if (await this.branchExists(branchName)) return "existing";
+    if (await this.fetchOrigin(branchName) && await this.remoteBranchExists(branchName)) {
+      await this.trackBranch(branchName);
+      return "tracked";
+    }
+    await this.createBranch(branchName, baseBranch);
+    return "created";
+  }
+
+  /**
    * Check whether a local branch exists.
    */
   async branchExists(branchName: string): Promise<boolean> {

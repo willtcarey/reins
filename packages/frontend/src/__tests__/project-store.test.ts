@@ -7,6 +7,7 @@ import { ProjectsStore } from "../models/stores/projects-store.js";
 import { SessionCache } from "../models/stores/session-cache.js";
 import { makeTask } from "./helpers/fixtures.js";
 import { mockFetch, restoreFetch } from "./helpers/mock-fetch.js";
+import { StubClient } from "./helpers/stub-client.js";
 import type { SessionListView as SessionListItem } from "@backend/models/sessions.js";
 
 // Mock fetch globally
@@ -32,6 +33,7 @@ function session(overrides: Partial<SessionListItem> = {}): SessionListItem {
     activityState: null,
     pinnedAt: null,
     archivedAt: null,
+    sourceExtension: null,
     placement: { available: true, removed: false, nodeId: "internal", nodeName: "Internal", path: "" },
     ...overrides,
   };
@@ -346,16 +348,16 @@ describe("ProjectStore", () => {
     const requests: Array<{ url: string; method: string | undefined; body: unknown }> = [];
     mockFetch((url, init) => {
       requests.push({ url, method: init?.method, body: init?.body ? JSON.parse(String(init.body)) : undefined });
-      if (url === "/api/sessions/s1/move-targets") return jsonResponse([{ nodeId: "internal", name: "Internal", connected: true, eligible: true }]);
+      if (url === "/api/sessions/s1/move-targets") return jsonResponse([{ nodeId: "internal", name: "Internal", connected: true, current: false, paths: ["/work"] }]);
       if (url === "/api/sessions/s1/move") return jsonResponse({ available: true, removed: false, nodeId: "internal", nodeName: "Internal", path: "" });
       throw new Error(`Unexpected fetch: ${url}`);
     });
 
-    expect(await store.loadMoveTargets("s1")).toEqual([{ nodeId: "internal", name: "Internal", connected: true, eligible: true }]);
-    expect(await store.moveSession("s1", "internal")).toEqual({ ok: true });
+    expect(await store.loadMoveTargets("s1")).toEqual([{ nodeId: "internal", name: "Internal", connected: true, current: false, paths: ["/work"] }]);
+    expect(await store.moveSession("s1", "internal", "/work")).toEqual({ ok: true });
 
     expect(requests.slice(1).map(({ url, method, body }) => [url, method, body])).toEqual([
-      ["/api/sessions/s1/move", "POST", { nodeId: "internal" }],
+      ["/api/sessions/s1/move", "POST", { nodeId: "internal", path: "/work" }],
     ]);
     expect(store.getSession("s1")?.placement).toEqual({ available: true, removed: false, nodeId: "internal", nodeName: "Internal", path: "" });
   });
@@ -366,7 +368,7 @@ describe("ProjectStore", () => {
     sessionCache.set("s1", session());
     mockFetch(() => new Response(JSON.stringify({ error: "Session has an active run or pending input; try again when it is idle" }), { status: 409 }));
 
-    expect(await store.moveSession("s1", "internal")).toEqual({ error: "Session has an active run or pending input; try again when it is idle" });
+    expect(await store.moveSession("s1", "internal", "/work")).toEqual({ error: "Session has an active run or pending input; try again when it is idle" });
     expect(await store.loadMoveTargets("s1")).toEqual({ error: "Session has an active run or pending input; try again when it is idle" });
     expect(store.getSession("s1")?.placement).toEqual({ available: true, removed: false, nodeId: "internal", nodeName: "Internal", path: "" });
   });
@@ -530,23 +532,35 @@ describe("ProjectStore", () => {
     // Now only finished remains
     expect(store.activityState).toBe("finished");
   });
-  test("skill suggestions: the node's skills, kept while the node cannot answer", async () => {
-    const agentsSkill = { name: "mine", description: "The node's own skill" };
-    const checkoutSkill = { name: "review", description: "Reviews code" };
-    let available = false;
-    mockFetch((url) => url === "/api/projects/42/skills"
-      ? jsonResponse({ skills: available ? [agentsSkill, checkoutSkill] : [], available })
-      : jsonResponse([]));
-    await store.fetchLists();
-    expect(store.skills).toEqual([]);
+});
 
-    available = true;
-    await store.fetchSkills();
-    expect(store.skills).toEqual([agentsSkill, checkoutSkill]);
+describe("ProjectsStore: sessions of no project", () => {
+  test("lists those the server shows, pinned first, and lists them again when one of them changes", async () => {
+    let listed = [
+      session({ id: "older", projectId: null, updatedAt: "2026-10-01T00:00:00.000Z" }),
+      session({ id: "pinned", projectId: null, updatedAt: "2026-09-01T00:00:00.000Z", pinnedAt: "2026-09-02T00:00:00.000Z" }),
+    ];
+    const requests: string[] = [];
+    mockFetch((url) => {
+      requests.push(url);
+      if (url === "/api/sessions") return jsonResponse(listed);
+      return jsonResponse({ ...listed[0], background: false, pendingOperation: null, state: { model: null, thinkingLevel: "off" } });
+    });
+    const client = new StubClient();
+    const projects = new ProjectsStore(new SessionCache(), client);
+    try {
+      await projects.fetchUnowned();
+      expect(projects.unownedSessions.map((entry) => entry.id)).toEqual(["pinned", "older"]);
 
-    available = false;
-    await store.fetchSkills();
-    await store.fetchLists();
-    expect(store.skills).toEqual([agentsSkill, checkoutSkill]);
+      listed = [...listed, session({ id: "newest", projectId: null, updatedAt: "2026-10-02T00:00:00.000Z" })];
+      client.fireMessage({ type: "session_updated", sessionId: "older", projectId: null });
+      for (let i = 0; i < 20 && projects.unownedSessions.length < 3; i++) await Bun.sleep(1);
+
+      expect(projects.unownedSessions.map((entry) => entry.id)).toEqual(["pinned", "newest", "older"]);
+      expect(requests.filter((url) => url === "/api/sessions")).toHaveLength(2);
+    } finally {
+      projects.dispose();
+      restoreFetch();
+    }
   });
 });

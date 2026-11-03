@@ -5,11 +5,12 @@ import { createAppState, useLoopbackState } from "../helpers/app-state.js";
 import { useTestRepo, commitFile } from "../helpers/test-repo.js";
 import { buildRouter } from "../../routes/index.js";
 import { createProject } from "../project-fixture.js";
+import { createSession } from "../session-fixture.js";
 
 describe("git routes", () => {
   let state: ReturnType<typeof createAppState>;
   let router: ReturnType<typeof buildRouter>;
-  let projectId: number;
+  let sessionId: string;
 
   useTestDb();
   const repo = useTestRepo();
@@ -19,15 +20,15 @@ describe("git routes", () => {
     state = loopback.state;
     router = buildRouter();
     const p = createProject("Test Project", repo.dir);
-    projectId = p.id;
+    sessionId = createSession("viewed", p.id, { agentRuntimeType: "pi" }).id;
   });
 
   test("with the source's node offline, git operations answer 503", async () => {
     const offline = createAppState();
     const requests = [
-      makeRequest("GET", `/api/projects/${projectId}/git/spread?branch=main`),
-      makeRequest("POST", `/api/projects/${projectId}/git/push`, { branch: "main" }),
-      makeRequest("POST", `/api/projects/${projectId}/git/rebase`, { branch: "main" }),
+      makeRequest("GET", `/api/sessions/${sessionId}/git/spread?branch=main`),
+      makeRequest("POST", `/api/sessions/${sessionId}/git/push`, { branch: "main" }),
+      makeRequest("POST", `/api/sessions/${sessionId}/git/rebase`, { branch: "main" }),
     ];
     for (const request of requests) {
       const res = await router.handle(request, offline);
@@ -37,10 +38,10 @@ describe("git routes", () => {
     offline.nodes.close();
   });
 
-  describe("GET /api/projects/:id/git/spread", () => {
+  describe("GET /api/sessions/:sessionId/git/spread", () => {
     test("returns 400 when branch param is missing", async () => {
       const res = await router.handle(
-        makeRequest("GET", `/api/projects/${projectId}/git/spread`),
+        makeRequest("GET", `/api/sessions/${sessionId}/git/spread`),
         state,
       );
       expect(res!.status).toBe(400);
@@ -58,7 +59,7 @@ describe("git routes", () => {
       await proc2.exited;
 
       const res = await router.handle(
-        makeRequest("GET", `/api/projects/${projectId}/git/spread?branch=feature/spread`),
+        makeRequest("GET", `/api/sessions/${sessionId}/git/spread?branch=feature/spread`),
         state,
       );
       expect(res!.status).toBe(200);
@@ -69,10 +70,10 @@ describe("git routes", () => {
     });
   });
 
-  describe("POST /api/projects/:id/git/push", () => {
+  describe("POST /api/sessions/:sessionId/git/push", () => {
     test("returns 400 when branch is missing", async () => {
       const res = await router.handle(
-        makeRequest("POST", `/api/projects/${projectId}/git/push`, {}),
+        makeRequest("POST", `/api/sessions/${sessionId}/git/push`, {}),
         state,
       );
       expect(res!.status).toBe(400);
@@ -82,7 +83,7 @@ describe("git routes", () => {
 
     test("returns 400 when branch is empty string", async () => {
       const res = await router.handle(
-        makeRequest("POST", `/api/projects/${projectId}/git/push`, { branch: "  " }),
+        makeRequest("POST", `/api/sessions/${sessionId}/git/push`, { branch: "  " }),
         state,
       );
       expect(res!.status).toBe(400);
@@ -96,7 +97,7 @@ describe("git routes", () => {
       await proc2.exited;
 
       const res = await router.handle(
-        makeRequest("POST", `/api/projects/${projectId}/git/push`, { branch: "feature/push-test" }),
+        makeRequest("POST", `/api/sessions/${sessionId}/git/push`, { branch: "feature/push-test" }),
         state,
       );
       expect(res!.status).toBe(500);
@@ -105,10 +106,10 @@ describe("git routes", () => {
     });
   });
 
-  describe("POST /api/projects/:id/git/rebase", () => {
+  describe("POST /api/sessions/:sessionId/git/rebase", () => {
     test("returns 400 when branch is missing", async () => {
       const res = await router.handle(
-        makeRequest("POST", `/api/projects/${projectId}/git/rebase`, {}),
+        makeRequest("POST", `/api/sessions/${sessionId}/git/rebase`, {}),
         state,
       );
       expect(res!.status).toBe(400);
@@ -118,7 +119,7 @@ describe("git routes", () => {
 
     test("returns 400 when branch is empty", async () => {
       const res = await router.handle(
-        makeRequest("POST", `/api/projects/${projectId}/git/rebase`, { branch: "" }),
+        makeRequest("POST", `/api/sessions/${sessionId}/git/rebase`, { branch: "" }),
         state,
       );
       expect(res!.status).toBe(400);
@@ -133,7 +134,7 @@ describe("git routes", () => {
       await proc2.exited;
 
       const res = await router.handle(
-        makeRequest("POST", `/api/projects/${projectId}/git/rebase`, { branch: "feature/rebase-test" }),
+        makeRequest("POST", `/api/sessions/${sessionId}/git/rebase`, { branch: "feature/rebase-test" }),
         state,
       );
       expect(res!.status).toBe(200);
@@ -145,7 +146,7 @@ describe("git routes", () => {
 describe("git routes with remote", () => {
   let state: ReturnType<typeof createAppState>;
   let router: ReturnType<typeof buildRouter>;
-  let projectId: number;
+  let sessionId: string;
 
   useTestDb();
   const repo = useTestRepo({ withRemote: true });
@@ -155,7 +156,7 @@ describe("git routes with remote", () => {
     state = loopback.state;
     router = buildRouter();
     const p = createProject("Test Project", repo.dir);
-    projectId = p.id;
+    sessionId = createSession("viewed", p.id, { agentRuntimeType: "pi" }).id;
   });
 
   test("push succeeds with remote configured", async () => {
@@ -167,7 +168,7 @@ describe("git routes with remote", () => {
     await proc2.exited;
 
     const res = await router.handle(
-      makeRequest("POST", `/api/projects/${projectId}/git/push`, { branch: "feature/push-remote" }),
+      makeRequest("POST", `/api/sessions/${sessionId}/git/push`, { branch: "feature/push-remote" }),
       state,
     );
     expect(res!.status).toBe(200);
@@ -182,7 +183,7 @@ describe("git routes with remote", () => {
     await proc2.exited;
 
     const res = await router.handle(
-      makeRequest("GET", `/api/projects/${projectId}/git/spread?branch=feature/spread-fetch&fetch=true`),
+      makeRequest("GET", `/api/sessions/${sessionId}/git/spread?branch=feature/spread-fetch&fetch=true`),
       state,
     );
     expect(res!.status).toBe(200);

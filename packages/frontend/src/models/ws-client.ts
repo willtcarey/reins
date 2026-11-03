@@ -16,12 +16,12 @@ import { streamingTelemetry } from "./streaming-telemetry.js";
 export type InboundMessage =
   /** `seq` counts a session's events on the server (restarting when the server process restarts); a jump means
    * events were missed. `emittedAt` is the server's wall clock when it emitted the event (diagnostics only). */
-  | { type: "event"; sessionId: string; projectId: number; seq: number; emittedAt: number; event: ChatEvent }
+  | { type: "event"; sessionId: string; projectId: number | null; seq: number; emittedAt: number; event: ChatEvent }
   | { type: "task_updated"; projectId: number }
-  | { type: "session_created"; projectId: number; sessionId: string; taskId: number | null; parentSessionId: string | null }
-  | { type: "session_updated"; sessionId: string; projectId: number }
+  | { type: "session_created"; projectId: number | null; sessionId: string; taskId: number | null; parentSessionId: string | null }
+  | { type: "session_updated"; sessionId: string; projectId: number | null }
   | { type: "code_review_updated"; projectId: number; taskId: number | null; reviewId: string; revision: number }
-  | { type: "open_file"; sessionId: string; projectId: number; path: string; startLine?: number; endLine?: number }
+  | { type: "open_file"; sessionId: string; projectId: number | null; path: string; startLine?: number; endLine?: number }
   /** A node as it is now: it was paired (by pairing code `pairingCodeId`), connected, disconnected or was revoked. */
   | { type: "node_updated"; node: NodeView; pairingCodeId?: number }
   | { type: "node_removed"; nodeId: string }

@@ -46,7 +46,7 @@ test("a reload mid-run: the run continues on the new app, its tool call in fligh
   await link.ready();
 
   const project = createProject("Reload", repo.dir);
-  const sessionId = createSession(current, project.id, { model: { provider: provider.provider.id, modelId: "fake" } }).id;
+  const sessionId = createSession(current, { projectId: project.id, model: { provider: provider.provider.id, modelId: "fake" } }).id;
   provider.setResponses([
     fauxAssistantMessage(fauxToolCall("bash", { command: "sleep 0.5; echo finished" }, { id: "slow" }), { stopReason: "toolUse" }),
     fauxAssistantMessage("Done"),
@@ -102,8 +102,8 @@ test("the reload's gap: a session's node calls wait for the next app's link and 
 
   const project = createProject("Gap", repo.dir);
   const model = { provider: provider.provider.id, modelId: "fake" };
-  const sessionId = createSession(current, project.id, { model }).id;
-  const utilityId = createSession(current, project.id, { model, kind: TASK_GENERATOR_KIND, background: true }).id;
+  const sessionId = createSession(current, { projectId: project.id, model }).id;
+  const utilityId = createSession(current, { projectId: project.id, model, kind: TASK_GENERATOR_KIND, background: true }).id;
   const requested = Promise.withResolvers<void>();
   const gap = Promise.withResolvers<void>();
   provider.setResponses([
@@ -169,7 +169,7 @@ test("a runtime opened by code other than the current app's (an older app's runt
   cleanups.push(() => state.nodes.close());
   const project = createProject("Code", repo.dir);
   const model = { provider: provider.provider.id, modelId: "fake" };
-  const [older, own] = [0, 1].map(() => createSession(state, project.id, { model, kind: TASK_GENERATOR_KIND, background: true }).id);
+  const [older, own] = [0, 1].map(() => createSession(state, { projectId: project.id, model, kind: TASK_GENERATOR_KIND, background: true }).id);
 
   // The current app runs other code than this test's, as a newer app's bundle does.
   const stopNewer = startApp(state, app => ({ ...app, code: Symbol("newer app") }));

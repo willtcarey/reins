@@ -1,6 +1,6 @@
 # ADR-026: Sources Are Managed on the Server Only
 
-- **Status:** Accepted
+- **Status:** Accepted (revised by [ADR-034](034-sources-without-projects.md): sources belong to no project, are made on first use and are not managed from the project; the node still keeps no list)
 - **Date:** 2026-10-10
 - **Author:** Will (with Claude)
 - **Reverses:** the node-declared sources of commit 953cdae (recorded in [completed/remote-nodes.md](../plans/completed/remote-nodes.md) *Decisions*, "Sources belong to the node", and *What was built*, "Node-owned sources"; that record is left as it was)

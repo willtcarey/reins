@@ -19,6 +19,7 @@ function session(overrides: Partial<ArchivedSessionHistoryItem>): ArchivedSessio
     activityState: null,
     pinnedAt: null,
     archivedAt: "2026-01-03T00:00:00Z",
+    sourceExtension: null,
     placement: { available: true, removed: false, nodeId: "internal", nodeName: "Internal", path: "" },
     taskTitle: null,
     ...overrides,

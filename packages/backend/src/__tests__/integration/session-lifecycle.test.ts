@@ -2,6 +2,7 @@
  * A session from submission to settlement on the server (ADR-029): submitted through `Sessions`, run by
  * its runtime on the server, waited for through the scripting API, and reopened from storage.
  */
+import { Models } from "../../models/models.js";
 import { describe, test, expect, spyOn } from "bun:test";
 import { fauxAssistantMessage, fauxProvider, getCurrentSystemPrompt, getCurrentTools } from "@earendil-works/pi-ai";
 import { setApiKeyCredential } from "../../auth-credentials-store.js";
@@ -46,10 +47,10 @@ describe("a session on the server", () => {
     const project = createProject("Lifecycle", repo.dir);
     const sessions = new Sessions(state, () => {});
     try {
-      const created = createNewSession(state, project.id, { model: { provider: provider.provider.id, modelId: "fake" } });
+      const created = createNewSession(state, { projectId: project.id, model: { provider: provider.provider.id, modelId: "fake" } });
       await sessions.submit(created.id, { op: "prompt", content: [{ type: "text", text: "Hello" }], clientId: "first" });
       createSession("caller", project.id, { agentRuntimeType: "pi" });
-      expect(await new SessionInstance(state, "caller").wait(created.id, 10_000))
+      expect(await new SessionInstance(new Models(state), "caller").wait(created.id, 10_000))
         .toEqual({ sessionId: created.id, status: "completed", result: "First reply", error: null });
       expect(client.sent.some(message => message.type === "event" && message.event.type === "agent_end" && message.sessionId === created.id)).toBe(true);
       expect(getSession(created.id)?.activity_state).toBe("finished");
@@ -82,11 +83,11 @@ describe("a session on the server", () => {
     await stopLoopbackNode(state);
     const project = createProject("Utility", repo.dir);
     try {
-      const created = createNewSession(state, project.id, { model: { provider: provider.provider.id, modelId: "fake" }, kind: "test-sorter", background: true });
+      const created = createNewSession(state, { projectId: project.id, model: { provider: provider.provider.id, modelId: "fake" }, kind: "test-sorter", background: true });
       // A slash command is not expanded for a kind without the environment.
       await new Sessions(state, () => {}).submit(created.id, { op: "prompt", content: [{ type: "text", text: "/pears apples" }], clientId: "sort" });
       createSession("caller", project.id, { agentRuntimeType: "pi" });
-      expect(await new SessionInstance(state, "caller").wait(created.id, 10_000))
+      expect(await new SessionInstance(new Models(state), "caller").wait(created.id, 10_000))
         .toEqual({ sessionId: created.id, status: "completed", result: "apples, pears", error: null });
       expect(seen).toEqual([{ systemPrompt: "Sort the words you are given.", tools: [] }]);
       expect(getSession(created.id)).toMatchObject({ kind: "test-sorter", background: 1, activity_state: "finished" });
@@ -108,7 +109,7 @@ describe("a session on the server", () => {
     const warn = spyOn(console, "warn");
     try {
       const project = createProject("Image", repo.dir);
-      const created = createNewSession(state, project.id, { model: { provider: provider.provider.id, modelId: "fake" } });
+      const created = createNewSession(state, { projectId: project.id, model: { provider: provider.provider.id, modelId: "fake" } });
       const attachment = storeSessionAttachment(created.id, { data: Buffer.from("image bytes"), mimeType: "image/png", filename: "image.png" });
       await new Sessions(state, () => {}).submit(created.id, { op: "prompt", clientId: "image-client", content: [
         { type: "text", text: "Inspect image" },

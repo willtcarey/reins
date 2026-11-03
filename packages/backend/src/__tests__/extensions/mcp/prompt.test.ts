@@ -48,10 +48,10 @@ describe("the MCP extension's prompt section", () => {
     const { state, servers } = mcpState();
     const project = createProject("Reins", repo.dir);
     await servers.create({ name: "vercel", instructions: "vercel tools", url: "https://vercel.example.com/mcp", authKind: "none" });
-    const created = createSession(state, project.id, { model: { provider: "anthropic", modelId: "claude-haiku-4-5" } });
+    const created = createSession(state, { projectId: project.id, model: { provider: "anthropic", modelId: "claude-haiku-4-5" } });
     const row = getSession(created.id)!;
 
-    const { systemPrompt } = (await new SessionModel(row).context(getSource(row.source_id)!, ctx => state.extensions.promptSections(ctx))).runtime;
+    const { systemPrompt } = (await new SessionModel(row, state.nodes).context(getSource(row.source_id)!, ctx => state.extensions.promptSections(ctx))).runtime;
 
     expect(systemPrompt).toContain("- vercel: vercel tools");
   });

@@ -1,16 +1,15 @@
 /**
- * File Routes (project-scoped)
+ * File Routes (session-scoped: the session's checkout)
  *
- * GET /files         — list non-ignored files in the project
+ * GET /files         — list non-ignored files in the checkout
  * GET /files/tree    — list one directory
  * GET /files/content — read a single file's content (working tree or git ref)
  *
- * Listing reads the project's default source checkout through its node; with that node offline it
- * answers 503. Content is still read from the server's checkout.
+ * Each reads the session's source through its node; with that node offline it answers 503.
  */
 
 import type { RouterGroup } from "../router.js";
-import type { ProjectRouteContext } from "./index.js";
+import type { SessionRouteContext } from "./index.js";
 import { badRequest, notFound } from "../errors.js";
 import { PathTraversalError, FileNotFoundError } from "../models/sources.js";
 import {
@@ -52,10 +51,10 @@ function formatSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-export function registerFileRoutes(router: RouterGroup<ProjectRouteContext>) {
+export function registerFileRoutes(router: RouterGroup<SessionRouteContext>) {
   /** List all non-ignored files. */
   router.get("/files", async (ctx) => {
-    const files = await ctx.project.source.listFiles();
+    const files = await ctx.session.source.listFiles();
     return Response.json({ files });
   });
 
@@ -64,7 +63,7 @@ export function registerFileRoutes(router: RouterGroup<ProjectRouteContext>) {
     const subPath = ctx.url.searchParams.get("path") || ".";
 
     try {
-      const entries = await ctx.project.source.listDirectory(subPath);
+      const entries = await ctx.session.source.listDirectory(subPath);
       return Response.json({ entries });
     } catch (err) {
       if (err instanceof PathTraversalError) badRequest(err.message);
@@ -82,7 +81,7 @@ export function registerFileRoutes(router: RouterGroup<ProjectRouteContext>) {
     const download = ctx.url.searchParams.get("download") === "1";
 
     try {
-      const source = await ctx.project.workspace.openFile(filePath!, ref);
+      const source = await ctx.session.workspace.openFile(filePath!, ref);
       const headers: Record<string, string> = {
         "Content-Type": source.mimeType,
         "Content-Length": String(source.size),

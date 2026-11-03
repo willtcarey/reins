@@ -1,3 +1,4 @@
+import { getSource } from "../../node-store.js";
 import assert from "node:assert/strict";
 import { describe, test, expect, beforeEach, mock, spyOn } from "bun:test";
 import { useTestDb } from "../helpers/test-db.js";
@@ -250,10 +251,10 @@ describe("Sessions on the server's runtimes", () => {
   test("moving a session closes its live runtime, bound to the source it left", async () => {
     newSession("s");
     getDb().exec("INSERT INTO nodes (id, name) VALUES ('laptop', 'Laptop')");
-    getDb().query("INSERT INTO sources (project_id, node_id, path) VALUES (?, 'laptop', '/laptop/checkout')").run(project.id);
+    getDb().exec("INSERT INTO sources (node_id, path) VALUES ('laptop', '/laptop/checkout')");
     const runtime = await openSessionRuntime(loopback.state.process, "s");
     const closed = spyOn(runtime, "close");
-    expect(await sessions.move("s", "laptop")).toMatchObject({ nodeId: "laptop", path: "/laptop/checkout" });
+    expect(await sessions.move("s", { nodeId: "laptop", path: "/laptop/checkout" })).toMatchObject({ nodeId: "laptop", path: "/laptop/checkout" });
     expect(closed).toHaveBeenCalledTimes(1);
     expect(loopback.state.process.sessions.live.has("s")).toBe(false);
   });
@@ -262,10 +263,10 @@ describe("Sessions on the server's runtimes", () => {
     newSession("s");
     const pending = sessions.submit("s", { op: "prompt", content: text("Work"), clientId: "c" });
     expect(sessions.getDetail("s")).toMatchObject({ pendingOperation: null });
-    await expect(sessions.move("s", "internal")).resolves.toBeDefined();
+    await expect(sessions.move("s", { nodeId: "internal", path: getSource(getSession("s")!.source_id)!.path })).resolves.toBeDefined();
     getDb().exec("INSERT INTO nodes (id, name) VALUES ('laptop', 'Laptop')");
-    getDb().query("INSERT INTO sources (project_id, node_id, path) VALUES (?, 'laptop', '/laptop/checkout')").run(project.id);
-    await expect(sessions.move("s", "laptop")).rejects.toThrow("Session has an active run or pending input");
+    getDb().exec("INSERT INTO sources (node_id, path) VALUES ('laptop', '/laptop/checkout')");
+    await expect(sessions.move("s", { nodeId: "laptop", path: "/laptop/checkout" })).rejects.toThrow("Session has an active run or pending input");
     await pending;
   });
 });
