@@ -1,6 +1,6 @@
 # Extensions
 
-An **extension** adds to Reins only through its SDKs: a backend part (tools for agents, system prompt sections, `api` functions, HTTP methods and pages, its own data) and a frontend part (views, message decorators, `/` commands, a Settings page). An extension can have one part or both. The built-in extensions today are MCP servers ([mcp-servers.md](mcp-servers.md)), the file viewer, file references in messages, and the `/compact` and `/new` commands. Developer docs: [server-sdk.md](../dev/server-sdk.md), [reins-sdk.md](../dev/reins-sdk.md).
+An **extension** adds to Reins only through its SDKs: a backend part (tools for agents, system prompt sections, `api` functions, HTTP methods and pages, its own data) and a frontend part (views, message decorators, `/` commands, a Settings page). An extension can have one part or both. The built-in extensions today are MCP servers ([mcp-servers.md](mcp-servers.md)), automations (wake-ups and heartbeats, [automations.md](automations.md)), the file viewer, file references in messages, and the `/compact` and `/new` commands. Developer docs: [server-sdk.md](../dev/server-sdk.md), [reins-sdk.md](../dev/reins-sdk.md).
 
 ## Settings → Extensions
 

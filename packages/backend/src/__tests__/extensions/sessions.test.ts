@@ -22,6 +22,9 @@ const inputs = (sessionId: string) => getDb().query<{ text: string; metadata: st
   FROM session_messages WHERE session_id = ? AND role = 'reinsInput' ORDER BY seq`).all(sessionId)
   .map(row => ({ text: row.text, metadata: row.metadata === null ? null : JSON.parse(row.metadata) }));
 
+const storedRoles = (sessionId: string) => getDb()
+  .query<{ role: string }, [string]>("SELECT role FROM session_messages WHERE session_id = ? ORDER BY seq").all(sessionId).map(row => row.role);
+
 const sessionCount = () => getDb().query<{ n: number }, []>("SELECT COUNT(*) AS n FROM sessions").get()!.n;
 
 describe("reins.sessions", () => {
@@ -55,7 +58,7 @@ describe("reins.sessions", () => {
     const sessionId = await automation.sessions.start({ source: { nodeId: "internal", path: dir }, prompt: "Morning heartbeat", background: true, model: model.model });
 
     expect(await automation.sessions.get(sessionId)).toMatchObject({
-      id: sessionId, source: { nodeId: "internal", path: dir }, projectId: null, taskId: null, background: true, running: true, startedBy: "automation",
+      id: sessionId, source: { nodeId: "internal", path: dir }, projectId: null, taskId: null, background: true, running: true, startedBy: "automation", archivedAt: null,
     });
     const turn = await model.nextTurn(sessionId);
     expect(turn.input).toBe("Morning heartbeat");
@@ -117,9 +120,28 @@ describe("reins.sessions", () => {
     expect(sessionCount()).toBe(1);
   });
 
-  test("get and send refuse a session the server does not have", async () => {
+  test("reads how full a session's context is, and compacts it with the given instructions", async () => {
+    const sessionId = await automation.sessions.start({ source: { nodeId: "internal", path: dir }, prompt: "Check the inbox", background: true, model: model.model });
+    (await model.nextTurn(sessionId)).finish({ reply: "Two new mails" });
+    await until(() => settled.automation!.length > 0, "the run settled");
+
+    const usage = await automation.sessions.contextUsage(sessionId);
+    expect(usage).toEqual({ usedTokens: expect.any(Number), contextWindow: 200_000, measurement: "exact" });
+    expect(usage!.usedTokens).toBeGreaterThan(0);
+    await automation.sessions.compact(sessionId, { instructions: "Keep the senders" });
+    expect(await automation.sessions.get(sessionId)).toMatchObject({ running: true });
+    const summary = await model.nextSummary();
+    expect(JSON.stringify(summary.context)).toContain("Keep the senders");
+    summary.finish({ reply: "Mail from Ana and Bo" });
+    await until(() => storedRoles(sessionId).at(-1) === "compaction", "the compaction was committed");
+    expect(await automation.sessions.contextUsage(sessionId)).toMatchObject({ measurement: "estimated" });
+  });
+
+  test("refuses a session the server does not have", async () => {
     await expect(automation.sessions.get("missing")).rejects.toThrow("Session not found: missing");
     await expect(automation.sessions.send("missing", "Hello")).rejects.toThrow("Session not found: missing");
+    await expect(automation.sessions.compact("missing")).rejects.toThrow("Session not found: missing");
+    await expect(automation.sessions.contextUsage("missing")).rejects.toThrow("Session not found: missing");
   });
 
   test("the host's report counts each extension's settlement listeners, gone once disposed", async () => {

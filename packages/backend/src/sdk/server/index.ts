@@ -193,6 +193,8 @@ export interface SessionInfo {
   readonly running: boolean;
   /** The extension that started it (`SessionStart`), or null. */
   readonly startedBy: string | null;
+  /** When it was archived (hidden from the session lists), or null. */
+  readonly archivedAt: string | null;
   readonly createdAt: string;
   readonly updatedAt: string;
 }
@@ -216,6 +218,15 @@ export interface SessionStart {
   readonly background?: boolean;
   /** Its name; without it, it is named as any session is. */
   readonly title?: string;
+}
+
+/** How much of a session's context window its context takes now. */
+export interface ContextUsage {
+  /** The tokens of its context: those its latest model response reported (`exact`), or an estimate after a
+   * compaction until the next response (`estimated`). */
+  readonly usedTokens: number;
+  readonly contextWindow: number;
+  readonly measurement: "exact" | "estimated";
 }
 
 /** How a run of a session ended: its status, the text of its final reply (null without one) and, for a run
@@ -250,6 +261,17 @@ export interface Sessions {
    * session, a blank message and one the session refuses (its node was removed).
    */
   send(sessionId: string, message: string): Promise<void>;
+  /**
+   * Compacts the session's context now (a summary replaces its history; `instructions` focus the summary),
+   * as the composer's `/compact` does, in order with what was submitted to it before. Resolves once the
+   * compaction started, not when it ends: the session reads `running` until then. Rejects for an unknown
+   * session, a running one ("compact it once it is idle") and one with nothing to compact. The model already
+   * compacts by itself near the context limit: this is for a lower limit of the extension's own.
+   */
+  compact(sessionId: string, options?: { instructions?: string }): Promise<void>;
+  /** How full the session's context is (`ContextUsage`); null when it is not known (no model yet, or one the
+   * server no longer has). Rejects for an unknown session. */
+  contextUsage(sessionId: string): Promise<ContextUsage | null>;
   /**
    * Tells `listener` each time a run of a session this extension started ends, once its end is recorded,
    * with its outcome and final reply. Only the extension's own sessions (`startedBy`), and only while the

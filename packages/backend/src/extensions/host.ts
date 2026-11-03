@@ -422,6 +422,8 @@ export class ExtensionHost {
         get: (sessionId: string) => sessions.get(sessionId),
         start: (session: Parameters<ExtensionSessionAccess["start"]>[0]) => sessions.start(session),
         send: (sessionId: string, message: string) => sessions.send(sessionId, message),
+        compact: (sessionId: string, options?: { instructions?: string }) => sessions.compact(sessionId, options),
+        contextUsage: (sessionId: string) => sessions.contextUsage(sessionId),
         onSettled: (listener: SettlementListener["listener"]) => {
           if (typeof listener !== "function") throw new Error("A settlement listener is a function");
           return add(this.settlementListeners, { extension: name, listener });

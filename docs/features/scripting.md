@@ -41,6 +41,7 @@ execute({
 | `api.nodes` | `list()`, `get(node?)`, `reload(node?, force?)`, `readFile(node, path, options?)`, `writeFile(node, path, content)`, `copy(fromNode, fromPath, toNode, toPath)`, `run(node, command, options?)` |
 | `api.tools` | `search(query, filters?)`, `call(id, args?, timeoutMs?)` |
 | `api.mcp` | `list()`, `get(server)`, `add(server)`, `update(server, changes)`, `remove(server)`, `test(server)`, `signIn(server, callbackOrigin?)`, `finishSignIn(callbackUrl)`, `signOut(server)` |
+| `api.automations` | `wake({ schedule, message, timezone? })`, `heartbeat({ schedule, prompt, name?, timezone?, source?, model?, compactAboveTokens? })`, `cancel(id)`, `list({ all?, includeCancelled? }?)`, `runs(id, limit?)`, `replaceSession(id)` ([automations.md](automations.md)) |
 
 ### Behavior
 

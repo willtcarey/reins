@@ -1,6 +1,6 @@
 /**
  * The server SDK's `reins.sessions` for one extension (docs/dev/server-sdk.md *Sessions*): an adapter over
- * the `Sessions` model (`create`, `get`, `submit`), as scripting's `api.sessions` is, with no
+ * the `Sessions` model (`create`, `get`, `submit`, `compact`, `getContext`), as scripting's `api.sessions` is, with no
  * calling session: the extension names where a session works. What it starts and sends record it as their
  * origin (`sessions.source_extension`, the inputs' `metadata.sourceExtension`). Settlement listeners are the
  * host's (`ExtensionHost.sessionSettled`).
@@ -30,6 +30,7 @@ function sessionInfo(session: SessionModel, state: AppState): SessionInfo {
     background: row.background === 1,
     running: sessionActivity(row, state.process.sessions) === "running",
     startedBy: row.source_extension,
+    archivedAt: row.archived_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -63,6 +64,17 @@ export function extensionSessions(state: AppState, extension: string): Extension
     async send(sessionId, message) {
       if (typeof message !== "string" || !message.trim()) throw new Error("A message must not be blank");
       await models().sessions.submit(sessionId, { op: "steer", content: text(message), clientId: crypto.randomUUID(), sourceExtension: extension });
+    },
+
+    async compact(sessionId, options = {}) {
+      await models().sessions.compact(sessionId, options.instructions === undefined ? {} : { instructions: options.instructions });
+    },
+
+    async contextUsage(sessionId) {
+      const sessions = models().sessions;
+      sessions.get(sessionId);
+      const snapshot = await sessions.getContext(sessionId);
+      return snapshot && { usedTokens: snapshot.usedTokens, contextWindow: snapshot.contextWindow, measurement: snapshot.measurement };
     },
   };
 }
