@@ -21,7 +21,7 @@ import { findSource, getNode, getSource, defaultSource, upsertSource, type Sourc
 import type { NodeHub } from "../state.js";
 import { NodeNotFoundError, type Nodes } from "./nodes.js";
 import { Workspace } from "./workspace.js";
-import { WorkspaceFileNotFoundError, type ReadFile } from "./file-system.js";
+import { WorkspaceFileNotFoundError, type ReadFile, type WorkspaceFile } from "./file-system.js";
 
 /** One entry of a checkout's directory, as the file browser lists it. */
 export interface DirectoryEntry { name: string; type: "file" | "directory" }
@@ -124,10 +124,19 @@ export async function ensureSource(nodeId: string, path: string, nodes: Nodes): 
  * (also for a removed node) and `CheckoutNotFoundError` for a relative path.
  */
 export async function skillsAt(nodeId: string, path: string, nodes: Nodes): Promise<{ skills: SkillInfo[]; available: boolean }> {
+  return sourceAt(nodeId, path, nodes).listSkills();
+}
+
+/**
+ * The directory `path` on node `nodeId`, to read or write its files (the node file routes): a known source,
+ * or one no session works in, without keeping a record of it or contacting the node. Throws
+ * `NodeNotFoundError` (also for a removed node) and `CheckoutNotFoundError` for a relative path.
+ */
+export function sourceAt(nodeId: string, path: string, nodes: Pick<Nodes, "hub">): SourceModel {
   const normalized = sourcePath(path);
   const node = getNode(nodeId);
   if (!node || node.removedAt) throw new NodeNotFoundError(nodeId);
-  return new SourceModel(nodes.hub, findSource(nodeId, normalized) ?? { id: 0, node_id: nodeId, path: normalized }).listSkills();
+  return new SourceModel(nodes.hub, findSource(nodeId, normalized) ?? { id: 0, node_id: nodeId, path: normalized });
 }
 
 // ---------------------------------------------------------------------------
@@ -175,6 +184,12 @@ export class SourceModel {
       }
     };
     return new Workspace(this.path, baseBranch, this.git, read);
+  }
+
+  /** A working-tree file of the checkout, or the file at git `ref`. */
+  openFile(path: string, ref?: string | null): Promise<WorkspaceFile> {
+    // The base branch only matters to diffs.
+    return this.workspace("HEAD").openFile(path, ref);
   }
 
   /** Fetch from origin and fast-forward the base branch, in this checkout. */

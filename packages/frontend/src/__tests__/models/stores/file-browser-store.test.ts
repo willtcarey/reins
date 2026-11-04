@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, jest, test } from "bun:test";
 import { FileBrowserStore } from "../../../models/stores/file-browser-store.js";
 import { fakeXhr } from "../../helpers/fake-xhr.js";
-import { mockFetch, restoreFetch } from "../../helpers/mock-fetch.js";
-import { testSdk } from "../../helpers/reins-sdk.js";
+import { fileResponse, mockFetch, restoreFetch } from "../../helpers/mock-fetch.js";
+import { testNode, testSdk } from "../../helpers/reins-sdk.js";
 
 const source = { nodeId: "node-a", path: "/work/project" };
 
@@ -16,9 +16,10 @@ function deferred() {
   return { promise, resolve };
 }
 
-function browser(options: { available?: boolean } = {}) {
-  const sdk = testSdk({ source, projectId: 1, ...options });
-  return { ...sdk, store: new FileBrowserStore(sdk.reins) };
+function browser(options: { available?: boolean; viewedSource?: () => typeof source | null } = {}) {
+  const { viewedSource = () => source, ...sdkOptions } = options;
+  const sdk = testSdk({ source, projectId: 1, ...sdkOptions });
+  return { ...sdk, store: new FileBrowserStore(sdk.reins, { viewedSource }) };
 }
 
 /** A project file server: listings, directory levels and text files, recording each request. */
@@ -26,7 +27,7 @@ function serveFiles(requests: string[] = [], files: string[] = ["README.md"]) {
   mockFetch((url) => {
     requests.push(url);
     if (url.includes("/files/tree")) return Response.json({ entries: [{ name: "src", type: "directory" }] });
-    if (url.includes("/files/content")) return new Response(`content of ${url}`, { headers: { "content-type": "text/plain" } });
+    if (url.includes("/files/content")) return fileResponse(`content of ${url}`);
     return Response.json({ files });
   });
   return requests;
@@ -35,6 +36,22 @@ function serveFiles(requests: string[] = [], files: string[] = ["README.md"]) {
 afterEach(() => restoreFetch());
 
 describe("FileBrowserStore opening", () => {
+  test("names its source's node when the viewed session is on another node", () => {
+    serveFiles();
+    let viewed: typeof source | null = source;
+    const { store, client } = browser({ viewedSource: () => viewed });
+    client.fireMessage({ type: "node_updated", node: testNode("internal", "Internal") });
+
+    store.open(source);
+    expect(store.otherNode).toBeNull();
+
+    store.open({ nodeId: "internal", path: "/home/will/scratch" }, { path: "report.html" });
+    expect(store.otherNode).toBe("Internal");
+
+    viewed = null;
+    expect(store.otherNode).toBeNull();
+  });
+
   test("opens at a file with its lines and tab, as a `file` view, and opens the tree to it", async () => {
     const requests = serveFiles();
     const { store } = browser();
@@ -46,9 +63,9 @@ describe("FileBrowserStore opening", () => {
     expect(store.view).toEqual({ view: "file", source, path: "src/components/app.ts", startLine: 3, endLine: 5, mode: "preview" });
     expect([...store.expandedDirs]).toEqual([".", "src", "src/components"]);
     expect(requests.toSorted()).toEqual([
-      "/api/sessions/placed/files/tree?path=.",
-      "/api/sessions/placed/files/tree?path=src",
-      "/api/sessions/placed/files/tree?path=src%2Fcomponents",
+      "/api/nodes/node-a/files/tree?root=%2Fwork%2Fproject&path=.",
+      "/api/nodes/node-a/files/tree?root=%2Fwork%2Fproject&path=src",
+      "/api/nodes/node-a/files/tree?root=%2Fwork%2Fproject&path=src%2Fcomponents",
     ]);
   });
 
@@ -86,12 +103,12 @@ describe("FileBrowserStore opening", () => {
     const oldTree = deferred();
     let oldTreeAsked = false;
     mockFetch((url) => {
-      if (url === "/api/sessions/placed/files/tree?path=." && !oldTreeAsked) {
+      if (url === "/api/nodes/node-a/files/tree?root=%2Fwork%2Fproject&path=." && !oldTreeAsked) {
         oldTreeAsked = true;
         return oldTree.promise;
       }
       if (url.includes("/files/tree")) return Response.json({ entries: [{ name: "other.ts", type: "file" }] });
-      return new Response("text", { headers: { "content-type": "text/plain" } });
+      return fileResponse("text");
     });
     const { store, sessions } = browser();
     sessions.set("other", { projectId: 1, placement: { available: true, removed: false, nodeId: "node-b", nodeName: "B", path: "/work/project" } });
@@ -117,7 +134,7 @@ describe("FileBrowserStore directory tree", () => {
 
     await store.fetchDirectory(".");
 
-    expect(requests.filter((url) => url.includes("/files/tree"))).toEqual(["/api/sessions/placed/files/tree?path=."]);
+    expect(requests.filter((url) => url.includes("/files/tree"))).toEqual(["/api/nodes/node-a/files/tree?root=%2Fwork%2Fproject&path=."]);
     expect(store.directoryEntries.get(".")).toEqual([{ name: "src", type: "directory" }]);
   });
 
@@ -157,7 +174,7 @@ describe("FileBrowserStore directory tree", () => {
     jest.useRealTimers();
     await settle();
 
-    expect(requests).toEqual(["/api/sessions/placed/files/tree?path=."]);
+    expect(requests).toEqual(["/api/nodes/node-a/files/tree?root=%2Fwork%2Fproject&path=."]);
   });
 });
 
@@ -206,15 +223,16 @@ describe("FileBrowserStore search", () => {
     expect(store.results).toHaveLength(50);
   });
 
-  test("lists nothing while the source's node is offline", async () => {
-    const requests = serveFiles();
+  test("lists nothing, without an error, while the source's node is offline", async () => {
+    mockFetch(() => Response.json({ error: "Node not connected" }, { status: 503 }));
     const { store } = browser({ available: false });
 
     store.openSearch(source);
+    void store.listing;
     await settle();
 
     expect(store.results).toEqual([]);
-    expect(requests).toEqual([]);
+    expect(store.listing.error).toBeNull();
   });
 
   test("choosing a result closes the search and shows the file in the browser", async () => {
@@ -233,7 +251,7 @@ function someFiles(...names: string[]) {
 }
 
 describe("FileBrowserStore upload", () => {
-  test("uploads into the open file's folder through a session on its source, shows its progress, then lists its directories again", async () => {
+  test("uploads into the open file's folder of its source, shows its progress, then lists its directories again", async () => {
     const requests = serveFiles();
     const xhr = fakeXhr(({ files: names }) => ({ status: 200, body: { uploaded: names } }));
     try {
@@ -248,11 +266,11 @@ describe("FileBrowserStore upload", () => {
       const result = await store.upload(someFiles("a.txt", "b.png"));
 
       expect(result).toEqual({ uploaded: ["a.txt", "b.png"] });
-      expect(xhr.uploads).toEqual([{ method: "POST", url: "/api/sessions/placed/upload?path=docs", files: ["a.txt", "b.png"] }]);
+      expect(xhr.uploads).toEqual([{ method: "POST", url: "/api/nodes/node-a/files/upload?root=%2Fwork%2Fproject&path=docs", files: ["a.txt", "b.png"] }]);
       expect(progress).toContain(50);
       expect(store.uploadProgress).toBeNull();
       await settle();
-      expect(requests).toContain("/api/sessions/placed/files/tree?path=.");
+      expect(requests).toContain("/api/nodes/node-a/files/tree?root=%2Fwork%2Fproject&path=.");
     } finally {
       xhr.restore();
     }
@@ -268,7 +286,7 @@ describe("FileBrowserStore upload", () => {
       expect(store.uploadFolder).toBe(".");
       await store.upload(someFiles("a.txt"));
 
-      expect(xhr.uploads.map(upload => upload.url)).toEqual(["/api/sessions/placed/upload"]);
+      expect(xhr.uploads.map(upload => upload.url)).toEqual(["/api/nodes/node-a/files/upload?root=%2Fwork%2Fproject"]);
     } finally {
       xhr.restore();
     }

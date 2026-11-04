@@ -82,7 +82,7 @@ describe("views.register", () => {
 
     const view = { view: "greeting", name: "Ada" };
     expect(opened).toEqual([{ view, container: "inspector" }]);
-    expect(views.rendererFor(view)?.pane?.title(view)).toBe("Hello, Ada");
+    expect(views.rendererFor(view)?.pane?.title(view, { source: null })).toBe("Hello, Ada");
     expect(views.keyOf(view)).toBe("greeting:Ada");
   });
 

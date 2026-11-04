@@ -44,19 +44,19 @@ export interface DirectoryEntry {
 }
 
 /**
- * A source's files. The host finds how to reach a source and whether its node is connected, from
- * the sessions it knows on that source.
+ * A source's files: any directory on a node, named by the node and its path, whether or not a session
+ * works there. Reads go to the server, which says when the node cannot be reached.
  */
 export interface Files {
   /**
    * The source's listing, synchronously, so it can be read while rendering: loaded the first time it
    * is asked for and cached for the two sources asked for last. After the source's files may have
    * changed or its node comes back, `subscribe` listeners are told and the next ask reloads it, so
-   * ask again on hearing that. Empty (no data, not loading) for a null or unknown source and while
-   * the node is offline. A reload that finds the same files keeps the same `data` array.
+   * ask again on hearing that. Empty (no data, not loading) for a null source and while its node is
+   * offline or removed. A reload that finds the same files keeps the same `data` array.
    */
   listing(source: Source | null): FileListing;
-  /** Listens for any listing changing, including a source's node going offline or coming back. */
+  /** Listens for any listing changing, including a source's node going offline or coming back, and node names changing. */
   subscribe(listener: () => void): Disposer;
   /**
    * Listens for a source's files having possibly changed: a file-modifying tool or a turn of one of
@@ -67,14 +67,16 @@ export interface Files {
   read(source: Source, path: string): Promise<FileText>;
   /** One level of a directory, `.` being the source's root. */
   listDirectory(source: Source, path: string): Promise<DirectoryEntry[]>;
-  /** Where the browser loads a file itself (images, PDFs, downloads); null for an unknown source. */
-  contentUrl(source: Source, path: string, options?: { download?: boolean }): string | null;
+  /** Where the browser loads a file itself (images, PDFs, downloads). */
+  contentUrl(source: Source, path: string, options?: { download?: boolean }): string;
   /**
    * Writes files into `folder` of the source (`.`, its root, by default), replacing files of the same names,
    * reporting how much is sent (0–100); then announces its files changed. Resolves with the names written.
-   * Rejects with an Error whose message can be shown: an unknown source, an offline node, a folder outside it.
+   * Rejects with an Error whose message can be shown: an unknown node, an offline node, a folder outside it.
    */
   upload(source: Source, files: FileList | readonly File[], options?: { folder?: string; onProgress?: (percent: number) => void }): Promise<string[]>;
+  /** The name of the source's node, to show where a file is; null until the host knows it. */
+  nodeName(source: Source): string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -140,8 +142,9 @@ export interface ViewPresentation<V extends View = View, C = WorkspaceContext> {
 
 /** A view in a pane, such as an Inspector tab, with the tab's title, description (its tooltip) and icon. */
 export interface PanePresentation<V extends View = View> extends ViewPresentation<V, WorkspaceContext> {
-  title(view: V): string;
-  description(view: V): string;
+  /** `context` is the workspace the pane is in, for a title that says how the view differs from it. */
+  title(view: V, context: WorkspaceContext): string;
+  description(view: V, context: WorkspaceContext): string;
   /**
    * Draws the tab's icon, with the same lifecycle as a view. Its target is the icon's box, 14 px
    * square, with the tab's text color as `currentColor`: draw to fill it.

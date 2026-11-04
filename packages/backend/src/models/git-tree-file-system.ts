@@ -3,6 +3,7 @@ import type { Git } from "../git.js";
 import { isNodeUnavailable } from "../errors.js";
 import { detectMimeTypeFromBytes } from "../mime.js";
 import {
+  fileKind,
   normalizeWorkspaceFilePath,
   WorkspaceFileNotFoundError,
   type FileSystem,
@@ -21,10 +22,12 @@ export class GitTreeFileSystem implements FileSystem {
     try {
       const { objectId, size } = await this.git.getGitBlobInfo(this.ref, relativePath);
       const prefix = await this.git.readGitBlobPrefix(objectId);
+      const mimeType = await detectMimeTypeFromBytes(prefix);
       return {
         filename: basename(relativePath),
-        mimeType: await detectMimeTypeFromBytes(prefix),
+        mimeType,
         size,
+        kind: fileKind(mimeType, size),
         openBody: () => this.git.streamGitBlob(objectId),
       };
     } catch (error) {

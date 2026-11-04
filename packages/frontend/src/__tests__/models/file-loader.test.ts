@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, jest, test } from "bun:test";
 import { FileLoader } from "../../models/file-loader.js";
-import { mockFetch, restoreFetch } from "../helpers/mock-fetch.js";
+import { fileResponse, mockFetch, restoreFetch } from "../helpers/mock-fetch.js";
 import { testSdk } from "../helpers/reins-sdk.js";
 
 const source = { nodeId: "node", path: "/work" };
@@ -20,7 +20,7 @@ function deferred() {
 }
 
 function text(body: string) {
-  return new Response(body, { headers: { "content-type": "text/plain" } });
+  return fileResponse(body);
 }
 
 afterEach(() => restoreFetch());
@@ -40,7 +40,7 @@ describe("FileLoader", () => {
     loader.show({ ...source }, "src/index.ts");
 
     expect(loader.content).toEqual({ loading: false, text: "hello world", isBinary: false, error: null });
-    expect(requests).toEqual(["/api/sessions/placed/files/content?path=src%2Findex.ts"]);
+    expect(requests).toEqual(["/api/nodes/node/files/content?root=%2Fwork&path=src%2Findex.ts"]);
   });
 
   test("a reload keeps showing the file until its new content arrives", async () => {

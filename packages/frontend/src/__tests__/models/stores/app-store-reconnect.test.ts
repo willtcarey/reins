@@ -13,6 +13,7 @@ import { WorkspaceStore } from "../../../models/stores/workspace-store.js";
 import { StubClient } from "../../helpers/stub-client.js";
 import { mockFetch, restoreFetch } from "../../helpers/mock-fetch.js";
 import { messagePage } from "../../helpers/conversations.js";
+import { testNode } from "../../helpers/reins-sdk.js";
 
 function sessionDetail(isRunning: boolean, taskId: number | null = null) {
   return {
@@ -158,6 +159,19 @@ describe("AppStore reconnect catch-up", () => {
     client.fireConnection(false);
 
     expect(refreshFromServerSpy).not.toHaveBeenCalled();
+  });
+
+  test("connect lists the nodes, once, for the settings page and for reaching sources' files", async () => {
+    const laptop = testNode("laptop", "Laptop", false);
+    mockFetch((url) => (url === "/api/nodes" ? Response.json([laptop]) : Response.json([])));
+    store.projectsStore.refreshFromServer = mock(async () => {});
+
+    client.fireConnection(true);
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(store.settingsStore.nodesStore.nodes.data).toEqual([laptop]);
+    expect(store.files.nodeName({ nodeId: "laptop", path: "/work" })).toBe("Laptop");
+    expect(store.files.listing({ nodeId: "laptop", path: "/work" }).data).toBeNull();
   });
 
   test("connect fetches activity snapshot and populates project-level activity", async () => {

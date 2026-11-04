@@ -9,6 +9,8 @@ import { closeIcon, fileIcon } from "../ui/icons.js";
 import { inspectorTabCloseEvent, inspectorTabFocusEvent } from "./events.js";
 import "./view-mount.js";
 
+const NO_CONTEXT: WorkspaceContext = { source: null };
+
 interface TabLabel {
   title: string;
   description: string;
@@ -89,9 +91,10 @@ export class AppInspector extends LitElement {
   private label(view: View): TabLabel {
     const pane = this.views?.rendererFor(view)?.pane;
     if (!pane) return { title: view.view, description: `${view.view} (unavailable)`, icon: fileIcon("size-3.5") };
+    const context = this.context ?? NO_CONTEXT;
     return {
-      title: pane.title(view),
-      description: pane.description(view),
+      title: pane.title(view, context),
+      description: pane.description(view, context),
       icon: html`<reins-view-mount class="flex size-3.5" .presentation=${pane.icon} .view=${view} .context=${this.context}></reins-view-mount>`,
     };
   }

@@ -227,7 +227,7 @@ export class ReviewFileDiff extends LitElement {
 
   private _fileUrl(path: string): string {
     if (this.sessionId == null) return "";
-    return api.files.contentUrl(
+    return api.diff.fileContentUrl(
       this.sessionId,
       path,
       this.branch ? { ref: this.branch } : {},

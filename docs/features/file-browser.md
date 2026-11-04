@@ -1,6 +1,6 @@
 # File Browser
 
-A file browser overlay for viewing any file in the checkout of the session you are viewing, and uploading files into it.
+A file browser overlay for viewing the files of a directory on a node, and uploading files into it: usually the checkout of the session you are viewing, or the directory of a file an agent opened for you on any node (`api.ui.openFile`, [scripting.md](scripting.md)). When the directory is on another node than the session you are viewing, the header names that node after the directory's name (for example "scratch · Internal").
 
 ## How to Open
 
@@ -11,6 +11,7 @@ A file browser overlay for viewing any file in the checkout of the session you a
 | Click file path in read/edit/write tool result | Opens file in the browser |
 | 👁 button in diff file card header | Opens file in the browser |
 | Folder button in an Inspector file tab | Opens that file in the browser, with the tab's lines and the Code/Preview tab you are on |
+| An agent calls `api.ui.openFile` | Opens that file, on whichever node it is, with any lines it names |
 | Mobile: search icon in file browser header | Opens fuzzy file search |
 | Mobile: hamburger in file browser header | Toggles tree sidebar |
 
@@ -25,7 +26,7 @@ Closing keeps what the browser had loaded: reopening it shows the tree and file 
 
 ## Uploading files
 
-The **Upload** button in the browser's header (its tooltip names the folder) opens a file picker; you can select several files. You can also drop files on the browser. The files are written into the folder of the file you are viewing, or into the checkout's root when no file is open, on the session's node. A file of the same name there is replaced. While the files upload, the header shows the progress. A message then says how many files were uploaded, or why the upload failed (for example, the node is offline). The tree shows the new files.
+The **Upload** button in the browser's header (its tooltip names the folder) opens a file picker; you can select several files. You can also drop files on the browser. The files are written into the folder of the file you are viewing, or into the directory's root when no file is open, on its node. A file of the same name there is replaced. While the files upload, the header shows the progress. A message then says how many files were uploaded, or why the upload failed (for example, the node is offline). The tree shows the new files.
 
 ## Open in Inspector
 

@@ -62,7 +62,9 @@ export class AppShell extends LitElement {
   override connectedCallback() {
     this.disposeSdk = BUILT_IN_EXTENSIONS.map((extension) => this.appStore.extensions.activate(extension, createReinsSdk(extension, this.sdkHost)));
     // The file browser is app-shell's own overlay, not a registered extension, but it uses only the SDK.
-    this.fileBrowserStore = new FileBrowserStore(createReinsSdk({ name: "file-browser", label: "File browser" }, this.sdkHost));
+    this.fileBrowserStore = new FileBrowserStore(createReinsSdk({ name: "file-browser", label: "File browser" }, this.sdkHost), {
+      viewedSource: () => this.workspace?.store?.source ?? null,
+    });
     super.connectedCallback();
     this.unsubscribeStore = this.appStore.subscribe(() => {
       this.storeVersion += 1;

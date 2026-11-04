@@ -240,7 +240,7 @@ describe("AppWorkspace layout selection", () => {
     const tree = target.childNodes[0];
     if (!(tree instanceof DiffFileTree)) throw new Error("Expected the diff file tree");
 
-    expect(pane?.title({ view: "diff-file-tree" })).toBe("Changes");
+    expect(pane?.title({ view: "diff-file-tree" }, { source: store.source })).toBe("Changes");
     const stores: unknown[] = [tree.store, tree.reviewStore];
     expect(stores).toEqual([store.diffStore, store.codeReviewStore]);
     Reflect.get(el, "disconnectApp").call(el);

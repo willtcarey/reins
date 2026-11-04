@@ -37,7 +37,7 @@ execute({
 | `api.projects` | `list()`, `get(projectId)`, `current()` |
 | `api.models` | `list()`, `listProviders()` |
 | `api.reviews` | `current()`, `addComment(path, line, body, options?)` |
-| `api.ui` | `openFile(path, startLine?, endLine?)` |
+| `api.ui` | `openFile(path, options?)` (options `{ node?, startLine?, endLine? }`) |
 | `api.nodes` | `list()`, `get(node?)`, `reload(node?, force?)`, `readFile(node, path, options?)`, `writeFile(node, path, content)`, `copy(fromNode, fromPath, toNode, toPath)`, `run(node, command, options?)` |
 | `api.tools` | `search(query, filters?)`, `call(id, args?, timeoutMs?)` |
 | `api.mcp` | `list()`, `get(server)`, `add(server)`, `update(server, changes)`, `remove(server)`, `test(server)`, `signIn(server, callbackOrigin?)`, `finishSignIn(callbackUrl)`, `signOut(server)` |
@@ -45,6 +45,7 @@ execute({
 
 ### Behavior
 
+- **Opening a file for the user** — `ui.openFile(path, options?)` opens the file browser of whoever views the calling session at the file, highlighting `startLine`–`endLine` when given. `path` is absolute or relative to the caller's checkout; `node` (an ID, a name or `"current"`, as in `api.nodes`; the caller's by default) is the node the file is on. A file in the caller's checkout opens in it; any other file opens in its own directory on that node, and the browser names that node when it is not the viewed session's. It throws `File not found on <node>: <path>` when the file is not there, and opens nothing.
 - **Read-heavy** — most operations are reads. Writes go through the app's normal task/session/review flows.
 - **Code review comments** — `reviews.addComment()` anchors a comment to the current branch diff and atomically creates the pending project/task review when needed. It defaults to one new-side line and author `Agent`; `options` can set `endLine`, `side`, or `author`. Reins derives the structured anchor and retains the exact Git-native per-file patch server-side rather than requiring scripts to construct either value.
 - **Scoped by default, across projects when asked** — `tasks.list()`, `tasks.create()`, `sessions.list()`, `sessions.start()` and `projects.current()` default to the session's project. `tasks.list(status, projectId)`, `tasks.create(title, description, branchName, projectId)`, `sessions.list({ projectId })` and `sessions.start(prompt, { projectId })` target another project (`projectId: "current"` is the caller's). `tasks.get`, `update`, `close` and `reopen` take the ID of a task of any project, and the session functions that take a `sessionId` reach a session of any project. Code reviews (`reviews.*`) stay in the caller's project and task.

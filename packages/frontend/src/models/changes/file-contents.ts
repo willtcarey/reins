@@ -1,16 +1,10 @@
 import type { FileContents } from "@pierre/diffs";
-import { ReinsClient } from "@reins/client";
+import { fileKind, ReinsClient } from "@reins/client";
 import { api } from "../api.js";
 import type { FileChange } from "./file-changes.js";
 import { extractFile, reversePatch } from "./patch.js";
 
 const SIZE_LIMIT = 1_048_576;
-const TEXT_APPLICATION_TYPES = new Set([
-  "application/json", "application/javascript", "application/typescript", "application/xml",
-  "application/yaml", "application/toml", "application/x-sh", "application/x-shellscript",
-  "application/x-ruby", "application/x-python", "application/x-perl", "application/x-php",
-  "application/x-awk", "application/x-lua", "application/x-makefile", "application/x-httpd-php",
-]);
 
 export interface FileDiffContextScope {
   /** The session whose checkout the file is read from. */
@@ -53,7 +47,7 @@ export async function loadFileContents(
   }
 
   const client = fetchResponse ? new ReinsClient({ fetch: fetchResponse }) : api;
-  const response = await client.files.content(
+  const response = await client.diff.fileContent(
     scope.sessionId,
     change.path,
     scope.branch ? { ref: scope.branch } : {},
@@ -72,13 +66,7 @@ async function readText(response: Response): Promise<string> {
   if (Number.isFinite(declaredLength) && declaredLength > SIZE_LIMIT) {
     throw new UnsupportedFileContents({ reason: "too_large", limitBytes: SIZE_LIMIT });
   }
-  if (response.headers.get("X-Reins-Content-Kind") === "binary-placeholder") {
-    throw new UnsupportedFileContents({ reason: "binary" });
-  }
-  const contentType = response.headers.get("Content-Type")?.split(";", 1)[0]?.trim().toLowerCase();
-  if (contentType && !contentType.startsWith("text/") && !TEXT_APPLICATION_TYPES.has(contentType)) {
-    throw new UnsupportedFileContents({ reason: "binary" });
-  }
+  if (fileKind(response) !== "text") throw new UnsupportedFileContents({ reason: "binary" });
 
   const bytes = await readBody(response);
   if (bytes.includes(0)) throw new UnsupportedFileContents({ reason: "binary" });

@@ -1,11 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { SettingsModelSettingSection } from "../../../components/settings/model-setting-section.js";
 import { SettingsStore } from "../../../models/stores/settings-store.js";
+import { NodesStore } from "../../../models/stores/nodes-store.js";
 import { templateToString } from "../../helpers/lit-template.js";
 
 describe("SettingsModelSettingSection", () => {
   test("shows a local loading state while the model registry loads", () => {
-    const store = new SettingsStore();
+    const store = new SettingsStore(new NodesStore());
     store.registryStore.loading = true;
 
     const el = new SettingsModelSettingSection();

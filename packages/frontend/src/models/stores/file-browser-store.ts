@@ -35,7 +35,8 @@ export class FileBrowserStore {
   private listeners = new Set<() => void>();
   private unsubscribers: Array<() => void>;
 
-  constructor(private readonly reins: Pick<ReinsSdk, "files" | "workspace">) {
+  /** `viewedSource` is the viewed session's source, null when there is none. */
+  constructor(private readonly reins: Pick<ReinsSdk, "files" | "workspace">, private readonly options: { viewedSource: () => Source | null }) {
     this.unsubscribers = [
       reins.files.subscribe(() => this.notify()),
       reins.files.onFilesChanged((source) => {
@@ -55,6 +56,13 @@ export class FileBrowserStore {
   get files(): Files { return this.reins.files; }
 
   get listing(): FileListing { return this.reins.files.listing(this.source); }
+
+  /** The name of its source's node when the viewed session is on another node; null otherwise or until it is known. */
+  get otherNode(): string | null {
+    const { source } = this;
+    const viewed = this.options.viewedSource();
+    return source && viewed && viewed.nodeId !== source.nodeId ? this.reins.files.nodeName(source) : null;
+  }
 
   /** Listed paths ranked by fuzzy match with the query, a basename match well ahead of a match across the path. */
   get results(): string[] {

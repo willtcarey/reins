@@ -3,18 +3,17 @@
  *
  * Owns server-backed state for settings values, OAuth provider metadata,
  * and settings-related mutations, including model/provider registry loading.
- * The settings page's nodes live in their own store (NodesStore), kept
- * current from the inbound messages, and its extensions in ExtensionsStore.
+ * The settings page's nodes are the app's NodesStore (on AppStore), and its
+ * extensions live in ExtensionsStore.
  */
 
 import type { OAuthProviderInfo } from "@backend/routes/oauth.js";
 import type { ModelSetting, ModelSettingsKey as ModelSettingKey, SettingEntry } from "@backend/settings-store.js";
 import { api } from "../api.js";
 import { ModelRegistryStore } from "./model-registry-store.js";
-import { NodesStore } from "./nodes-store.js";
+import type { NodesStore } from "./nodes-store.js";
 import { ExtensionsStore } from "./extensions-store.js";
 import type { Extensions } from "../../sdk-host/extensions.js";
-import type { InboundEventSource } from "../ws-client.js";
 
 export type SettingsStoreResult = { ok: true } | { error: string };
 export type SettingsStoreListener = () => void;
@@ -76,15 +75,15 @@ export class SettingsStore {
   private _listeners = new Set<SettingsStoreListener>();
   private _settingChangeListeners = new Set<SettingsChangeListener>();
 
-  /** `extensions`: the app's frontend extensions, which the Extensions section lists with the backend's. */
-  constructor(eventSource?: InboundEventSource, extensions?: Extensions) {
-    this.nodesStore = new NodesStore(eventSource);
+  /** `nodesStore`: the app's nodes, which the Nodes section lists. `extensions`: the app's frontend extensions,
+   * which the Extensions section lists with the backend's. */
+  constructor(nodesStore: NodesStore, extensions?: Extensions) {
+    this.nodesStore = nodesStore;
     this.extensionsStore = new ExtensionsStore(extensions);
     this.registryStore.subscribe(() => this.notify());
   }
 
   dispose() {
-    this.nodesStore.dispose();
     this.extensionsStore.dispose();
   }
 

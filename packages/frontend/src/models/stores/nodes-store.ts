@@ -1,12 +1,12 @@
 /**
  * Nodes Store
  *
- * Owns the settings page's node list, kept current from node messages
- * (`node_updated`, `node_removed`), the pairing code just created for a new
- * node and how its pairing is going, renaming and removal (revocation stays
- * in the API, for the planned node detail pages). The
- * code is held only until dismissed: the server keeps its hash, so it can
- * never be fetched again.
+ * The app's node list (`AppStore.nodesStore`, application lifetime), loaded whenever the app connects and
+ * kept current from node messages (`node_updated`, `node_removed`): what the settings page lists, and
+ * what names a source's node and reloads its files when the node connects or disconnects (`get`,
+ * `subscribe`). It also owns the pairing code just created for a new node and how its pairing is going,
+ * renaming and removal (revocation stays in the API, for the planned node detail pages). The code is
+ * held only until dismissed: the server keeps its hash, so it can never be fetched again.
  */
 
 import type { NodeView } from "@backend/models/node.js";
@@ -105,6 +105,11 @@ export class NodesStore {
     this._unsubscribe?.();
     this._unsubscribe = null;
     this._setPairingTimer(null);
+  }
+
+  /** The listed node: null before the list loads, and for a removed or unknown node. */
+  get(nodeId: string): NodeView | null {
+    return this.nodes.data?.find((node) => node.id === nodeId) ?? null;
   }
 
   async load(): Promise<NodesStoreResult> {

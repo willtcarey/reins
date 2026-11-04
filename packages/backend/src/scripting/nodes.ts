@@ -43,9 +43,10 @@ export const NodeDetailSchema = Type.Object({
 const callerNodeId = (ctx: ApiContext) => ctx.session.source.record.node_id;
 
 const nodeParam = Type.String({ description: 'Its ID, its name (any case), or "current" for the calling session\'s.' });
-const optionalNodeParam = Type.String({ description: 'Its ID, its name (any case), or "current": the calling session\'s, the default.' });
+export const optionalNodeParam = Type.String({ description: 'Its ID, its name (any case), or "current": the calling session\'s, the default.' });
 
-function namedNode(node: unknown, ctx: ApiContext): NodeModel {
+/** The node a script names: by its ID, its name (any case), or "current". */
+export function namedNode(node: unknown, ctx: ApiContext): NodeModel {
   if (typeof node !== "string" || node.trim() === "") throw new Error("A node is named by its ID, its name, or \"current\"");
   if (node === "current") {
     const nodeId = callerNodeId(ctx);

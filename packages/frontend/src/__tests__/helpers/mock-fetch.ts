@@ -24,3 +24,8 @@ export function mockFetch(
 export function restoreFetch(): void {
   globalThis.fetch = originalFetch;
 }
+
+/** A file's content as the file routes answer it: `kind` is how it is shown (`X-Reins-Content-Kind`). */
+export function fileResponse(body: BodyInit, { kind = "text", contentType = "text/plain" }: { kind?: "text" | "preview" | "binary"; contentType?: string } = {}): Response {
+  return new Response(body, { headers: { "content-type": contentType, "X-Reins-Content-Kind": kind } });
+}

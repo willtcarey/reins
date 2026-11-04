@@ -12,6 +12,7 @@ import { Inspector } from "../inspector.js";
 import type { IAppClient } from "../ws-client.js";
 import { SessionOperations } from "../session-operations.js";
 import { ConversationsStore } from "./conversations-store.js";
+import { NodesStore } from "./nodes-store.js";
 import { LocationSkills } from "./location-skills.js";
 import { ProjectFiles } from "./project-files.js";
 import { ProjectsStore } from "./projects-store.js";
@@ -31,6 +32,8 @@ export class AppStore {
   readonly sessionOperations: SessionOperations;
   readonly projectsStore: ProjectsStore;
   readonly settingsStore: SettingsStore;
+  /** The nodes: the settings page lists them, and reaching a source's files follows their connections. */
+  readonly nodesStore: NodesStore;
   readonly files: ProjectFiles;
   readonly views = new ViewRegistry();
   readonly decorators = new DecoratorRegistry(this.views);
@@ -61,8 +64,9 @@ export class AppStore {
     });
     this.sessionOperations = new SessionOperations({ conversations: this.activeConversationsStore });
     this.projectsStore = new ProjectsStore(this.sessionCache, client);
-    this.settingsStore = new SettingsStore(client, this.extensions);
-    this.files = new ProjectFiles(client, this.sessionCache);
+    this.nodesStore = new NodesStore(client);
+    this.settingsStore = new SettingsStore(this.nodesStore, this.extensions);
+    this.files = new ProjectFiles(client, this.sessionCache, this.nodesStore);
 
     this.unsubscribers = [
       this.projectsStore.subscribe(() => this.notify()),
@@ -114,6 +118,7 @@ export class AppStore {
     this.projectsStore.dispose();
     this.settingsStore.dispose();
     this.files.dispose();
+    this.nodesStore.dispose();
     this.decorators.dispose();
     this.extensions.dispose();
     this.listeners.clear();
@@ -127,6 +132,7 @@ export class AppStore {
   private async reconcileFromServer(): Promise<void> {
     await Promise.allSettled([
       this.requestServerReconcile(),
+      this.nodesStore.load(),
       ...[...this.reconcilers].map((reconcile) => Promise.resolve().then(reconcile)),
     ]);
   }

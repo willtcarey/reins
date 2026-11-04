@@ -14,11 +14,10 @@ import { registerSessionRoutes } from "./sessions.js";
 import { registerProjectSessionRoutes } from "./project-sessions.js";
 import { registerTaskSessionRoutes } from "./task-sessions.js";
 import { registerDiffRoutes } from "./diff.js";
-import { registerFileRoutes } from "./files.js";
+import { registerNodeFileRoutes, registerSessionFileRoutes } from "./files.js";
 import { registerTaskRoutes } from "./tasks.js";
 import { registerGitRoutes } from "./git.js";
 import { registerPaletteRoutes } from "./palette.js";
-import { registerUploadRoutes } from "./upload.js";
 import { registerSkillRoutes } from "./skills.js";
 import { registerSettingsRoutes } from "./settings.js";
 import { registerModelsRoutes } from "./models.js";
@@ -32,7 +31,7 @@ import { registerSocketRoutes } from "./sockets.js";
 
 export type ProjectRouteContext = RouteContext & { project: ProjectModel };
 
-/** A session's views (files, diffs, git, uploads): `ctx.session`, whose `source` and `workspace` are its own
+/** A session's views (diffs, the files they show, git): `ctx.session`, whose `source` and `workspace` are its own
  * checkout, so a session moved to another node shows that node's. */
 export type SessionRouteContext = RouteContext & { session: SessionModel };
 
@@ -63,6 +62,7 @@ export function buildRouter() {
   if (process.env.REINS_DEV === "1") registerClientTelemetryRoutes(router);
   registerProjectRoutes(router);
   registerNodeRoutes(router);
+  registerNodeFileRoutes(router);
   registerSkillRoutes(router);
   registerPaletteRoutes(router);
   registerSettingsRoutes(router);
@@ -79,9 +79,8 @@ export function buildRouter() {
     registerAttachmentRoutes(r);
     r.group("/:sessionId", sessionMiddleware, (session) => {
       registerDiffRoutes(session);
-      registerFileRoutes(session);
+      registerSessionFileRoutes(session);
       registerGitRoutes(session);
-      registerUploadRoutes(session);
     });
   });
 

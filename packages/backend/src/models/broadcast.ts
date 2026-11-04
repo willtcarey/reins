@@ -26,7 +26,8 @@ export type ServerMessage =
   | { type: "session_created"; projectId: number | null; sessionId: string; taskId: number | null; parentSessionId: string | null }
   | { type: "session_updated"; sessionId: string; projectId: number | null }
   | { type: "code_review_updated"; projectId: number; taskId: number | null; reviewId: string; revision: number }
-  | { type: "open_file"; sessionId: string; projectId: number | null; path: string; startLine?: number; endLine?: number }
+  /** `path` is relative to `source`, the directory on a node whose files the browser shows. */
+  | { type: "open_file"; sessionId: string; projectId: number | null; source: { nodeId: string; path: string }; path: string; startLine?: number; endLine?: number }
   /** The node as it is now: it was paired (by pairing code `pairingCodeId`, `POST /api/nodes/pairing-codes`'s
    * `id`), connected, disconnected or was revoked. */
   | { type: "node_updated"; node: NodeView; pairingCodeId?: number }

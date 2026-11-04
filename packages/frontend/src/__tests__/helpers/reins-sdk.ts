@@ -1,7 +1,10 @@
 import { registerFileViewer } from "../../components/file-viewer/file-viewer.js";
 import { FileReferenceIndex, referenceMount } from "../../extensions/message-file-references/message-file-references.js";
 import { Inspector } from "../../models/inspector.js";
+import { NodesStore } from "../../models/stores/nodes-store.js";
+import { Loadable } from "../../helpers/loadable.js";
 import { ProjectFiles } from "../../models/stores/project-files.js";
+import type { NodeView } from "@backend/models/node.js";
 import { SessionCache } from "../../models/stores/session-cache.js";
 import { ReinsClient } from "@reins/client";
 import type { ContainerId, CurrentView, ExtensionInfo, HttpApi, SessionCreation, Sessions, Source, Subject, View } from "@reins/sdk";
@@ -53,10 +56,16 @@ export function shownNewSession(projectId: number | null, taskId: number | null 
   return { view: { view: "new-session", projectId, taskId }, subject };
 }
 
+/** A node as `node_updated` carries it. */
+export function testNode(id: string, name: string, connected = true): NodeView {
+  return { id, name, connected, paired: true, hostname: null, pairedAt: null, revokedAt: null, sources: [], build: null, failure: null };
+}
+
 /**
- * An SDK over the app's parts, as app-shell builds it, for `extension`. Its files API knows `source` from a session of
- * `projectId` placed on it, `opened` records what `workspace.open` reaches the app with, `shownViews` the
- * views it shows in the main area, and `sessionCalls` what reaches its sessions (`sessions` replaces their operations).
+ * An SDK over the app's parts, as app-shell builds it, for `extension`. Its node list has `source`'s node, "Node",
+ * connected when `available` (another node is listed once a `node_updated` names it), and a session of `projectId`
+ * is placed on `source`. `opened` records what `workspace.open` reaches the app with, `shownViews` the views it shows
+ * in the main area, and `sessionCalls` what reaches its sessions (`sessions` replaces their operations).
  * The main area shows `current` until another view is shown there, about nothing; it shows the views the app has routes for.
  * Requests go to `fetch` (`mockFetch`); messages and the connection come from `client` (`fireMessage`, `fireConnection`).
  * `sdkFor` builds another extension's SDK over the same app, and `extensions` activates extensions there.
@@ -72,7 +81,9 @@ export function testSdk<A extends HttpApi = HttpApi>({ source = { nodeId: "node"
   const client = new StubClient();
   const sessions = new SessionCache();
   sessions.set("placed", { projectId, placement: { available, removed: false, nodeId: source.nodeId, nodeName: "Node", path: source.path } });
-  const files = new ProjectFiles(client, sessions);
+  const nodes = new NodesStore(client);
+  nodes.nodes = Loadable.idle<NodeView[]>().asLoaded([testNode(source.nodeId, "Node", available)]);
+  const files = new ProjectFiles(client, sessions, nodes);
   const views = new ViewRegistry();
   const decorators = new DecoratorRegistry(views);
   const commands = new CommandRegistry();
