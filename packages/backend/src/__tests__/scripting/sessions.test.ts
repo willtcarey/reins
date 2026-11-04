@@ -16,7 +16,7 @@ import { Sessions } from "../../models/sessions.js";
 import { Models } from "../../models/models.js";
 import { buildApiObject, searchFunctions, referencedTypes } from "../../scripting/api-registry.js";
 import { useTestDb } from "../helpers/test-db.js";
-import { useTestRepo } from "../helpers/test-repo.js";
+import { createTestRepo, useTestRepo } from "../helpers/test-repo.js";
 import { stubRuntime, useLoopbackState } from "../helpers/app-state.js";
 import { useFakeModel } from "../helpers/fake-model.js";
 import { sessionActivity } from "../../models/session-activity.js";
@@ -327,6 +327,53 @@ describe("api.sessions orchestration", () => {
     const scratch = Value.Decode(SessionHandleSchema, await api.sessions.start("Scratch", { parentSessionId: null, taskId: null }));
     expect(getSession(scratch.sessionId)).toMatchObject({ task_id: null, parent_session_id: null });
     await answerUntilIdle(scratch.sessionId);
+  });
+
+  test("starts a child in another project's task at that project's home source, and sends to and waits for it", async () => {
+    const { api, turns } = setup();
+    const otherRepo = await createTestRepo();
+    const other = createProject("Other", otherRepo.dir, "main");
+    const task = createTask(other.id, "Foreign", null, "task/foreign");
+
+    const child = Value.Decode(SessionHandleSchema, await api.sessions.start("Over there", { parentSessionId: "current", projectId: other.id, taskId: task.id }));
+
+    expect(getSession(child.sessionId)).toMatchObject({
+      project_id: other.id, task_id: task.id, source_id: other.default_source_id, parent_session_id: "parent",
+    });
+    await admitted(turns, 1);
+    turns[0].finish({ reply: "first" });
+    expect(await api.sessions.wait(child.sessionId, 1000)).toMatchObject({ status: "completed", result: "first" });
+    await answerUntilIdle("parent");
+    await api.sessions.send(child.sessionId, "Again");
+    await answerUntilIdle(child.sessionId, "second");
+    expect(await api.sessions.wait(child.sessionId, 1000)).toMatchObject({ status: "completed", result: "second" });
+    await answerUntilIdle("parent");
+    otherRepo.cleanup();
+  });
+
+  test("a session started in another project without a task is a scratch session there", async () => {
+    const { project, contextFor } = setup();
+    await Bun.spawn(["git", "branch", "task/caller"], { cwd: repo.dir }).exited;
+    const callerTask = createTask(project.id, "Caller", null, "task/caller");
+    createSession("task-caller", project.id, { agentRuntimeType: "pi", taskId: callerTask.id, modelProvider: provider(), modelId: "fake" });
+    const taskApi = buildApiObject(contextFor("task-caller"));
+    const other = createProject("Other", `${repo.dir}-other`, "main");
+
+    const started = Value.Decode(SessionHandleSchema, await taskApi.sessions.start("Look", { parentSessionId: null, projectId: other.id }));
+
+    expect(getSession(started.sessionId)).toMatchObject({ project_id: other.id, task_id: null, source_id: other.default_source_id });
+    await answerUntilIdle(started.sessionId);
+  });
+
+  test("a task that is not of the project named is refused", async () => {
+    const { api, project } = setup();
+    const other = createProject("Other", `${repo.dir}-other`, "main");
+    const homeTask = createTask(project.id, "Home", null, "task/home");
+    const before = listSessions({ projectId: other.id });
+
+    await expect(Promise.resolve().then(() => api.sessions.start("bad", { parentSessionId: null, projectId: other.id, taskId: homeTask.id })))
+      .rejects.toThrow(`Task ${homeTask.id} is not a task of project ${other.id}`);
+    expect(listSessions({ projectId: other.id })).toEqual(before);
   });
 
   test("starting siblings on the active task does not contend for Git's checkout lock", async () => {

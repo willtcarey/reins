@@ -298,9 +298,13 @@ const sessionsSetArchivedFunction = defineFunction({
 const StartParameters = Type.Object({
   prompt: Type.String({ minLength: 1 }),
   options: Type.Object({
-    parentSessionId: Type.Union([Type.Literal("current"), Type.Null()], { description: '"current" creates a child of the caller; null creates an independent session.' }),
+    parentSessionId: Type.Union([Type.Literal("current"), Type.Null()], { description: '"current" creates a child of the caller (in any project); null creates an independent session.' }),
+    projectId: Type.Optional(Type.Union([Type.Number(), CurrentIdSchema], {
+      description: 'The project to start the session in: the caller\'s when omitted or "current".',
+    })),
     taskId: Type.Optional(Type.Union([Type.Number(), Type.Null(), CurrentIdSchema], {
-      description: 'The task to start the session in, of the current project: the caller\'s task when omitted or "current"; null for a scratch session.',
+      description: 'The task to start the session in, a task of its project. In the caller\'s project the caller\'s task when omitted or "current"; ' +
+        "in another project none when omitted; null for a scratch session.",
     })),
     title: Type.Optional(Type.String({ minLength: 1 })),
     source: Type.Optional(Type.Union([LocationSchema, Type.Null()])),
@@ -332,24 +336,26 @@ function sessionInstance(ctx: ApiContext): SessionInstance {
 
 const sessionsStartFunction = defineFunction({
   name: "sessions.start",
-  description: "Start a fresh session in the caller's project and return its sessionId without waiting for completion. " +
-    "It starts in the caller's task unless options.taskId names another task (or null for scratch). " +
+  description: "Start a fresh session and return its sessionId without waiting for completion. " +
+    "It starts in the caller's project unless options.projectId names another, and in the caller's task unless options.taskId names another task " +
+    "of that project (or null for scratch; in another project it is scratch unless taskId names one of its tasks). " +
     "Optional title uses the session name; omitted title preserves normal naming. Model/thinking default to the caller. " +
-    "options.source ({ nodeId, path }) starts it elsewhere than the caller's checkout (a directory not used yet is checked on its node). " +
+    "It works in the caller's checkout (in another project: where that project's sessions work, its home source by default) " +
+    "unless options.source ({ nodeId, path }) names another location (a directory not used yet is checked on its node). " +
     "Sessions share the checkout: coordinate file edits. Only start other agents when the user explicitly asks for delegation or parallel sessions. Children report their latest outcome on runtime settlement, durably prompting idle parents or steering busy ones. Reports are not queued or retried. Continue other work or end your turn rather than polling. Independent sessions require explicit result retrieval.",
   parameters: StartParameters,
   returns: SessionHandleSchema,
   async: true,
   tags: ["sessions", "start", "create", "delegate", "async", "parent", "title", "task"],
   execute: async (params, ctx) => {
-    if (!Value.Check(StartParameters, params)) throw new Error("Invalid session start parameters; options.parentSessionId must be current or null, options.taskId a task ID, current or null");
+    if (!Value.Check(StartParameters, params)) throw new Error("Invalid session start parameters; options.parentSessionId must be current or null, options.projectId a project ID or current, options.taskId a task ID, current or null");
     if (ctx.signal?.aborted) throw new DOMException("Aborted", "AbortError");
     return sessionInstance(ctx).start(params.prompt, params.options);
   },
 });
 const sessionsSendFunction = defineFunction({
   name: "sessions.send",
-  description: "Send a message to any session in the caller's project, even when its task ID differs. Reopens it if necessary. " +
+  description: "Send a message to any session, in any project or task. Reopens it if necessary. " +
     "Idle sessions start a prompt; busy sessions receive native steering without cancellation/restart. " +
     "Idle delivery is durably accepted before execution; busy delivery forwards directly to AgentHarness steering. " +
     "No Reins-managed queued follow-ups, deferred delivery, or automatic restart. Pi uses native idle state and does not serialize concurrent startup sends. Returns without waiting for response completion.",
@@ -365,7 +371,7 @@ const sessionsSendFunction = defineFunction({
 });
 const sessionsWaitFunction = defineFunction({
   name: "sessions.wait",
-  description: "Observe native idleness for a session in the caller's project/task (or the caller's own child in any task), including native steering and compaction, then return its latest response/outcome. " +
+  description: "Observe native idleness for any session, in any project or task, including native steering and compaction, then return its latest response/outcome. " +
     "timeoutMs defaults to 10000, maximum 30000; 0 checks immediately. Timeout or cancelling this script never cancels the target. " +
     "Already-settled sessions return immediately. Runtime admission and idle-start handoff remain visible to concurrent waits. " +
     "Pi returns the latest transcript outcome, not a retained prompt failure. Closed sessions read persisted history; transient execution failures are not recovered after restart. Children automatically report to their parent when new work settles, so explicit waiting is optional. Cannot wait for yourself.",

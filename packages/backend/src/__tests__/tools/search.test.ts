@@ -139,7 +139,7 @@ describe("search tool", () => {
     expect(text).toContain("interface Api {");
     expect(text).toContain("tasks: TasksApi;");
     expect(text).toContain("interface TasksApi {");
-    expect(text).toContain("list(status?: \"open\" | \"closed\"): Task[];");
+    expect(text).toContain("list(status?: \"open\" | \"closed\", projectId?: number | \"current\"): Task[];");
     expect(text).not.toContain("tasks.list(");
     expectGeneratedTypeScriptToBeValid(text);
   });
