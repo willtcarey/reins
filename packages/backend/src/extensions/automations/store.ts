@@ -22,6 +22,7 @@ export interface AutomationRow {
   timeout_ms: number | null;
   once: 0 | 1;
   source_json: string | null;
+  project_id: number | null;
   model_json: string | null;
   compact_above_tokens: number | null;
   background: 0 | 1;
@@ -80,6 +81,8 @@ export interface AutomationView {
   trigger: TriggerView;
   once: boolean;
   source: number | Location | null;
+  /** The project of the sessions it starts; null: none. */
+  projectId: number | null;
   model: OwnSessionModel | null;
   compactAboveTokens: number | null;
   /** The sessions it starts are hidden from the browser. */
@@ -110,6 +113,7 @@ export interface NewAutomation {
   timeoutMs: number | null;
   once: boolean;
   source: number | Location | null;
+  projectId: number | null;
   model: OwnSessionModel | null;
   compactAboveTokens: number | null;
   background: boolean;
@@ -144,11 +148,11 @@ export class AutomationStore {
   create(automation: NewAutomation): AutomationRow {
     return this.db.query<AutomationRow, (string | number | null)[]>(`INSERT INTO automations
       (name, message, target, session_id, created_by_session_id, trigger, schedule, timezone, command, node, cwd, timeout_ms, once,
-       source_json, model_json, compact_above_tokens, background, next_run_at, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`).get(
+       source_json, project_id, model_json, compact_above_tokens, background, next_run_at, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`).get(
       automation.name, automation.message, automation.target, automation.sessionId, automation.createdBySessionId, automation.trigger,
       automation.schedule, automation.timezone, automation.command, automation.node, automation.cwd, automation.timeoutMs, automation.once ? 1 : 0,
-      json(automation.source), json(automation.model), automation.compactAboveTokens, automation.background ? 1 : 0, automation.nextRunAt.toISOString(), automation.createdAt.toISOString(),
+      json(automation.source), automation.projectId, json(automation.model), automation.compactAboveTokens, automation.background ? 1 : 0, automation.nextRunAt.toISOString(), automation.createdAt.toISOString(),
     )!;
   }
 
@@ -260,6 +264,7 @@ export class AutomationStore {
         : { kind: "command", command: row.command!, every: row.schedule, node: row.node!, cwd: row.cwd, timeoutMs: row.timeout_ms },
       once: row.once === 1,
       source: row.source_json === null ? null : JSON.parse(row.source_json),
+      projectId: row.project_id,
       model: row.model_json === null ? null : JSON.parse(row.model_json),
       compactAboveTokens: row.compact_above_tokens,
       background: row.background === 1,

@@ -84,6 +84,7 @@ export const AutomationSchema = Type.Object({
   ]),
   once: Type.Boolean({ description: "Cancelled once it delivered its message." }),
   source: nullable(Type.Union([Type.Integer(), LocationSchema])),
+  projectId: nullable(Type.Integer(), "The project of the sessions it starts; null: none."),
   model: nullable(ModelParam),
   compactAboveTokens: nullable(Type.Integer()),
   background: Type.Boolean({ description: "The sessions it starts are hidden from the session list." }),
@@ -111,7 +112,7 @@ export function automationsScripting(automations: Automations, sessions: Pick<Se
       "- target \"this\" (default): this session; archiving or deleting it cancels the automation. Keep the ID it returns, to cancel it. " +
       "target \"own\": a hidden session of its own, started at its first delivery and kept, so each run sees what earlier ones found " +
       "(\"every morning, summarise my GitHub notifications\"); each run's final reply is its output (automations.runs). " +
-      "target \"new\": a new session at each delivery, shown in the session list (background: true hides it), for work that should start afresh each time " +
+      "target \"new\": a new session at each delivery, in this session's project and shown in the session list (project: null for none; background: true hides it), for work that should start afresh each time " +
       "(\"review each new Dependabot PR\"); a delivery is skipped while the session the previous one started still runs.\n" +
       "A message to a running session joins its run. Cancel with automations.cancel(id).\n\n" +
       "  return await api.automations.create({ trigger: { command: \"gh pr view 42 --json state -q .state | grep -x MERGED\", every: \"2m\" }, once: true,\n" +
@@ -130,6 +131,10 @@ export function automationsScripting(automations: Automations, sessions: Pick<Se
         once: Type.Optional(Type.Boolean({ description: "Cancel it once it delivered its message." })),
         name: Type.Optional(Type.String({ description: "Its name; for target own or new, also its sessions'." })),
         source: Type.Optional(SourceParam),
+        project: Type.Optional(Type.Union([Type.Literal("this"), Type.Integer(), Type.Null()], {
+          description: "target \"own\" or \"new\": its sessions' project. \"this\": this session's; a project's ID; null: none. " +
+            "Default: this session's for target \"new\" (so its sessions show with the project's), none for \"own\".",
+        })),
         model: Type.Optional(ModelParam),
         compactAboveTokens: Type.Optional(Type.Integer({ minimum: 1, description: "target \"own\": compact its session after a run that leaves the context above this many tokens." })),
         background: Type.Optional(Type.Boolean({ description: "target \"new\": hide its sessions from the session list." })),
@@ -140,22 +145,27 @@ export function automationsScripting(automations: Automations, sessions: Pick<Se
     tags: ["automations", "automation", "trigger", "wake", "wake up", "schedule", "monitor", "poll", "watch", "until", "when", "remind", "timer", "interval",
       "daily", "cron", "recurring", "heartbeat", "command", "background", "later"],
     execute: async ({ automation }, context) => {
-      const { trigger, target = "this", source, model, compactAboveTokens, background, ...rest } = automation;
-      if (target === "this" && (source !== undefined || model !== undefined)) throw new InvalidAutomationError("source and model are for target \"own\" or \"new\"");
+      const { trigger, target = "this", source, project, model, compactAboveTokens, background, ...rest } = automation;
+      if (target === "this" && (source !== undefined || project !== undefined || model !== undefined)) {
+        throw new InvalidAutomationError("source, project and model are for target \"own\" or \"new\"");
+      }
       if (target !== "own" && compactAboveTokens !== undefined) throw new InvalidAutomationError("compactAboveTokens is for target \"own\"");
       if (target !== "new" && background !== undefined) throw new InvalidAutomationError("background is for target \"new\": an own session is always hidden");
       const caller = await sessions.get(context.sessionId);
       const resolved: TriggerRequest = "command" in trigger
         ? { ...trigger, node: trigger.node ?? caller.source.nodeId, cwd: trigger.cwd ?? (trigger.node === undefined ? caller.source.path : undefined) }
         : trigger;
+      const chosen = project ?? (project === undefined && target === "new" ? "this" : null);
+      const projectId = chosen === "this" ? caller.projectId : chosen;
+      const place = { source: source ?? caller.source.id, ...(projectId === null ? {} : { projectId }), ...(model ? { model } : {}) };
       return automations.create({
         ...rest,
         trigger: resolved,
         target: target === "this"
           ? { session: context.sessionId }
           : target === "own"
-            ? { own: { source: source ?? caller.source.id, ...(model ? { model } : {}), ...(compactAboveTokens === undefined ? {} : { compactAboveTokens }) } }
-            : { new: { source: source ?? caller.source.id, ...(model ? { model } : {}), ...(background === undefined ? {} : { background }) } },
+            ? { own: { ...place, ...(compactAboveTokens === undefined ? {} : { compactAboveTokens }) } }
+            : { new: { ...place, ...(background === undefined ? {} : { background }) } },
         createdBySessionId: context.sessionId,
       });
     },

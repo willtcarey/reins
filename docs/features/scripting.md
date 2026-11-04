@@ -41,7 +41,7 @@ execute({
 | `api.nodes` | `list()`, `get(node?)`, `reload(node?, force?)`, `readFile(node, path, options?)`, `writeFile(node, path, content)`, `copy(fromNode, fromPath, toNode, toPath)`, `run(node, command, options?)` |
 | `api.tools` | `search(query, filters?)`, `call(id, args?, timeoutMs?)` |
 | `api.mcp` | `list()`, `get(server)`, `add(server)`, `update(server, changes)`, `remove(server)`, `test(server)`, `signIn(server, callbackOrigin?)`, `finishSignIn(callbackUrl)`, `signOut(server)` |
-| `api.automations` | `create({ trigger, message?, target?, once?, name?, source?, model?, compactAboveTokens?, background? })` (target `"this"`, `"own"` or `"new"`) (a `{ schedule, timezone? }` or `{ command, every, node?, cwd?, timeoutMs? }` trigger), `cancel(id)`, `list({ all?, includeCancelled? }?)`, `runs(id, limit?)`, `replaceSession(id)` ([automations.md](automations.md)) |
+| `api.automations` | `create({ trigger, message?, target?, once?, name?, source?, model?, compactAboveTokens?, background?, project? })` (target `"this"`, `"own"` or `"new"`) (a `{ schedule, timezone? }` or `{ command, every, node?, cwd?, timeoutMs? }` trigger), `cancel(id)`, `list({ all?, includeCancelled? }?)`, `runs(id, limit?)`, `replaceSession(id)` ([automations.md](automations.md)) |
 
 ### Behavior
 

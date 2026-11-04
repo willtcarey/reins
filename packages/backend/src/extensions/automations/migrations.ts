@@ -25,8 +25,10 @@ export const automationsMigrations: readonly Migration[] = [
         cwd TEXT,
         timeout_ms INTEGER,
         once INTEGER NOT NULL DEFAULT 0 CHECK (once IN (0, 1)),
-        -- An own session's: where it works (a source ID or a location) and its model, as JSON.
+        -- The sessions it starts ('own', 'new'): where they work (a source ID or a location, as JSON), their project
+        -- (null: none; not a reference, as the project is the core's) and their model (JSON).
         source_json TEXT,
+        project_id INTEGER,
         model_json TEXT,
         compact_above_tokens INTEGER,
         -- The sessions it starts are hidden from the browser ('own' always; 'new' when asked).

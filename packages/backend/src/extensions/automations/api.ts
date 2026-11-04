@@ -29,8 +29,8 @@ export const automationsApi = {
       message: Type.Optional(Type.String()),
       target: Type.Union([
         Type.Object({ session: Type.String({ description: "The session it messages." }) }),
-        Type.Object({ own: Type.Object({ source: SourceParam, model: Type.Optional(ModelParam), compactAboveTokens: Type.Optional(Type.Integer({ minimum: 1 })) }) }),
-        Type.Object({ new: Type.Object({ source: SourceParam, model: Type.Optional(ModelParam), background: Type.Optional(Type.Boolean()) }) }),
+        Type.Object({ own: Type.Object({ source: SourceParam, projectId: Type.Optional(Type.Integer()), model: Type.Optional(ModelParam), compactAboveTokens: Type.Optional(Type.Integer({ minimum: 1 })) }) }),
+        Type.Object({ new: Type.Object({ source: SourceParam, projectId: Type.Optional(Type.Integer()), model: Type.Optional(ModelParam), background: Type.Optional(Type.Boolean()) }) }),
       ]),
       once: Type.Optional(Type.Boolean()),
       name: Type.Optional(Type.String()),

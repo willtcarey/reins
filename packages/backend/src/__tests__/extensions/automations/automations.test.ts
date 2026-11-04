@@ -16,6 +16,7 @@ import { buildRouter } from "../../../routes/index.js";
 import { Models } from "../../../models/models.js";
 import { getDb } from "../../../app-globals.js";
 import { deleteSession, getSession } from "../../../session-store.js";
+import { createProject, deleteProject } from "../../../project-store.js";
 import { COMPACTION_INSTRUCTIONS, untrustedOutput } from "../../../extensions/automations/automations.js";
 import type { AutomationView, RunView } from "../../../extensions/automations/store.js";
 
@@ -313,6 +314,37 @@ describe("the automations extension", () => {
         ["completed", "2026-03-27T08:30:00.000Z", first, "Commented on #12"],
       ]);
       expect(detailsOf(second!)[0]).toBe(`Sent by automation ${automation.id} at 2026-03-27 09:30 UTC.`);
+    });
+
+    test("starts its sessions in the calling session's project, in the project it names, or in none", async () => {
+      const place = getSession(await newSession())!.source_id!;
+      const shop = createProject("Shop", "master", place);
+      const docs = createProject("Docs", "master", place);
+      const caller = (await new Models(state).sessions.create({ projectId: shop.id, model: model.model })).id;
+      const create = (options: string): Promise<AutomationView> => script(caller, `return await api.automations.create({ trigger: { schedule: "30m" }, target: "new",
+        message: "Review", model: ${JSON.stringify(model.model)}${options} })`);
+
+      const automations = [await create(""), await create(", project: null"), await create(`, project: ${docs.id}`)];
+      await tickAt("2026-03-27T08:30:00.000Z");
+      const started = await Promise.all(automations.map(async automation => (await runs(caller, automation.id))[0]!.sessionId!));
+      for (const sessionId of started) (await model.nextTurn(sessionId)).finish({ reply: "Done" });
+
+      expect(automations.map(automation => automation.projectId)).toEqual([shop.id, null, docs.id]);
+      expect(started.map(sessionId => getSession(sessionId)!.project_id)).toEqual([shop.id, null, docs.id]);
+      expect(started.map(sessionId => getSession(sessionId)!.source_id)).toEqual([place, place, place]);
+    });
+
+    test("records a delivery to a project that has gone as failed, and goes on", async () => {
+      const caller = await newSession();
+      const gone = createProject("Gone", "master", getSession(caller)!.source_id!);
+      const automation: AutomationView = await script(caller, `return await api.automations.create({ trigger: { schedule: "30m" }, target: "new",
+        message: "Review", project: ${gone.id} })`);
+      deleteProject(gone.id);
+
+      await tickAt("2026-03-27T08:30:00.000Z");
+
+      expect((await runs(caller, automation.id)).map(run => [run.outcome, run.error])).toEqual([["failed", `Project not found: ${gone.id}`]]);
+      expect((await script(caller, "return await api.automations.list()"))[0]).toMatchObject({ id: automation.id, cancelledAt: null, nextRunAt: "2026-03-27T09:00:00.000Z" });
     });
   });
 

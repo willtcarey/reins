@@ -71,6 +71,10 @@ A command trigger works with its own session too: the session runs only when the
 
 For work that should start clean each time, use `target: "new"`. Each delivery starts a new session, which is shown in the session list (with `background: true` it is hidden), so you can open each one.
 
+- **By default, the new sessions are in the project of the session that made the automation**, so you find them with that project's sessions. Give `project: null` for no project, or a project's ID for another project.
+- An own session has no project by default. Give `project: "this"` or an ID to put it in one.
+- If the project is deleted, each delivery fails and is recorded in the runs. The automation is not cancelled.
+
 ```js
 await api.automations.create({
   trigger: { command: "gh pr list --search 'author:app/dependabot -label:agent-reviewed' --limit 1 --json number,title,url -q '.[] | \"#\\(.number) \\(.title) \\(.url)\"' | grep .", every: "30m" },

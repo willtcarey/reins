@@ -38,8 +38,8 @@ export type TriggerRequest =
 
 export type TargetRequest =
   | { session: string }
-  | { own: { source: number | Location; model?: OwnSessionModel; compactAboveTokens?: number } }
-  | { new: { source: number | Location; model?: OwnSessionModel; background?: boolean } };
+  | { own: { source: number | Location; projectId?: number; model?: OwnSessionModel; compactAboveTokens?: number } }
+  | { new: { source: number | Location; projectId?: number; model?: OwnSessionModel; background?: boolean } };
 
 export interface CreateRequest {
   trigger: TriggerRequest;
@@ -188,6 +188,7 @@ export class Automations {
       timeoutMs: command?.timeoutMs ?? null,
       once: request.once === true,
       source: (own ?? fresh)?.source ?? null,
+      projectId: (own ?? fresh)?.projectId ?? null,
       model: (own ?? fresh)?.model ?? null,
       compactAboveTokens: own?.compactAboveTokens ?? null,
       background: fresh ? fresh.background === true : true,
@@ -368,6 +369,7 @@ export class Automations {
   private async startSession(row: AutomationRow, text: string, details: { text: string; hidden: true }): Promise<string> {
     const sessionId = await this.sessions.start({
       source: JSON.parse(row.source_json!),
+      ...(row.project_id === null ? {} : { projectId: row.project_id }),
       prompt: [text, details],
       background: row.background === 1,
       title: row.name ?? "Automation",
