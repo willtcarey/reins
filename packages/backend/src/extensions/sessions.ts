@@ -1,20 +1,17 @@
 /**
- * The server SDK's `reins.sessions` for one extension (docs/dev/server-sdk.md *Sessions*): an adapter over
- * the `Sessions` model (`create`, `get`, `submit`, `compact`, `getContext`), as scripting's `api.sessions` is, with no
- * calling session: the extension names where a session works. What it starts and sends record it as their
- * origin (`sessions.source_extension`, the inputs' `metadata.sourceExtension`). Settlement listeners are the
- * host's (`ExtensionHost.sessionSettled`).
+ * The server SDK's `reins.sessions` for one extension (docs/dev/server-sdk.md *Sessions*): the app's sessions as
+ * that extension sees them, over the `Sessions` model (`create`, `get`, `submit`, `compact`, `getContext`), as
+ * scripting's `api.sessions` is, with no calling session: the extension names where a session works. What it
+ * starts and sends record it as their origin (`sessions.source_extension`, the inputs' `metadata.sourceExtension`).
+ * Settlement listeners are the host's (`ExtensionHost.sessionSettled`): it gives the way to add one.
  */
 
-import type { MessageContent, MessageMetadata, SessionInfo, Sessions } from "@reins/sdk/server";
+import type { ContextUsage, Disposer, MessageContent, MessageMetadata, SessionInfo, SessionSettlement, SessionStart, Sessions } from "@reins/sdk/server";
 import type { AppState } from "../state.js";
 import { Models } from "../models/models.js";
 import { sessionActivity } from "../models/session-activity.js";
 import { latestSettlement } from "../sessions/session-runs.js";
 import type { SessionModel } from "../models/session.js";
-
-/** What an extension's `reins.sessions` does, but for its settlement listeners. */
-export type ExtensionSessionAccess = Omit<Sessions, "onSettled">;
 
 const MAX_LABEL = 80;
 const MAX_METADATA_BYTES = 64 * 1024;
@@ -86,47 +83,61 @@ function sessionInfo(session: SessionModel, state: AppState): SessionInfo {
   };
 }
 
-/** `reins.sessions` of extension `extension`, on the app's state. */
-export function extensionSessions(state: AppState, extension: string): ExtensionSessionAccess {
-  const models = () => new Models(state);
-  return {
-    async get(sessionId) {
-      return sessionInfo(models().sessions.get(sessionId), state);
-    },
+/** `reins.sessions` of one extension. Given to the extension as it is: its state is in private fields. */
+export class ExtensionSessions implements Sessions {
+  readonly #state: AppState;
+  readonly #extension: string;
+  readonly #addSettlementListener: Sessions["onSettled"];
 
-    // A refused first prompt leaves the session: the extension sends it again, or moves the session.
-    async start({ source, projectId, taskId, prompt, metadata, model, background, title }) {
-      const promptContent = checkedContent(prompt, "A session's prompt must not be blank");
-      const promptMetadata = checkedMetadata(metadata);
-      const sessions = models().sessions;
-      const { id } = await sessions.create({
-        ...(projectId === undefined ? {} : { projectId }),
-        ...(source === undefined ? {} : { source }),
-        ...(taskId === undefined ? {} : { taskId }),
-        ...(title === undefined ? {} : { title }),
-        ...(model ? { model } : {}),
-        background: background === true,
-        sourceExtension: extension,
-      });
-      await sessions.submit(id, { op: "prompt", clientId: crypto.randomUUID(), sourceExtension: extension, ...promptContent, ...promptMetadata });
-      return id;
-    },
+  /** `addSettlementListener`: the host's, which keeps the extension's listeners. */
+  constructor(state: AppState, extension: string, addSettlementListener: Sessions["onSettled"]) {
+    this.#state = state;
+    this.#extension = extension;
+    this.#addSettlementListener = addSettlementListener;
+  }
 
-    async send(sessionId, message, options = {}) {
-      const content = checkedContent(message, "A message must not be blank");
-      const checked = checkedMetadata(options.metadata);
-      await models().sessions.submit(sessionId, { op: "steer", clientId: crypto.randomUUID(), sourceExtension: extension, ...content, ...checked });
-    },
+  get #sessions() { return new Models(this.#state).sessions; }
 
-    async compact(sessionId, options = {}) {
-      await models().sessions.compact(sessionId, options.instructions === undefined ? {} : { instructions: options.instructions });
-    },
+  async get(sessionId: string): Promise<SessionInfo> {
+    return sessionInfo(this.#sessions.get(sessionId), this.#state);
+  }
 
-    async contextUsage(sessionId) {
-      const sessions = models().sessions;
-      sessions.get(sessionId);
-      const snapshot = await sessions.getContext(sessionId);
-      return snapshot && { usedTokens: snapshot.usedTokens, contextWindow: snapshot.contextWindow, measurement: snapshot.measurement };
-    },
-  };
+  // A refused first prompt leaves the session: the extension sends it again, or moves the session.
+  async start({ source, projectId, taskId, prompt, metadata, model, background, title }: SessionStart): Promise<string> {
+    const content = checkedContent(prompt, "A session's prompt must not be blank");
+    const checked = checkedMetadata(metadata);
+    const sessions = this.#sessions;
+    const { id } = await sessions.create({
+      ...(projectId === undefined ? {} : { projectId }),
+      ...(source === undefined ? {} : { source }),
+      ...(taskId === undefined ? {} : { taskId }),
+      ...(title === undefined ? {} : { title }),
+      ...(model ? { model } : {}),
+      background: background === true,
+      sourceExtension: this.#extension,
+    });
+    await sessions.submit(id, { op: "prompt", clientId: crypto.randomUUID(), sourceExtension: this.#extension, ...content, ...checked });
+    return id;
+  }
+
+  async send(sessionId: string, message: MessageContent, options: { metadata?: MessageMetadata } = {}): Promise<void> {
+    const content = checkedContent(message, "A message must not be blank");
+    const checked = checkedMetadata(options.metadata);
+    await this.#sessions.submit(sessionId, { op: "steer", clientId: crypto.randomUUID(), sourceExtension: this.#extension, ...content, ...checked });
+  }
+
+  async compact(sessionId: string, options: { instructions?: string } = {}): Promise<void> {
+    await this.#sessions.compact(sessionId, options.instructions === undefined ? {} : { instructions: options.instructions });
+  }
+
+  async contextUsage(sessionId: string): Promise<ContextUsage | null> {
+    const sessions = this.#sessions;
+    sessions.get(sessionId);
+    const snapshot = await sessions.getContext(sessionId);
+    return snapshot && { usedTokens: snapshot.usedTokens, contextWindow: snapshot.contextWindow, measurement: snapshot.measurement };
+  }
+
+  onSettled(listener: (settlement: SessionSettlement) => void | Promise<void>): Disposer {
+    return this.#addSettlementListener(listener);
+  }
 }

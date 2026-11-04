@@ -57,9 +57,10 @@ export interface ServerSdk {
   readonly scripting: Scripting;
   readonly http: Http;
   readonly services: Services;
-  /** Sessions: start them, message them, read them, and hear when the runs of those it started end. */
+  /** Sessions: start them, message them, read them, and hear when the runs of those it started end. Call its
+   * methods on it (`reins.sessions.send(…)`): taken off it, they lose it. */
   readonly sessions: Sessions;
-  /** Nodes: the machines sessions work on. Run a command on one. */
+  /** Nodes: the machines sessions work on. Run a command on one. Call `run` on it, as for `sessions`. */
   readonly nodes: Nodes;
   /**
    * The extension's own directory, `<data dir>/extensions/<name>/` (absolute), which the host creates before

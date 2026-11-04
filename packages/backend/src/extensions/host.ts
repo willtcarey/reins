@@ -10,20 +10,15 @@ import { KindGuard, type TObject, type TProperties, type TSchema } from "@sincla
 import { Value } from "@sinclair/typebox/value";
 import type {
   Database, Disposer, HttpApi, HttpCall, Logger, Migration, PageHandler, PromptContext, PromptContribution, ScriptFunction, ScriptType, SecretStorage, ServerExtension, ServerSdk,
-  Nodes, Service, SessionSettlement, ToolFilters, ToolResult, ToolProvider,
+  Service, SessionSettlement, ToolFilters, ToolResult, ToolProvider,
 } from "@reins/sdk/server";
 import { statSync } from "fs";
 import type { ExtensionStorage } from "../database.js";
 import type { ApiFunctionDef } from "../scripting/define-function.js";
 import type { NamedType } from "../scripting/api-registry.js";
-import type { ServerProcess, SessionSettledNotice } from "../state.js";
-import type { ExtensionSessionAccess } from "./sessions.js";
-
-/** What an extension reaches of the app through its SDK, beside what it registers. */
-export interface ExtensionAccess {
-  sessions: ExtensionSessionAccess;
-  nodes: Nodes;
-}
+import type { AppState, SessionSettledNotice } from "../state.js";
+import { ExtensionSessions } from "./sessions.js";
+import { ExtensionNodes } from "./nodes.js";
 import { createBroadcast } from "../models/broadcast.js";
 import { requestOrigin } from "../nodes/node-link.js";
 import { logger } from "../logger.js";
@@ -144,14 +139,14 @@ export class ExtensionHost {
   private readonly disposers: { name: string; dispose: Disposer }[] = [];
   private readonly records = new Map<string, ExtensionRecord>();
 
-  /** `process`: each extension's directory and database, and the broadcast. `reservedNamespaces`: the core's `api`
-   * namespaces, which no extension may take. `onError`: what an extension's failure to register or dispose
-   * is told to. `access`: each extension's `reins.sessions` and `reins.nodes` (the app's; `extensions/sessions.ts`, `extensions/nodes.ts`). */
+  /** `app`: the app the host is of, read when an extension registers (the host is built with it): its process
+   * has each extension's directory and database and the broadcast, and its sessions and nodes are what
+   * `reins.sessions` and `reins.nodes` reach. `reservedNamespaces`: the core's `api` namespaces, which no
+   * extension may take. `onError`: what an extension's failure to register or dispose is told to. */
   constructor(
-    private readonly process: Pick<ServerProcess, "extensionData" | "broadcast">,
+    private readonly app: () => AppState,
     private readonly reservedNamespaces: ReadonlySet<string>,
     private readonly onError: (extension: string, error: unknown) => void,
-    private readonly access: (extension: string) => ExtensionAccess,
   ) {}
 
   /** Opens the extension's directory and database, applies its pending migrations, then calls its register
@@ -164,7 +159,7 @@ export class ExtensionHost {
     this.records.set(name, record);
     let storage: ExtensionStorage;
     try {
-      storage = this.process.extensionData.open(name);
+      storage = this.app().process.extensionData.open(name);
     } catch (error) {
       this.fail(record, "storage", error);
       return;
@@ -404,8 +399,7 @@ export class ExtensionHost {
       const removals = methods.map(method => add(this.methods, method));
       return () => { for (const remove of removals) void remove(); };
     };
-    const broadcast = createBroadcast(this.process);
-    const { sessions, nodes } = this.access(name);
+    const broadcast = createBroadcast(this.app().process);
     return Object.freeze({
       name,
       dataDir,
@@ -424,20 +418,11 @@ export class ExtensionHost {
         match: matchTools,
       }),
       services: Object.freeze({ register: registerService }),
-      sessions: Object.freeze({
-        get: (sessionId: string) => sessions.get(sessionId),
-        start: (session: Parameters<ExtensionSessionAccess["start"]>[0]) => sessions.start(session),
-        send: (sessionId: string, message: string, options?: Parameters<ExtensionSessionAccess["send"]>[2]) => sessions.send(sessionId, message, options),
-        compact: (sessionId: string, options?: { instructions?: string }) => sessions.compact(sessionId, options),
-        contextUsage: (sessionId: string) => sessions.contextUsage(sessionId),
-        onSettled: (listener: SettlementListener["listener"]) => {
-          if (typeof listener !== "function") throw new Error("A settlement listener is a function");
-          return add(this.settlementListeners, { extension: name, listener });
-        },
-      }),
-      nodes: Object.freeze({
-        run: (node: string, command: string, options?: Parameters<Nodes["run"]>[2]) => nodes.run(node, command, options),
-      }),
+      sessions: Object.freeze(new ExtensionSessions(this.app(), name, listener => {
+        if (typeof listener !== "function") throw new Error("A settlement listener is a function");
+        return add(this.settlementListeners, { extension: name, listener });
+      })),
+      nodes: Object.freeze(new ExtensionNodes(this.app())),
       prompt: Object.freeze({
         register: (contribution: PromptContribution) => add(this.contributions, { extension: name, contribution }),
       }),

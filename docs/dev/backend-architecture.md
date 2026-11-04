@@ -12,7 +12,7 @@ routes / tools / ws / nodes
 
 `src/nodes/` (the node link) is an adapter like the routes: it serves the node's calls through models, not stores.
 
-Beside these layers are **backend extensions** (`src/extensions/<name>/`, [server-sdk.md](server-sdk.md)): code that contributes only through the server SDK (`@reins/sdk/server`). The host (`src/extensions/*.ts`) is core code: the app's `ExtensionHost` (`AppState.extensions`), which entry points read for `api.tools`, extensions' `api` functions, prompt sections and routes, and which tells extensions of their sessions' run ends (`reins.sessions`, an adapter over the app's sessions in `extensions/sessions.ts`). An extension has its own layers inside; it imports nothing of the core, and the core does not import it (*Dependency rules*). MCP servers are one ([mcp-servers.md](mcp-servers.md)).
+Beside these layers are **backend extensions** (`src/extensions/<name>/`, [server-sdk.md](server-sdk.md)): code that contributes only through the server SDK (`@reins/sdk/server`). The host (`src/extensions/*.ts`) is core code: the app's `ExtensionHost` (`AppState.extensions`), which entry points read for `api.tools`, extensions' `api` functions, prompt sections and routes, and which tells extensions of their sessions' run ends (`reins.sessions`, `ExtensionSessions` in `extensions/sessions.ts`, over the app's sessions). An extension has its own layers inside; it imports nothing of the core, and the core does not import it (*Dependency rules*). MCP servers are one ([mcp-servers.md](mcp-servers.md)).
 
 ## Layers
 
