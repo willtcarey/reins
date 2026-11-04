@@ -1,7 +1,6 @@
 import { openInBrowserEvent } from "../../components/events.js";
 import { sameSource, type Source } from "@reins/sdk";
 import type { Inspector } from "../inspector.js";
-import { toRelativePath } from "../path-utils.js";
 import type { AppStore } from "./app-store.js";
 import { ActiveSessionStore } from "./active-session-store.js";
 import { CodeReviewStore } from "./code-review-store.js";
@@ -42,11 +41,7 @@ export class WorkspaceStore {
           const lineRange = message.startLine != null && message.endLine != null
             ? { startLine: message.startLine, endLine: message.endLine }
             : undefined;
-          const source = this.source;
-          if (!source) return;
-          const path = toRelativePath(message.path, source.path);
-          if (!path) return;
-          document.dispatchEvent(openInBrowserEvent(source, path, lineRange));
+          document.dispatchEvent(openInBrowserEvent(message.source, message.path, lineRange));
         },
       }),
       app.files.onFilesChanged((source) => {

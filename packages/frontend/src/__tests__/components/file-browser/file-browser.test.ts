@@ -4,7 +4,7 @@ import { openInInspectorEvent } from "../../../components/events.js";
 import type { FileView } from "../../../components/file-viewer/file-viewer.js";
 import { FileBrowserStore } from "../../../models/stores/file-browser-store.js";
 import { collectTemplateEventListeners, collectTemplateProperties, templateToString } from "../../helpers/lit-template.js";
-import { mockFetch, restoreFetch } from "../../helpers/mock-fetch.js";
+import { fileResponse, mockFetch, restoreFetch } from "../../helpers/mock-fetch.js";
 import { testSdk } from "../../helpers/reins-sdk.js";
 
 const source = { nodeId: "node", path: "/work" };
@@ -12,9 +12,9 @@ const source = { nodeId: "node", path: "/work" };
 function browserAt(path: string, options: { startLine?: number; endLine?: number; mode?: "code" | "preview" } = {}) {
   mockFetch((url) => (url.includes("/files/tree")
     ? Response.json({ entries: [] })
-    : new Response("text", { headers: { "content-type": "text/plain" } })));
+    : fileResponse("text")));
   const { reins, opened } = testSdk({ source, projectId: 7 });
-  const store = new FileBrowserStore(reins);
+  const store = new FileBrowserStore(reins, { viewedSource: () => null });
   store.open(source, { path, ...options });
   const browser = new FileBrowser();
   browser.store = store;

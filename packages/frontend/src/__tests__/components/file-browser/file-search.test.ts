@@ -2,17 +2,17 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { FileSearch } from "../../../components/file-browser/file-search.js";
 import { FileBrowserStore } from "../../../models/stores/file-browser-store.js";
 import { clickButton } from "../../helpers/lit-template.js";
-import { mockFetch, restoreFetch } from "../../helpers/mock-fetch.js";
+import { fileResponse, mockFetch, restoreFetch } from "../../helpers/mock-fetch.js";
 import { testSdk } from "../../helpers/reins-sdk.js";
 
 const source = { nodeId: "node", path: "/work" };
 
 async function openSearch(files: string[]) {
-  mockFetch((url) => (url.endsWith("/files")
+  mockFetch((url) => (url.includes("/files?")
     ? Response.json({ files })
-    : new Response("text", { headers: { "content-type": "text/plain" } })));
+    : fileResponse("text")));
   const { reins, opened } = testSdk({ source, projectId: 5 });
-  const store = new FileBrowserStore(reins);
+  const store = new FileBrowserStore(reins, { viewedSource: () => null });
   store.openSearch(source);
   void store.listing;
   await new Promise((resolve) => setTimeout(resolve, 0));

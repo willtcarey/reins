@@ -34,6 +34,18 @@ export class NodeHost {
     return read.bytes;
   }
 
+  /** Whether `path` is a file the node can read (a symlink is followed); a directory is not. */
+  async hasFile(path: string, { signal }: { signal?: AbortSignal } = {}): Promise<boolean> {
+    const home = await this.home({ signal });
+    try {
+      await home.readFileRange(path, { maxBytes: 1, signal });
+      return true;
+    } catch (error) {
+      if (error instanceof NodeFileError) return false;
+      throw error;
+    }
+  }
+
   async writeFile(path: string, content: string | Uint8Array, { signal }: { signal?: AbortSignal } = {}): Promise<void> {
     const home = await this.home({ signal });
     await refused(home.writeFile(path, content, { signal }), why => new Error(`Cannot write ${path} on "${this.node.name}": ${why}`));

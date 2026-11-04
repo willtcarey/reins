@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { SettingsPage } from "../../../components/settings/page.js";
 import { SettingsStore } from "../../../models/stores/settings-store.js";
+import { NodesStore } from "../../../models/stores/nodes-store.js";
 import { SettingsPages } from "../../../sdk-host/settings-pages.js";
 import { mockFetch, restoreFetch } from "../../helpers/mock-fetch.js";
 import { collectTemplateProperties, collectTemplateValues, templateToString } from "../../helpers/lit-template.js";
@@ -46,7 +47,7 @@ function mockSettingsFetch(modelsResponse: Response | Promise<Response> = jsonRe
 }
 
 /** The page as rendered and loaded for a route's section, or an extension's page. */
-async function showPage(section: SettingsPage["section"], { store = new SettingsStore(), pages = new SettingsPages(), extension = null, extensionDetails = null }: {
+async function showPage(section: SettingsPage["section"], { store = new SettingsStore(new NodesStore()), pages = new SettingsPages(), extension = null, extensionDetails = null }: {
   store?: SettingsStore;
   pages?: SettingsPages;
   extension?: string | null;

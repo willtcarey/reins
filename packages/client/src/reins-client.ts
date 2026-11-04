@@ -1,5 +1,6 @@
 import type { DiffFileResponse, DiffPatchQuery, DiffQuery } from "@reins/backend/routes/diff.js";
 import type { DirectoryEntry } from "@reins/backend/models/sources.js";
+import type { FileKind } from "@reins/backend/models/file-system.js";
 import type { ExtensionView } from "@reins/backend/extensions/host.js";
 import type { SpreadResponse } from "@reins/backend/routes/git.js";
 import type { OAuthProviderInfo, OAuthStartResponse } from "@reins/backend/routes/oauth.js";
@@ -37,7 +38,9 @@ type FetchTransport = (input: string, init?: RequestInit) => Promise<Response>;
 /** A fetch that reports upload progress as it sends the body. */
 type UploadTransport = (input: string, init: RequestInit, onProgress?: (percent: number) => void) => Promise<Response>;
 export type RequestOptions = { signal?: AbortSignal };
-type UploadOptions = RequestOptions & { onProgress?: (percent: number) => void; /** The folder in the checkout; its root without it. */ path?: string };
+type UploadOptions = RequestOptions & { onProgress?: (percent: number) => void; /** The folder under the root; the root itself without it. */ path?: string };
+/** A directory on a node, named by the node's ID and its absolute path there: a source. */
+export interface NodeDirectory { nodeId: string; path: string }
 interface HistoryQuery { limit: number; offset: number; search?: string }
 
 export interface ReinsClientOptions {
@@ -47,6 +50,16 @@ export interface ReinsClientOptions {
   fetch?: FetchTransport;
   /** Sends uploads, so they can report progress (the browser's is XHR); `fetch`, without progress, by default. */
   upload?: UploadTransport;
+}
+
+export type { FileKind };
+
+/** How the file routes say a file's content is shown (`X-Reins-Content-Kind`): as text, previewed by the browser
+ * itself (images, PDFs), or as a binary file, whose body is a placeholder unless downloaded. */
+export function fileKind(response: Response): FileKind {
+  const kind = response.headers.get("X-Reins-Content-Kind");
+  if (kind === "text" || kind === "preview" || kind === "binary") return kind;
+  throw new ReinsHttpError(response.status, `A file's content came without its kind (X-Reins-Content-Kind: ${kind ?? "none"})`, null);
 }
 
 /** A failed request: the server's error status and its `error` message, or a success that was not the JSON expected. */
@@ -160,10 +173,12 @@ export class ReinsClient {
     at: (nodeId: string, path: string, options?: RequestOptions) => this.json<SkillsListResponse>("GET", this.query(`/api/nodes/${this.segment(nodeId)}/skills`, { path }), undefined, options),
   };
 
-  /** The diffs of a session's checkout (its source). */
+  /** The diffs of a session's checkout (its source), and the files they show, at the diff's branch (`ref`). */
   readonly diff = {
     files: (sessionId: string, query: DiffQuery, options?: RequestOptions) => this.json<DiffFileResponse>("GET", this.query(`${this.sessionPath(sessionId)}/diff/files`, query), undefined, options),
     patch: (sessionId: string, query: DiffPatchQuery, options?: RequestOptions) => this.text("GET", this.query(`${this.sessionPath(sessionId)}/diff/patch`, query), undefined, options),
+    fileContent: (sessionId: string, path: string, query: { ref?: string } = {}, options?: RequestOptions) => this.response("GET", this.sessionFileContentPath(sessionId, path, query), undefined, options),
+    fileContentUrl: (sessionId: string, path: string, query: { ref?: string } = {}) => this.url(this.sessionFileContentPath(sessionId, path, query)),
   };
 
   /** Git in a session's checkout (its source). */
@@ -173,13 +188,13 @@ export class ReinsClient {
     rebase: (sessionId: string, branch: string, options?: RequestOptions) => this.json<void>("POST", `${this.sessionPath(sessionId)}/git/rebase`, { branch }, options),
   };
 
-  /** The files of a session's checkout (its source). */
+  /** The files of a directory on a node (a source), whether or not a session works there; paths are relative to it. */
   readonly files = {
-    list: (sessionId: string, options?: RequestOptions) => this.json<{ files: string[] }>("GET", `${this.sessionPath(sessionId)}/files`, undefined, options),
-    tree: (sessionId: string, path: string, options?: RequestOptions) => this.json<{ entries: DirectoryEntry[] }>("GET", this.query(`${this.sessionPath(sessionId)}/files/tree`, { path }), undefined, options),
-    content: (sessionId: string, path: string, query: { ref?: string; download?: boolean } = {}, options?: RequestOptions) => this.response("GET", this.fileContentPath(sessionId, path, query), undefined, options),
-    contentUrl: (sessionId: string, path: string, query: { ref?: string; download?: boolean } = {}) => this.url(this.fileContentPath(sessionId, path, query)),
-    upload: (sessionId: string, files: FileList | readonly File[], options?: UploadOptions) => this.uploadFiles(sessionId, files, options),
+    list: (root: NodeDirectory, options?: RequestOptions) => this.json<{ files: string[] }>("GET", this.nodeFilesPath(root, ""), undefined, options),
+    tree: (root: NodeDirectory, path: string, options?: RequestOptions) => this.json<{ entries: DirectoryEntry[] }>("GET", this.nodeFilesPath(root, "/tree", { path }), undefined, options),
+    content: (root: NodeDirectory, path: string, query: { ref?: string; download?: boolean } = {}, options?: RequestOptions) => this.response("GET", this.nodeFileContentPath(root, path, query), undefined, options),
+    contentUrl: (root: NodeDirectory, path: string, query: { ref?: string; download?: boolean } = {}) => this.url(this.nodeFileContentPath(root, path, query)),
+    upload: (root: NodeDirectory, files: FileList | readonly File[], options?: UploadOptions) => this.uploadFiles(root, files, options),
   };
 
   readonly reviews = {
@@ -284,10 +299,10 @@ export class ReinsClient {
     return response;
   }
 
-  private uploadFiles(sessionId: string, files: FileList | readonly File[], { onProgress, path, ...options }: UploadOptions = {}): Promise<{ uploaded: string[] }> {
+  private uploadFiles(root: NodeDirectory, files: FileList | readonly File[], { onProgress, path, ...options }: UploadOptions = {}): Promise<{ uploaded: string[] }> {
     const body = new FormData();
     for (const file of Array.from(files)) body.append("files", file);
-    return this.json("POST", this.query(`${this.sessionPath(sessionId)}/upload`, { path: path || undefined }), body, options, (input, init = {}) => this.uploadTransport(input, init, onProgress));
+    return this.json("POST", this.nodeFilesPath(root, "/upload", { path: path || undefined }), body, options, (input, init = {}) => this.uploadTransport(input, init, onProgress));
   }
 
   private async httpError(response: Response): Promise<ReinsHttpError> {
@@ -305,8 +320,14 @@ export class ReinsClient {
   private projectPath(projectId: number): string { return `/api/projects/${this.segment(projectId)}`; }
   private sessionPath(sessionId: string): string { return `/api/sessions/${this.segment(sessionId)}`; }
   private attachmentPath(sessionId: string, attachmentId: string): string { return `${this.sessionPath(sessionId)}/attachments/${this.segment(attachmentId)}`; }
-  private fileContentPath(sessionId: string, path: string, query: { ref?: string; download?: boolean }): string {
-    return this.query(`${this.sessionPath(sessionId)}/files/content`, { path, ref: query.ref, download: query.download ? 1 : undefined });
+  private sessionFileContentPath(sessionId: string, path: string, query: { ref?: string }): string {
+    return this.query(`${this.sessionPath(sessionId)}/files/content`, { path, ref: query.ref });
+  }
+  private nodeFilesPath({ nodeId, path: root }: NodeDirectory, route: string, query: object = {}): string {
+    return this.query(`/api/nodes/${this.segment(nodeId)}/files${route}`, { root, ...query });
+  }
+  private nodeFileContentPath(root: NodeDirectory, path: string, query: { ref?: string; download?: boolean }): string {
+    return this.nodeFilesPath(root, "/content", { path, ref: query.ref, download: query.download ? 1 : undefined });
   }
   private reviewPath(projectId: number, suffix: string, taskId: number | null): string {
     return this.query(`${this.projectPath(projectId)}/code-review${suffix}`, { taskId });

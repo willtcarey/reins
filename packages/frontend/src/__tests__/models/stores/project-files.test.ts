@@ -1,18 +1,22 @@
 import { afterEach, describe, expect, jest, test } from "bun:test";
 import type { ChatEvent } from "../../../models/chat-state.js";
 import { FileReadError, ProjectFiles } from "../../../models/stores/project-files.js";
+import { NodesStore } from "../../../models/stores/nodes-store.js";
 import { SessionCache } from "../../../models/stores/session-cache.js";
+import type { NodeView } from "@backend/models/node.js";
 import type { Source } from "@reins/sdk";
-import { mockFetch, restoreFetch } from "../../helpers/mock-fetch.js";
+import { Loadable } from "../../../helpers/loadable.js";
+import { fileResponse, mockFetch, restoreFetch } from "../../helpers/mock-fetch.js";
+import { testNode } from "../../helpers/reins-sdk.js";
 import { StubClient } from "../../helpers/stub-client.js";
 
 const source: Source = { nodeId: "node-a", path: "/work/project" };
+const sourceQuery = "root=%2Fwork%2Fproject";
 const placement = { available: true, removed: false, nodeId: "node-a", nodeName: "A", path: "/work/project" };
 
-/** Files whose source is known from a session of project 1 placed on it. */
-function filesOnSource(sessions = new SessionCache()) {
-  sessions.set("here", { projectId: 1, placement });
-  return new ProjectFiles(new StubClient(), sessions);
+/** Files of an app that knows no sessions and has not listed its nodes yet; `client` sends its node messages. */
+function filesOnSource(client = new StubClient()) {
+  return new ProjectFiles(client, new SessionCache(), new NodesStore(client));
 }
 
 function deferred() {
@@ -31,7 +35,7 @@ function filesWithSessions() {
   const sessions = new SessionCache();
   sessions.set("here", { projectId: 1, placement });
   sessions.set("elsewhere", { projectId: 1, placement: { ...placement, path: "/work/other" } });
-  return { client, files: new ProjectFiles(client, sessions) };
+  return { client, files: new ProjectFiles(client, sessions, new NodesStore(client)) };
 }
 
 /** Session events, and the time for a change they announce to settle. */
@@ -49,7 +53,7 @@ async function fireEvents(client: StubClient, ...events: Array<[sessionId: strin
 afterEach(() => restoreFetch());
 
 describe("ProjectFiles listing", () => {
-  test("loads a source's listing once and keeps it", async () => {
+  test("loads a source's listing once and keeps it, with no session on it", async () => {
     const requests: string[] = [];
     mockFetch((url) => {
       requests.push(url);
@@ -64,66 +68,69 @@ describe("ProjectFiles listing", () => {
 
     expect(files.listing(source).data).toEqual(["README.md", "src/app.ts"]);
     expect(files.listing({ ...source }).data).toEqual(["README.md", "src/app.ts"]);
-    // The project of the session placed on the source routes the request.
-    expect(requests).toEqual(["/api/sessions/here/files"]);
+    expect(requests).toEqual([`/api/nodes/node-a/files?${sourceQuery}`]);
     expect(notified).toBe(1);
   });
 
-  test("lists nothing while the source's node is offline, and loads when asked once it comes back", async () => {
+  test("lists nothing while the server says the source's node is offline, and reloads when the node connects or disconnects", async () => {
+    let online = false;
     const requests: string[] = [];
     mockFetch((url) => {
       requests.push(url);
-      return Response.json({ files: ["README.md"] });
+      return online ? Response.json({ files: ["README.md"] }) : Response.json({ error: "Node not connected" }, { status: 503 });
     });
-    const sessions = new SessionCache();
-    sessions.set("here", { projectId: 1, placement: { ...placement, available: false } });
-    const files = new ProjectFiles(new StubClient(), sessions);
+    const client = new StubClient();
+    const nodes = new NodesStore(client);
+    nodes.nodes = Loadable.idle<NodeView[]>().asLoaded([testNode("node-a", "NODE-A", false)]);
+    const files = new ProjectFiles(client, new SessionCache(), nodes);
     let notified = 0;
     files.subscribe(() => { notified += 1; });
+    const listed = `/api/nodes/node-a/files?${sourceQuery}`;
 
-    expect(files.listing(source).data).toBeNull();
-    await settle();
-    expect(requests).toEqual([]);
-
-    sessions.set("here", { placement });
-    expect(notified).toBe(1);
     files.listing(source);
     await settle();
-    expect(requests).toEqual(["/api/sessions/here/files"]);
-    expect(files.listing(source).data).toEqual(["README.md"]);
+    // Empty, not an error, and not asked again on the next ask.
+    expect(files.listing(source)).toMatchObject({ data: null, loading: false, error: null });
+    await settle();
+    expect(requests).toEqual([listed]);
 
-    sessions.set("here", { placement: { ...placement, available: false } });
-    expect(files.listing(source).data).toBeNull();
-    expect(notified).toBe(3);
+    online = true;
+    client.fireMessage({ type: "node_updated", node: testNode("node-a", "NODE-A", true) });
+    files.listing(source);
+    await settle();
+    expect(files.listing(source).data).toEqual(["README.md"]);
+    expect(requests).toEqual([listed, listed]);
+
+    online = false;
+    client.fireMessage({ type: "node_updated", node: testNode("node-a", "NODE-A", false) });
+    files.listing(source);
+    await settle();
+    expect(files.listing(source)).toMatchObject({ data: null, error: null });
+    expect(requests).toEqual([listed, listed, listed]);
+    expect(notified).toBeGreaterThan(0);
   });
 
-  test("lists nothing for a source no known session is on", async () => {
-    const requests: string[] = [];
-    mockFetch((url) => {
-      requests.push(url);
-      return Response.json({ files: ["README.md"] });
-    });
+  test("lists nothing for a node the server does not know: removed, or never paired", async () => {
+    mockFetch(() => Response.json({ error: "Node not found: node-z" }, { status: 404 }));
     const files = filesOnSource();
 
-    expect(files.listing({ nodeId: "node-a", path: "/elsewhere" }).data).toBeNull();
-    expect(files.contentUrl({ nodeId: "node-a", path: "/elsewhere" }, "README.md")).toBeNull();
+    files.listing({ nodeId: "node-z", path: "/work" });
     await settle();
-    expect(requests).toEqual([]);
+
+    expect(files.listing({ nodeId: "node-z", path: "/work" })).toMatchObject({ data: null, loading: false, error: null });
   });
 
   test("keeps each source's listing apart", async () => {
     mockFetch((url) => Response.json({ files: [url] }));
-    const sessions = new SessionCache();
-    sessions.set("there", { projectId: 2, placement: { ...placement, nodeId: "node-b" } });
-    const files = filesOnSource(sessions);
+    const files = filesOnSource();
     const other: Source = { nodeId: "node-b", path: "/work/project" };
 
     files.listing(source);
     files.listing(other);
     await settle();
 
-    expect(files.listing(source).data).toEqual(["/api/sessions/here/files"]);
-    expect(files.listing(other).data).toEqual(["/api/sessions/there/files"]);
+    expect(files.listing(source).data).toEqual([`/api/nodes/node-a/files?${sourceQuery}`]);
+    expect(files.listing(other).data).toEqual([`/api/nodes/node-b/files?${sourceQuery}`]);
   });
 
   test("keeps only the listings of the two sources asked for last", async () => {
@@ -132,10 +139,7 @@ describe("ProjectFiles listing", () => {
       requests.push(url);
       return Response.json({ files: [url] });
     });
-    const sessions = new SessionCache();
-    sessions.set("there", { projectId: 2, placement: { ...placement, nodeId: "node-b" } });
-    sessions.set("third", { projectId: 3, placement: { ...placement, nodeId: "node-c" } });
-    const files = filesOnSource(sessions);
+    const files = filesOnSource();
     const other: Source = { nodeId: "node-b", path: "/work/project" };
     const third: Source = { nodeId: "node-c", path: "/work/project" };
 
@@ -143,12 +147,13 @@ describe("ProjectFiles listing", () => {
       files.listing(asked);
       await settle();
     }
-    expect(requests).toEqual(["/api/sessions/here/files", "/api/sessions/there/files", "/api/sessions/third/files"]);
+    const listed = ["node-a", "node-b", "node-c"].map(nodeId => `/api/nodes/${nodeId}/files?${sourceQuery}`);
+    expect(requests).toEqual(listed);
 
-    expect(files.listing(source).data).toEqual(["/api/sessions/here/files"]);
+    expect(files.listing(source).data).toEqual([listed[0]]);
     expect(files.listing(other).data).toBeNull();
     await settle();
-    expect(requests.at(-1)).toBe("/api/sessions/there/files");
+    expect(requests.at(-1)).toBe(listed[1]);
   });
 
   test("reloads a source's listing when it is next asked for after a file-modifying tool or a turn of its session ends", async () => {
@@ -222,7 +227,7 @@ describe("ProjectFiles listing", () => {
     await settle();
     expect(files.listing(source).data).toEqual(["latest.ts"]);
 
-    mockFetch(() => Response.json({ error: "Node not connected" }, { status: 503 }));
+    mockFetch(() => Response.json({ error: "git ls-files failed" }, { status: 500 }));
     await fireEvents(client, ["here", { type: "agent_end" }]);
     files.listing(source);
     await settle();
@@ -238,23 +243,29 @@ describe("ProjectFiles reads", () => {
     mockFetch((url) => {
       requests.push(url);
       version += 1;
-      return new Response(`v${version}`, { headers: { "content-type": "text/plain" } });
+      return fileResponse(`v${version}`);
     });
     const files = filesOnSource();
 
     expect(await files.read(source, "src/index.ts")).toEqual({ text: "v1", isBinary: false });
     expect(await files.read(source, "src/index.ts")).toEqual({ text: "v2", isBinary: false });
-    expect(requests).toEqual(["/api/sessions/here/files/content?path=src%2Findex.ts", "/api/sessions/here/files/content?path=src%2Findex.ts"]);
+    const read = `/api/nodes/node-a/files/content?${sourceQuery}&path=src%2Findex.ts`;
+    expect(requests).toEqual([read, read]);
   });
 
   test("describes images and PDFs as binary", async () => {
-    mockFetch((url) => new Response(new Blob([new Uint8Array(64)]), {
-      headers: { "content-type": url.includes(".pdf") ? "application/pdf" : "image/png" },
-    }));
+    mockFetch((url) => fileResponse(new Blob([new Uint8Array(64)]), { kind: "preview", contentType: url.includes(".pdf") ? "application/pdf" : "image/png" }));
     const files = filesOnSource();
 
     expect(await files.read(source, "assets/logo.png")).toEqual({ text: "Binary file (64 B)", isBinary: true });
     expect((await files.read(source, "docs/report.pdf")).isBinary).toBe(true);
+  });
+
+  test("shows a binary file as the server describes it, though it answers that in plain text", async () => {
+    mockFetch(() => fileResponse("Binary file (2.0 MB). Download to view.", { kind: "binary" }));
+    const files = filesOnSource();
+
+    expect(await files.read(source, "build/app.bin")).toEqual({ text: "Binary file (2.0 MB). Download to view.", isBinary: true });
   });
 
   test("rejects a missing file as not found", async () => {
@@ -276,7 +287,22 @@ describe("ProjectFiles reads", () => {
     const files = filesOnSource();
 
     expect(await files.listDirectory(source, "src/components")).toEqual([{ name: "app.ts", type: "file" }]);
-    expect(requests).toEqual(["/api/sessions/here/files/tree?path=src%2Fcomponents"]);
-    expect(files.contentUrl(source, "docs/a b.pdf", { download: true })).toBe("/api/sessions/here/files/content?path=docs%2Fa+b.pdf&download=1");
+    expect(requests).toEqual([`/api/nodes/node-a/files/tree?${sourceQuery}&path=src%2Fcomponents`]);
+    expect(files.contentUrl(source, "docs/a b.pdf", { download: true })).toBe(`/api/nodes/node-a/files/content?${sourceQuery}&path=docs%2Fa+b.pdf&download=1`);
+  });
+});
+
+describe("ProjectFiles node names", () => {
+  test("names a source's node as the node list and its messages say", async () => {
+    mockFetch(() => Response.json([testNode("node-a", "NODE-A", true)]));
+    const client = new StubClient();
+    const nodes = new NodesStore(client);
+    const files = new ProjectFiles(client, new SessionCache(), nodes);
+
+    expect(files.nodeName(source)).toBeNull();
+    await nodes.load();
+    expect(files.nodeName(source)).toBe("NODE-A");
+    client.fireMessage({ type: "node_updated", node: { ...testNode("node-a", "NODE-A", false), name: "Renamed" } });
+    expect(files.nodeName(source)).toBe("Renamed");
   });
 });

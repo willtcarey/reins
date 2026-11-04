@@ -48,12 +48,6 @@ describe("checkout views of a session", () => {
     await git(elsewhere.dir, ["checkout", "-b", "on-laptop"]);
     createSession("away", projectId, { agentRuntimeType: "pi", sourceId: createSourceAt(elsewhere.dir, "laptop").id });
 
-    expect(await get("/api/sessions/away/files")).toEqual({ status: 200, body: { files: ["README.md", "laptop-only.txt"] } });
-    expect(await get("/api/sessions/away/files/tree?path=.")).toEqual({ status: 200, body: { entries: [
-      { name: ".git", type: "directory" },
-      { name: "laptop-only.txt", type: "file" },
-      { name: "README.md", type: "file" },
-    ] } });
     expect(await get("/api/sessions/away/files/content?path=laptop-only.txt")).toEqual({ status: 200, body: "laptop\n" });
     expect(await get("/api/sessions/away/diff/files?mode=uncommitted")).toEqual({ status: 200, body: {
       files: [expect.objectContaining({ path: "laptop-only.txt" })],
@@ -66,7 +60,7 @@ describe("checkout views of a session", () => {
     writeFileSync(join(elsewhere.dir, "draft.txt"), "draft\n");
     insertSession("loose", null, { agentRuntimeType: "pi", sourceId: createSourceAt(elsewhere.dir, "laptop").id });
 
-    expect(await get("/api/sessions/loose/files")).toEqual({ status: 200, body: { files: ["draft.txt", "README.md"].toSorted() } });
+    expect(await get("/api/sessions/loose/files/content?path=draft.txt")).toEqual({ status: 200, body: "draft\n" });
     expect(await get("/api/sessions/loose/diff/files")).toEqual({ status: 200, body: {
       files: [expect.objectContaining({ path: "draft.txt" })],
       branch: "main",
@@ -76,6 +70,6 @@ describe("checkout views of a session", () => {
 
   test("an unknown session is a 404", async () => {
     createProject("Project", home.dir);
-    expect(await get("/api/sessions/missing/files")).toEqual({ status: 404, body: { error: "Session not found: missing" } });
+    expect(await get("/api/sessions/missing/diff/files")).toEqual({ status: 404, body: { error: "Session not found: missing" } });
   });
 });

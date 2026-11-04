@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { ReinsClient, ReinsHttpError } from "./reins-client.js";
+import { fileKind, ReinsClient, ReinsHttpError } from "./reins-client.js";
 
 /** A client whose transport records each request and answers from `respond`. */
 function recordingClient(respond: (init?: RequestInit) => Response = () => Response.json({ ok: true }), options: { baseUrl?: string } = {}) {
@@ -135,9 +135,18 @@ describe("ReinsClient", () => {
     expect(client.sessions.attachmentUrl("session / one", "attachment/1")).toBe(
       "/api/sessions/session%20%2F%20one/attachments/attachment%2F1",
     );
-    expect(client.files.contentUrl("s1", "docs/a b.pdf", { ref: "topic/client", download: true })).toBe(
-      "/api/sessions/s1/files/content?path=docs%2Fa+b.pdf&ref=topic%2Fclient&download=1",
+    expect(client.files.contentUrl({ nodeId: "node / one", path: "/work/my app" }, "docs/a b.pdf", { download: true })).toBe(
+      "/api/nodes/node%20%2F%20one/files/content?root=%2Fwork%2Fmy+app&path=docs%2Fa+b.pdf&download=1",
     );
+    expect(client.diff.fileContentUrl("s1", "docs/a b.pdf", { ref: "topic/client" })).toBe(
+      "/api/sessions/s1/files/content?path=docs%2Fa+b.pdf&ref=topic%2Fclient",
+    );
+  });
+
+  test("reads how the server says a file's content is shown, and refuses content that does not say", () => {
+    expect(["text", "preview", "binary"].map(kind => fileKind(answeredAs(kind)))).toEqual(["text", "preview", "binary"]);
+    expect(() => fileKind(answeredAs())).toThrow(ReinsHttpError);
+    expect(() => fileKind(answeredAs("binary-placeholder"))).toThrow(ReinsHttpError);
   });
 
   test("a base URL prefixes every request and resource URL", async () => {
@@ -201,13 +210,17 @@ describe("ReinsClient", () => {
     ]);
   });
 
-  test("uploads files into a folder of a session's checkout as multipart form data, through the upload transport when one is given", async () => {
+  test("uploads files into a folder of a directory on a node as multipart form data, through the upload transport when one is given", async () => {
     const files = [new File(["a"], "a.txt"), new File(["b"], "b.txt")];
+    const source = { nodeId: "internal", path: "/work" };
     const { client, requests } = recordingClient(() => Response.json({ uploaded: ["a.txt", "b.txt"] }));
 
-    expect(await client.files.upload("sess-1", files)).toEqual({ uploaded: ["a.txt", "b.txt"] });
-    expect(await client.files.upload("sess-1", files, { path: "docs/notes" })).toEqual({ uploaded: ["a.txt", "b.txt"] });
-    expect(requests.map(request => request.url)).toEqual(["/api/sessions/sess-1/upload", "/api/sessions/sess-1/upload?path=docs%2Fnotes"]);
+    expect(await client.files.upload(source, files)).toEqual({ uploaded: ["a.txt", "b.txt"] });
+    expect(await client.files.upload(source, files, { path: "docs/notes" })).toEqual({ uploaded: ["a.txt", "b.txt"] });
+    expect(requests.map(request => request.url)).toEqual([
+      "/api/nodes/internal/files/upload?root=%2Fwork",
+      "/api/nodes/internal/files/upload?root=%2Fwork&path=docs%2Fnotes",
+    ]);
     expect(requests[0]?.init?.method).toBe("POST");
     const body = requests[0]?.init?.body;
     expect(body instanceof FormData ? body.getAll("files").map(file => (file instanceof File ? file.name : file)) : body).toEqual(["a.txt", "b.txt"]);
@@ -223,9 +236,9 @@ describe("ReinsClient", () => {
         return Response.json({ error: "Path escapes the checkout" }, { status: 400 });
       },
     });
-    const error = await rejection(withProgress.files.upload("sess-1", files, { onProgress: percent => progress.push(percent) }));
+    const error = await rejection(withProgress.files.upload(source, files, { onProgress: percent => progress.push(percent) }));
     expect(error).toMatchObject({ status: 400, message: "Path escapes the checkout" });
-    expect(uploads).toEqual(["POST http://server/api/sessions/sess-1/upload"]);
+    expect(uploads).toEqual(["POST http://server/api/nodes/internal/files/upload?root=%2Fwork"]);
     expect(progress).toEqual([50]);
   });
 });
@@ -236,6 +249,11 @@ test("bundles for the browser from its own source alone: backend and telemetry t
   const modules = (await result.outputs[0]!.text()).match(/^\/\/ \S+\.ts$/gm);
   expect(modules).toEqual(["// src/reins-client.ts"]);
 });
+
+/** A file's content answered with `kind` as its `X-Reins-Content-Kind`, or without one. */
+function answeredAs(kind?: string): Response {
+  return new Response("x", { headers: kind ? { "X-Reins-Content-Kind": kind } : {} });
+}
 
 describe("ReinsClient over HTTP", () => {
   let server: ReturnType<typeof Bun.serve> | undefined;

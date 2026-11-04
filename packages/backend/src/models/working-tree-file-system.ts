@@ -1,6 +1,6 @@
 import { basename } from "node:path";
 import { detectMimeTypeFromBytes } from "../mime.js";
-import { normalizeWorkspaceFilePath, type FileSystem, type ReadFile, type WorkspaceFile } from "./file-system.js";
+import { fileKind, normalizeWorkspaceFilePath, type FileSystem, type ReadFile, type WorkspaceFile } from "./file-system.js";
 
 /** Bytes read to detect a file's MIME type. */
 const MIME_SNIFF_BYTES = 8192;
@@ -17,10 +17,12 @@ export class WorkingTreeFileSystem implements FileSystem {
     const { size, body } = await this.open(relativePath, MIME_SNIFF_BYTES);
     const prefix = new Uint8Array(await new Response(body).arrayBuffer());
     let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+    const mimeType = await detectMimeTypeFromBytes(prefix);
     return {
       filename: basename(relativePath),
-      mimeType: await detectMimeTypeFromBytes(prefix),
+      mimeType,
       size,
+      kind: fileKind(mimeType, size),
       // Opened only if the caller sends the content.
       openBody: () => new ReadableStream<Uint8Array>({
         start: async () => { reader = (await this.open(relativePath)).body.getReader(); },

@@ -3,12 +3,13 @@
  * state on top of it (docs/dev/frontend-architecture.md *Store map*).
  */
 
-import { ReinsHttpError } from "@reins/client";
+import { fileKind, ReinsHttpError } from "@reins/client";
 import { Loadable } from "../../helpers/loadable.js";
 import { formatBytes } from "../../helpers/format-bytes.js";
 import type { DirectoryEntry, Files, FileText, Source } from "@reins/sdk";
 import { api } from "../api.js";
 import type { InboundEventSource } from "../ws-client.js";
+import type { NodesStore } from "./nodes-store.js";
 import type { SessionCache } from "./session-cache.js";
 
 export class FileReadError extends Error {
@@ -27,19 +28,15 @@ const NO_LISTING = Loadable.idle<readonly string[]>();
 // drop and reload each other's listing on every render.
 const KEPT_LISTINGS = 2;
 
-/** How a source is reached: through a session on it, whose checkout routes read its source, and whether
- * its node is connected. */
-interface Route {
-  sessionId: string;
-  available: boolean;
-}
-
 interface Listing {
   source: Source;
   state: Loadable<readonly string[]>;
   request: number;
-  available: boolean;
-  /** Its files may have changed, or its node has come back, since it loaded: the next ask reloads it. */
+  /** The server said its node is offline (503) or unknown (404): it lists nothing. */
+  unavailable: boolean;
+  /** Its node's connection as the node list last said, null while the list does not have it. */
+  nodeConnected: boolean | null;
+  /** Its files may have changed, or its node has connected or disconnected, since it loaded: the next ask reloads it. */
   stale: boolean;
 }
 
@@ -53,21 +50,20 @@ function sameFiles(a: readonly string[] | null, b: readonly string[]): boolean {
 
 /**
  * Application-lifetime: listings are cached for the sources asked for last, and reloaded only when
- * asked for, so a source nobody shows costs neither memory nor requests. Sessions carry no source
- * ID, so a source is named by its node and path, and the sessions known on it say how to reach it:
- * the file routes of a session read that session's source. Only this changes once a route reads a
- * source by node and path.
+ * asked for, so a source nobody shows costs neither memory nor requests. A source is read by its node
+ * and path (the node file routes), whether or not a session works there. Every read is tried: the
+ * server says when the node cannot be reached, and the node list says when to try a listing again.
  */
 export class ProjectFiles implements Files {
   private listings = new Map<string, Listing>();
-  private routes = new Map<string, Route | null>();
   private listeners = new Set<() => void>();
   private changeListeners = new Set<(source: Source) => void>();
   private pendingChanges = new Map<string, ReturnType<typeof setTimeout>>();
   private unsubscribers: Array<() => void>;
 
-  /** `sessions` places sessions: a session's events change its source's files, and its placement says how to reach that source. */
-  constructor(events: InboundEventSource, private sessions: Pick<SessionCache, "get" | "entries" | "subscribeAll">) {
+  /** `sessions` places sessions: a session's events change its source's files. `nodes` names nodes and says
+   * when one connects or disconnects. */
+  constructor(events: InboundEventSource, sessions: Pick<SessionCache, "get">, private nodes: Pick<NodesStore, "get" | "subscribe">) {
     this.unsubscribers = [
       events.subscribe({
         event: ({ sessionId, event }) => {
@@ -77,7 +73,7 @@ export class ProjectFiles implements Files {
           if (placement) this.filesMayHaveChanged({ nodeId: placement.nodeId, path: placement.path });
         },
       }),
-      sessions.subscribeAll(() => this.sessionsChanged()),
+      nodes.subscribe(() => this.nodesChanged()),
     ];
   }
 
@@ -85,7 +81,7 @@ export class ProjectFiles implements Files {
     if (!source) return NO_LISTING;
     const key = sourceKey(source);
     const listing = this.listings.get(key)
-      ?? { source: { nodeId: source.nodeId, path: source.path }, state: Loadable.idle(), request: 0, available: false, stale: false };
+      ?? { source: { nodeId: source.nodeId, path: source.path }, state: Loadable.idle(), request: 0, unavailable: false, nodeConnected: this.nodeConnected(source), stale: false };
     // Kept in the order asked for, so the first is the one asked for longest ago.
     this.listings.delete(key);
     this.listings.set(key, listing);
@@ -94,10 +90,8 @@ export class ProjectFiles implements Files {
       old.request += 1;
       this.listings.delete(oldKey);
     }
-    listing.available = this.route(source)?.available ?? false;
-    if (!listing.available) return NO_LISTING;
     if (listing.state.status === "idle" || listing.stale) this.load(listing);
-    return listing.state;
+    return listing.unavailable ? NO_LISTING : listing.state;
   }
 
   subscribe(listener: () => void): () => void {
@@ -112,35 +106,35 @@ export class ProjectFiles implements Files {
 
   /** Rejects with a `FileReadError`. */
   async read(source: Source, path: string): Promise<FileText> {
-    const route = this.route(source);
-    if (!route) throw new FileReadError(false);
     try {
-      const response = await api.files.content(route.sessionId, path);
-      const contentType = response.headers.get("content-type") || "";
-      if (isTextMimeType(contentType)) return { text: await response.text(), isBinary: false };
-      return { text: `Binary file (${formatBytes((await response.blob()).size)})`, isBinary: true };
+      const response = await api.files.content(source, path);
+      // The server says how a file is shown; a binary file's body is already its description.
+      switch (fileKind(response)) {
+        case "text": return { text: await response.text(), isBinary: false };
+        case "binary": return { text: await response.text(), isBinary: true };
+        case "preview": return { text: `Binary file (${formatBytes((await response.blob()).size)})`, isBinary: true };
+      }
     } catch (error) {
       throw new FileReadError(error instanceof ReinsHttpError && error.status === 404);
     }
   }
 
   async listDirectory(source: Source, path: string): Promise<DirectoryEntry[]> {
-    const route = this.route(source);
-    if (!route) throw new Error("Unknown source");
-    return (await api.files.tree(route.sessionId, path)).entries;
+    return (await api.files.tree(source, path)).entries;
   }
 
-  contentUrl(source: Source, path: string, { download = false } = {}): string | null {
-    const route = this.route(source);
-    return route ? api.files.contentUrl(route.sessionId, path, { download }) : null;
+  contentUrl(source: Source, path: string, { download = false } = {}): string {
+    return api.files.contentUrl(source, path, { download });
   }
 
   async upload(source: Source, files: FileList | readonly File[], { folder = ".", onProgress }: { folder?: string; onProgress?: (percent: number) => void } = {}): Promise<string[]> {
-    const route = this.route(source);
-    if (!route) throw new Error("Unknown source");
-    const { uploaded } = await api.files.upload(route.sessionId, files, { path: folder === "." ? undefined : folder, ...(onProgress ? { onProgress } : {}) });
+    const { uploaded } = await api.files.upload(source, files, { path: folder === "." ? undefined : folder, ...(onProgress ? { onProgress } : {}) });
     this.announceChanged(source);
     return uploaded;
+  }
+
+  nodeName(source: Source): string | null {
+    return this.nodes.get(source.nodeId)?.name ?? null;
   }
 
   dispose(): void {
@@ -151,31 +145,19 @@ export class ProjectFiles implements Files {
     this.changeListeners.clear();
   }
 
-  // Looked up on every listing asked for while rendering, so it is cached until sessions change.
-  private route(source: Source): Route | null {
-    const key = sourceKey(source);
-    const cached = this.routes.get(key);
-    if (cached !== undefined) return cached;
-    const placed = this.sessions.entries().filter(({ placement }) => placement?.nodeId === source.nodeId && placement.path === source.path);
-    const reachable = placed.find(({ placement }) => placement != null && placement.available && !placement.removed);
-    const sessionId = (reachable ?? placed[0])?.id;
-    const route = sessionId == null ? null : { sessionId, available: reachable != null };
-    this.routes.set(key, route);
-    return route;
+  /** A source's node connecting or disconnecting makes the next ask reload its listing, which then lists
+   * its files or nothing, as the server says. A renamed node changes its name. */
+  private nodesChanged(): void {
+    for (const listing of this.listings.values()) {
+      const connected = this.nodeConnected(listing.source);
+      if (listing.nodeConnected !== null && connected !== listing.nodeConnected) listing.stale = true;
+      listing.nodeConnected = connected;
+    }
+    this.notify();
   }
 
-  /** A source's node going offline empties its listing; coming back makes the next ask reload it. */
-  private sessionsChanged(): void {
-    this.routes.clear();
-    let changed = false;
-    for (const listing of this.listings.values()) {
-      const available = this.route(listing.source)?.available ?? false;
-      if (available === listing.available) continue;
-      listing.available = available;
-      listing.stale ||= available;
-      changed = true;
-    }
-    if (changed) this.notify();
+  private nodeConnected(source: Source): boolean | null {
+    return this.nodes.get(source.nodeId)?.connected ?? null;
   }
 
   private filesMayHaveChanged(source: Source): void {
@@ -190,7 +172,7 @@ export class ProjectFiles implements Files {
   private announceChanged(source: Source): void {
     const listing = this.listings.get(sourceKey(source));
     // Whoever shows it asks for it again on hearing this, which reloads it.
-    if (listing?.available) {
+    if (listing && !listing.unavailable) {
       listing.stale = true;
       this.notify();
     }
@@ -198,19 +180,19 @@ export class ProjectFiles implements Files {
   }
 
   private load(listing: Listing): void {
-    const route = this.route(listing.source);
-    if (!route) return;
     const request = ++listing.request;
     listing.stale = false;
     listing.state = listing.state.asLoading();
-    api.files.list(route.sessionId).then(
+    api.files.list(listing.source).then(
       ({ files }) => {
         if (request !== listing.request) return;
+        listing.unavailable = false;
         listing.state = listing.state.asLoaded(sameFiles(listing.state.data, files) ? listing.state.data ?? files : files);
         this.notify();
       },
-      () => {
+      (error: unknown) => {
         if (request !== listing.request) return;
+        listing.unavailable = error instanceof ReinsHttpError && (error.status === 503 || error.status === 404);
         listing.state = listing.state.asError("Failed to load the file list");
         this.notify();
       },
@@ -221,28 +203,3 @@ export class ProjectFiles implements Files {
     for (const listener of this.listeners) listener();
   }
 }
-
-/** MIME types that are textual despite not starting with `text/`. */
-const TEXT_APPLICATION_TYPES = new Set([
-  "application/json",
-  "application/javascript",
-  "application/typescript",
-  "application/xml",
-  "application/yaml",
-  "application/toml",
-  "application/x-sh",
-  "application/x-shellscript",
-  "application/x-ruby",
-  "application/x-python",
-  "application/x-perl",
-  "application/x-php",
-  "application/x-awk",
-  "application/x-lua",
-  "application/x-makefile",
-  "application/x-httpd-php",
-]);
-
-function isTextMimeType(mimeType: string): boolean {
-  return mimeType.startsWith("text/") || TEXT_APPLICATION_TYPES.has(mimeType);
-}
-

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { parseFileChanges } from "../../../models/changes/file-changes.js";
 import { FileDiffContextState } from "../../../models/changes/file-diff-context-state.js";
+import { fileResponse } from "../../helpers/mock-fetch.js";
 
 const PATCH = `diff --git a/src/old.ts b/src/new.ts
 similarity index 80%
@@ -23,6 +24,7 @@ function textResponse(contents: string, headers: Record<string, string> = {}): R
     headers: {
       "Content-Type": "text/plain; charset=utf-8",
       "Content-Length": String(new TextEncoder().encode(contents).byteLength),
+      "X-Reins-Content-Kind": "text",
       ...headers,
     },
   });
@@ -114,7 +116,7 @@ describe("FileDiffContextState", () => {
 
   test("keeps the partial diff stable for binary, too-large, stale, and retrieval failures", async () => {
     const outcomes: Array<Response | Error> = [
-      textResponse("Binary file (10 B). Download to view.", { "X-Reins-Content-Kind": "binary-placeholder" }),
+      textResponse("Binary file (10 B). Download to view.", { "X-Reins-Content-Kind": "binary" }),
       textResponse("small", { "Content-Length": "1048577" }),
       textResponse("stale new\n"),
       new Error("offline"),
@@ -138,11 +140,11 @@ describe("FileDiffContextState", () => {
     }
   });
 
-  test("detects binary MIME, NUL bytes, and actual bodies over the size limit", async () => {
+  test("detects a file the server says is not text, NUL bytes, and actual bodies over the size limit", async () => {
     const responses = [
-      new Response(new Uint8Array([1, 2, 3]), { headers: { "Content-Type": "image/png" } }),
-      new Response(new Uint8Array([97, 0, 98]), { headers: { "Content-Type": "text/plain" } }),
-      new Response("é".repeat(524_289), { headers: { "Content-Type": "text/plain" } }),
+      fileResponse(new Uint8Array([1, 2, 3]), { kind: "preview", contentType: "image/png" }),
+      fileResponse(new Uint8Array([97, 0, 98])),
+      fileResponse("é".repeat(524_289)),
     ];
     const expected = [
       { reason: "binary" },

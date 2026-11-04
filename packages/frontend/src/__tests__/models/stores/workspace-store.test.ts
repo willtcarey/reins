@@ -30,7 +30,7 @@ function sessionDetail(id: string, projectId: number, taskId: number) {
 describe("WorkspaceStore session transitions", () => {
   afterEach(() => restoreFetch());
 
-  test("opens files only for the mounted session", async () => {
+  test("opens the file a message names, in its source, only for the mounted session", async () => {
     mockFetch((url) => {
       if (url === "/api/sessions/current") return Response.json(sessionDetail("current", 1, 10));
       if (url === "/api/sessions/current/messages") return Response.json(messagePage());
@@ -65,19 +65,21 @@ describe("WorkspaceStore session transitions", () => {
         opened.push(event.detail);
       });
 
-      client.fireMessage({ type: "open_file", sessionId: "other", projectId: 1, path: "ignored.ts" });
+      client.fireMessage({ type: "open_file", sessionId: "other", projectId: 1, source: { nodeId: "internal", path: "/work/project" }, path: "ignored.ts" });
       client.fireMessage({
         type: "open_file",
         sessionId: "current",
         projectId: 1,
-        path: "/work/project/opened.ts",
+        source: { nodeId: "box", path: "/home/will/scratch" },
+        path: "report.html",
         startLine: 2,
         endLine: 4,
       });
 
+      // The source the message names, not the viewed session's.
       expect(opened).toEqual([{
-        source: { nodeId: "internal", path: "/work/project" },
-        path: "opened.ts",
+        source: { nodeId: "box", path: "/home/will/scratch" },
+        path: "report.html",
         startLine: 2,
         endLine: 4,
       }]);

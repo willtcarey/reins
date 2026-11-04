@@ -3,6 +3,7 @@
  */
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import { SettingsStore } from "../../../models/stores/settings-store.js";
+import { NodesStore } from "../../../models/stores/nodes-store.js";
 import { mockFetch, restoreFetch } from "../../helpers/mock-fetch.js";
 
 function jsonResponse(data: unknown, ok = true): Response {
@@ -16,7 +17,7 @@ describe("SettingsStore", () => {
   let store: SettingsStore;
 
   beforeEach(() => {
-    store = new SettingsStore();
+    store = new SettingsStore(new NodesStore());
   });
 
   afterEach(() => {

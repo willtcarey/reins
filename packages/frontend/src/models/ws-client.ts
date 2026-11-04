@@ -21,7 +21,8 @@ export type InboundMessage =
   | { type: "session_created"; projectId: number | null; sessionId: string; taskId: number | null; parentSessionId: string | null }
   | { type: "session_updated"; sessionId: string; projectId: number | null }
   | { type: "code_review_updated"; projectId: number; taskId: number | null; reviewId: string; revision: number }
-  | { type: "open_file"; sessionId: string; projectId: number | null; path: string; startLine?: number; endLine?: number }
+  /** `ui.openFile` of session `sessionId`: `path` relative to `source`, the directory on a node to show it in. */
+  | { type: "open_file"; sessionId: string; projectId: number | null; source: { nodeId: string; path: string }; path: string; startLine?: number; endLine?: number }
   /** A node as it is now: it was paired (by pairing code `pairingCodeId`), connected, disconnected or was revoked. */
   | { type: "node_updated"; node: NodeView; pairingCodeId?: number }
   | { type: "node_removed"; nodeId: string }

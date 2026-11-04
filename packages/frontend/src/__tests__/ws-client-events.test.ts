@@ -48,7 +48,7 @@ describe("AppClient inbound event source", () => {
     });
 
     client["handleMessage"]({ type: "task_updated", projectId: 7 });
-    client["handleMessage"]({ type: "open_file", sessionId: "sess-1", projectId: 7, path: "a.ts" });
+    client["handleMessage"]({ type: "open_file", sessionId: "sess-1", projectId: 7, source: { nodeId: "node", path: "/work" }, path: "a.ts" });
     client["handleMessage"]({ type: "session_updated", sessionId: "sess-1", projectId: 7 });
 
     expect(received).toEqual([

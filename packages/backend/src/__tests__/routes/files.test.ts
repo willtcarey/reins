@@ -6,6 +6,9 @@ import { makeRequest } from "../helpers/request.js";
 import { createAppState, useLoopbackState } from "../helpers/app-state.js";
 import { useTestRepo, commitFile, git } from "../helpers/test-repo.js";
 import { buildRouter } from "../../routes/index.js";
+import { SEEDED_NODE_ID } from "../helpers/loopback-node.js";
+import { getDb } from "../../app-globals.js";
+import { findSource, setNodeRemoved } from "../../node-store.js";
 import { createProject } from "../project-fixture.js";
 import { createSession } from "../session-fixture.js";
 
@@ -16,39 +19,63 @@ function onePixelPng(): Uint8Array {
   return bytes;
 }
 
-describe("file routes", () => {
+describe("node file routes", () => {
   let state: ReturnType<typeof createAppState>;
   let router: ReturnType<typeof buildRouter>;
-  let sessionId: string;
 
   useTestDb();
   const repo = useTestRepo();
   const loopback = useLoopbackState();
 
+  /** A node file route for the test repo on the seeded node. */
+  const nodeFiles = (route: string, query = "", { nodeId = SEEDED_NODE_ID, root }: { nodeId?: string; root?: string } = {}) =>
+    `/api/nodes/${nodeId}/files${route}?root=${encodeURIComponent(root ?? repo.dir)}${query && `&${query}`}`;
+
   beforeEach(() => {
     state = loopback.state;
     router = buildRouter();
-    const p = createProject("Test Project", repo.dir);
-    sessionId = createSession("viewed", p.id, { agentRuntimeType: "pi" }).id;
   });
 
-  test("with the source's node offline, listing answers 503 rather than an empty checkout", async () => {
+  test("reads a directory no session works in, without keeping a source for it", async () => {
+    writeFileSync(join(repo.dir, "notes.txt"), "loose");
+
+    const listed = await router.handle(makeRequest("GET", nodeFiles("")), state);
+    const read = await router.handle(makeRequest("GET", nodeFiles("/content", "path=notes.txt")), state);
+
+    expect(await listed!.json()).toEqual({ files: ["README.md", "notes.txt"] });
+    expect(await read!.text()).toBe("loose");
+    expect(findSource(SEEDED_NODE_ID, repo.dir)).toBeNull();
+  });
+
+  test("with the node offline, answers 503 rather than an empty directory or not found", async () => {
     const offline = createAppState();
-    for (const path of ["files", "files/tree?path=."]) {
-      const res = await router.handle(makeRequest("GET", `/api/sessions/${sessionId}/${path}`), offline);
+    for (const [route, query] of [["", ""], ["/tree", "path=."], ["/content", "path=README.md"], ["/content", "path=README.md&ref=main"]] as const) {
+      const res = await router.handle(makeRequest("GET", nodeFiles(route, query)), offline);
       expect(res!.status).toBe(503);
       expect(await res!.json()).toEqual({ error: "Node not connected" });
     }
     offline.nodes.close();
   });
 
+  test("an unknown or removed node is a 404, a missing or relative root a 400", async () => {
+    getDb().exec("INSERT INTO nodes (id, name) VALUES ('gone', 'Gone')");
+    setNodeRemoved("gone", new Date().toISOString());
+    const status = async (path: string) => (await router.handle(makeRequest("GET", path), state))!.status;
+
+    expect(await status(nodeFiles("/tree", "", { nodeId: "missing" }))).toBe(404);
+    expect(await status(nodeFiles("/content", "path=README.md", { nodeId: "missing" }))).toBe(404);
+    expect(await status(nodeFiles("/tree", "", { nodeId: "gone" }))).toBe(404);
+    expect(await status(`/api/nodes/${SEEDED_NODE_ID}/files/tree`)).toBe(400);
+    expect(await status(nodeFiles("/tree", "", { root: "relative/dir" }))).toBe(400);
+  });
+
   // ---- GET /files (listing) ------------------------------------------------
 
-  describe("GET /api/sessions/:sessionId/files", () => {
+  describe("GET /api/nodes/:nodeId/files", () => {
     test("returns tracked files", async () => {
       // README.md is committed by the test repo helper
       const res = await router.handle(
-        makeRequest("GET", `/api/sessions/${sessionId}/files`),
+        makeRequest("GET", nodeFiles("")),
         state,
       );
       expect(res!.status).toBe(200);
@@ -60,7 +87,7 @@ describe("file routes", () => {
       writeFileSync(join(repo.dir, "new-file.ts"), "export {}");
 
       const res = await router.handle(
-        makeRequest("GET", `/api/sessions/${sessionId}/files`),
+        makeRequest("GET", nodeFiles("")),
         state,
       );
       const body = await res!.json();
@@ -72,7 +99,7 @@ describe("file routes", () => {
       writeFileSync(join(repo.dir, "ignored.log"), "secret");
 
       const res = await router.handle(
-        makeRequest("GET", `/api/sessions/${sessionId}/files`),
+        makeRequest("GET", nodeFiles("")),
         state,
       );
       const body = await res!.json();
@@ -85,7 +112,7 @@ describe("file routes", () => {
       await commitFile(repo.dir, "src/index.ts", "console.log('hi')", "add src");
 
       const res = await router.handle(
-        makeRequest("GET", `/api/sessions/${sessionId}/files`),
+        makeRequest("GET", nodeFiles("")),
         state,
       );
       const body = await res!.json();
@@ -97,7 +124,7 @@ describe("file routes", () => {
       writeFileSync(join(repo.dir, "a.txt"), "a");
 
       const res = await router.handle(
-        makeRequest("GET", `/api/sessions/${sessionId}/files`),
+        makeRequest("GET", nodeFiles("")),
         state,
       );
       const body = await res!.json();
@@ -108,12 +135,12 @@ describe("file routes", () => {
 
   // ---- GET /files/content --------------------------------------------------
 
-  describe("GET /api/sessions/:sessionId/files/content", () => {
+  describe("GET /api/nodes/:nodeId/files/content", () => {
     test("returns file content from working tree", async () => {
       writeFileSync(join(repo.dir, "test.txt"), "hello world");
 
       const res = await router.handle(
-        makeRequest("GET", `/api/sessions/${sessionId}/files/content?path=test.txt`),
+        makeRequest("GET", nodeFiles("/content", `path=test.txt`)),
         state,
       );
       expect(res!.status).toBe(200);
@@ -121,28 +148,35 @@ describe("file routes", () => {
       expect(content).toBe("hello world");
     });
 
+    test("says how each file is served: as text, as an inline preview, or as a binary file to download", async () => {
+      writeFileSync(join(repo.dir, "notes.txt"), "hello");
+      writeFileSync(join(repo.dir, "config.json"), "{}");
+      writeFileSync(join(repo.dir, "empty.bin"), "");
+      writeFileSync(join(repo.dir, "pixel.png"), onePixelPng());
+      writeFileSync(join(repo.dir, "data.bin"), new Uint8Array([0x00, 0x01, 0xfe, 0xff]));
+      const kind = async (query: string) => (await router.handle(makeRequest("GET", nodeFiles("/content", query)), state))!.headers.get("X-Reins-Content-Kind");
+
+      expect(await kind("path=notes.txt")).toBe("text");
+      expect(await kind("path=config.json")).toBe("text");
+      expect(await kind("path=empty.bin")).toBe("text");
+      expect(await kind("path=pixel.png")).toBe("preview");
+      expect(await kind("path=data.bin")).toBe("binary");
+      // A download names the file's kind too, whatever its body.
+      expect(await kind("path=data.bin&download=1")).toBe("binary");
+    });
+
     test("returns a working-tree file longer than the bytes sniffed for its type whole", async () => {
       const text = Array.from({ length: 5000 }, (_, i) => `line ${i}\n`).join("");
       writeFileSync(join(repo.dir, "long.txt"), text);
 
-      const res = await router.handle(makeRequest("GET", `/api/sessions/${sessionId}/files/content?path=long.txt`), state);
+      const res = await router.handle(makeRequest("GET", nodeFiles("/content", `path=long.txt`)), state);
       expect(res!.headers.get("Content-Length")).toBe(String(text.length));
       expect(await res!.text()).toBe(text);
     });
 
-    test("with the source's node offline, answers 503 rather than not found", async () => {
-      writeFileSync(join(repo.dir, "test.txt"), "hello world");
-      const offline = createAppState();
-      for (const query of ["path=test.txt", "path=README.md&ref=main"]) {
-        const res = await router.handle(makeRequest("GET", `/api/sessions/${sessionId}/files/content?${query}`), offline);
-        expect(res!.status).toBe(503);
-      }
-      offline.nodes.close();
-    });
-
     test("returns 400 when path param is missing", async () => {
       const res = await router.handle(
-        makeRequest("GET", `/api/sessions/${sessionId}/files/content`),
+        makeRequest("GET", nodeFiles("/content")),
         state,
       );
       expect(res!.status).toBe(400);
@@ -152,7 +186,7 @@ describe("file routes", () => {
 
     test("returns 400 for path traversal with ..", async () => {
       const res = await router.handle(
-        makeRequest("GET", `/api/sessions/${sessionId}/files/content?path=../../../etc/passwd`),
+        makeRequest("GET", nodeFiles("/content", `path=../../../etc/passwd`)),
         state,
       );
       expect(res!.status).toBe(400);
@@ -160,9 +194,9 @@ describe("file routes", () => {
       expect(body.error).toContain("traversal");
     });
 
-    test("returns 400 for absolute path outside project", async () => {
+    test("returns 400 for an absolute path outside the root", async () => {
       const res = await router.handle(
-        makeRequest("GET", `/api/sessions/${sessionId}/files/content?path=/etc/passwd`),
+        makeRequest("GET", nodeFiles("/content", `path=/etc/passwd`)),
         state,
       );
       expect(res!.status).toBe(400);
@@ -172,7 +206,7 @@ describe("file routes", () => {
 
     test("returns 404 for nonexistent file", async () => {
       const res = await router.handle(
-        makeRequest("GET", `/api/sessions/${sessionId}/files/content?path=nonexistent.txt`),
+        makeRequest("GET", nodeFiles("/content", `path=nonexistent.txt`)),
         state,
       );
       expect(res!.status).toBe(404);
@@ -186,7 +220,7 @@ describe("file routes", () => {
       await proc2.exited;
 
       const res = await router.handle(
-        makeRequest("GET", `/api/sessions/${sessionId}/files/content?path=branch-file.txt&ref=feature/file-test`),
+        makeRequest("GET", nodeFiles("/content", `path=branch-file.txt&ref=feature/file-test`)),
         state,
       );
       expect(res!.status).toBe(200);
@@ -199,7 +233,7 @@ describe("file routes", () => {
       writeFileSync(join(repo.dir, "wt-file.txt"), "uncommitted changes");
 
       const res = await router.handle(
-        makeRequest("GET", `/api/sessions/${sessionId}/files/content?path=wt-file.txt&ref=main`),
+        makeRequest("GET", nodeFiles("/content", `path=wt-file.txt&ref=main`)),
         state,
       );
       expect(res!.status).toBe(200);
@@ -212,7 +246,7 @@ describe("file routes", () => {
       writeFileSync(join(repo.dir, "subdir", "nested.txt"), "nested content");
 
       const res = await router.handle(
-        makeRequest("GET", `/api/sessions/${sessionId}/files/content?path=subdir/nested.txt`),
+        makeRequest("GET", nodeFiles("/content", `path=subdir/nested.txt`)),
         state,
       );
       expect(res!.status).toBe(200);
@@ -226,7 +260,7 @@ describe("file routes", () => {
       writeFileSync(join(repo.dir, "assets", "pixel.png"), bytes);
 
       const res = await router.handle(
-        makeRequest("GET", `/api/sessions/${sessionId}/files/content?path=assets%2Fpixel.png`),
+        makeRequest("GET", nodeFiles("/content", `path=assets%2Fpixel.png`)),
         state,
       );
 
@@ -247,7 +281,7 @@ describe("file routes", () => {
       await git(repo.dir, ["checkout", "main"]);
 
       const res = await router.handle(
-        makeRequest("GET", `/api/sessions/${sessionId}/files/content?path=assets%2Fpixel.png&ref=feature%2Fimage-preview`),
+        makeRequest("GET", nodeFiles("/content", `path=assets%2Fpixel.png&ref=feature%2Fimage-preview`)),
         state,
       );
 
@@ -264,13 +298,13 @@ describe("file routes", () => {
       writeFileSync(join(repo.dir, "large.bin"), bytes);
 
       const res = await router.handle(
-        makeRequest("GET", `/api/sessions/${sessionId}/files/content?path=large.bin`),
+        makeRequest("GET", nodeFiles("/content", `path=large.bin`)),
         state,
       );
 
       expect(res!.status).toBe(200);
       expect(res!.headers.get("Content-Type")).toBe("text/plain; charset=utf-8");
-      expect(res!.headers.get("X-Reins-Content-Kind")).toBe("binary-placeholder");
+      expect(res!.headers.get("X-Reins-Content-Kind")).toBe("binary");
       expect(res!.headers.get("Content-Disposition")).toBeNull();
       const body = await res!.text();
       expect(body).toContain("Binary file (2.0 MB)");
@@ -287,7 +321,7 @@ describe("file routes", () => {
       await git(repo.dir, ["checkout", "main"]);
 
       const res = await router.handle(
-        makeRequest("GET", `/api/sessions/${sessionId}/files/content?path=artifact.bin&ref=feature%2Fbinary-preview`),
+        makeRequest("GET", nodeFiles("/content", `path=artifact.bin&ref=feature%2Fbinary-preview`)),
         state,
       );
 
@@ -305,7 +339,7 @@ describe("file routes", () => {
       writeFileSync(join(repo.dir, "report.csv"), "a,b,c");
 
       const res = await router.handle(
-        makeRequest("GET", `/api/sessions/${sessionId}/files/content?path=report.csv&download=1`),
+        makeRequest("GET", nodeFiles("/content", `path=report.csv&download=1`)),
         state,
       );
       expect(res!.status).toBe(200);
@@ -319,7 +353,7 @@ describe("file routes", () => {
       writeFileSync(join(repo.dir, "data.bin"), bytes);
 
       const res = await router.handle(
-        makeRequest("GET", `/api/sessions/${sessionId}/files/content?path=data.bin&download=1`),
+        makeRequest("GET", nodeFiles("/content", `path=data.bin&download=1`)),
         state,
       );
       expect(res!.status).toBe(200);
@@ -331,7 +365,7 @@ describe("file routes", () => {
       writeFileSync(join(repo.dir, "style.json"), "{}");
 
       const res = await router.handle(
-        makeRequest("GET", `/api/sessions/${sessionId}/files/content?path=style.json&download=1`),
+        makeRequest("GET", nodeFiles("/content", `path=style.json&download=1`)),
         state,
       );
       expect(res!.status).toBe(200);
@@ -342,7 +376,7 @@ describe("file routes", () => {
       writeFileSync(join(repo.dir, "plain.txt"), "hello");
 
       const res = await router.handle(
-        makeRequest("GET", `/api/sessions/${sessionId}/files/content?path=plain.txt`),
+        makeRequest("GET", nodeFiles("/content", `path=plain.txt`)),
         state,
       );
       expect(res!.status).toBe(200);
@@ -368,7 +402,7 @@ describe("file routes", () => {
       await proc4.exited;
 
       const res = await router.handle(
-        makeRequest("GET", `/api/sessions/${sessionId}/files/content?path=artifact.bin&ref=feature/dl-test&download=1`),
+        makeRequest("GET", nodeFiles("/content", `path=artifact.bin&ref=feature/dl-test&download=1`)),
         state,
       );
       expect(res!.status).toBe(200);
@@ -380,10 +414,10 @@ describe("file routes", () => {
 
   // ---- GET /files/tree (directory listing) ---------------------------------
 
-  describe("GET /api/sessions/:sessionId/files/tree", () => {
+  describe("GET /api/nodes/:nodeId/files/tree", () => {
     test("returns entries for project root", async () => {
       const res = await router.handle(
-        makeRequest("GET", `/api/sessions/${sessionId}/files/tree?path=.`),
+        makeRequest("GET", nodeFiles("/tree", `path=.`)),
         state,
       );
       expect(res!.status).toBe(200);
@@ -399,7 +433,7 @@ describe("file routes", () => {
       writeFileSync(join(repo.dir, "src/index.ts"), "console.log('hi')");
 
       const res = await router.handle(
-        makeRequest("GET", `/api/sessions/${sessionId}/files/tree?path=src`),
+        makeRequest("GET", nodeFiles("/tree", `path=src`)),
         state,
       );
       expect(res!.status).toBe(200);
@@ -414,7 +448,7 @@ describe("file routes", () => {
       symlinkSync(join(repo.dir, "lib"), join(repo.dir, "lib-link"));
 
       const res = await router.handle(
-        makeRequest("GET", `/api/sessions/${sessionId}/files/tree?path=.`),
+        makeRequest("GET", nodeFiles("/tree", `path=.`)),
         state,
       );
       expect(res!.status).toBe(200);
@@ -430,7 +464,7 @@ describe("file routes", () => {
       writeFileSync(join(repo.dir, "hello.txt"), "hello world");
 
       const res = await router.handle(
-        makeRequest("GET", `/api/sessions/${sessionId}/files/tree?path=.`),
+        makeRequest("GET", nodeFiles("/tree", `path=.`)),
         state,
       );
       expect(res!.status).toBe(200);
@@ -444,7 +478,7 @@ describe("file routes", () => {
       writeFileSync(join(repo.dir, "aaa-file.txt"), "content");
 
       const res = await router.handle(
-        makeRequest("GET", `/api/sessions/${sessionId}/files/tree?path=.`),
+        makeRequest("GET", nodeFiles("/tree", `path=.`)),
         state,
       );
       expect(res!.status).toBe(200);
@@ -459,7 +493,7 @@ describe("file routes", () => {
 
     test("returns 400 for path traversal with ..", async () => {
       const res = await router.handle(
-        makeRequest("GET", `/api/sessions/${sessionId}/files/tree?path=../../../etc`),
+        makeRequest("GET", nodeFiles("/tree", `path=../../../etc`)),
         state,
       );
       expect(res!.status).toBe(400);
@@ -467,9 +501,9 @@ describe("file routes", () => {
       expect(body.error).toContain("traversal");
     });
 
-    test("returns 400 for absolute path outside project", async () => {
+    test("returns 400 for an absolute path outside the root", async () => {
       const res = await router.handle(
-        makeRequest("GET", `/api/sessions/${sessionId}/files/tree?path=/etc`),
+        makeRequest("GET", nodeFiles("/tree", `path=/etc`)),
         state,
       );
       expect(res!.status).toBe(400);
@@ -479,7 +513,7 @@ describe("file routes", () => {
 
     test("returns 404 for nonexistent directory", async () => {
       const res = await router.handle(
-        makeRequest("GET", `/api/sessions/${sessionId}/files/tree?path=no-such-dir`),
+        makeRequest("GET", nodeFiles("/tree", `path=no-such-dir`)),
         state,
       );
       expect(res!.status).toBe(404);
@@ -487,13 +521,27 @@ describe("file routes", () => {
 
     test("defaults to root when no path param given", async () => {
       const res = await router.handle(
-        makeRequest("GET", `/api/sessions/${sessionId}/files/tree`),
+        makeRequest("GET", nodeFiles("/tree")),
         state,
       );
       expect(res!.status).toBe(200);
       const body = await res!.json();
       const names = body.entries.map((e: any) => e.name);
       expect(names).toContain("README.md");
+    });
+  });
+
+  describe("GET /api/sessions/:sessionId/files/content", () => {
+    test("reads the session's checkout at a git ref, for the diff views", async () => {
+      await git(repo.dir, ["checkout", "-b", "feature/session-ref"]);
+      await commitFile(repo.dir, "on-branch.txt", "branch content", "Add branch file");
+      await git(repo.dir, ["checkout", "main"]);
+      const sessionId = createSession("viewed", createProject("Test Project", repo.dir).id, { agentRuntimeType: "pi" }).id;
+
+      const res = await router.handle(makeRequest("GET", `/api/sessions/${sessionId}/files/content?path=on-branch.txt&ref=feature%2Fsession-ref`), state);
+
+      expect(res!.status).toBe(200);
+      expect(await res!.text()).toBe("branch content");
     });
   });
 });

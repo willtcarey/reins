@@ -2,8 +2,8 @@ import { afterEach, describe, expect, test } from "bun:test";
 import type { OpenInBrowserDetail } from "../../../components/events.js";
 import { FileViewer, registerFileViewer, type FileView } from "../../../components/file-viewer/file-viewer.js";
 import { clickButton, collectTemplateEventListeners, collectTemplateProperties, templateToString } from "../../helpers/lit-template.js";
-import { mockFetch, restoreFetch } from "../../helpers/mock-fetch.js";
-import { testSdk } from "../../helpers/reins-sdk.js";
+import { fileResponse, mockFetch, restoreFetch } from "../../helpers/mock-fetch.js";
+import { testNode, testSdk } from "../../helpers/reins-sdk.js";
 import { testElement } from "../../helpers/test-dom.js";
 
 afterEach(() => restoreFetch());
@@ -16,8 +16,20 @@ describe("the file viewer", () => {
 
     const view: FileView = { view: "file", source, path: "docs/plan.md" };
     const pane = views.rendererFor(view)?.pane;
-    expect(pane?.title(view)).toBe("plan.md");
-    expect(pane?.description(view)).toBe("docs/plan.md");
+    expect(pane?.title(view, { source })).toBe("plan.md");
+    expect(pane?.description(view, { source })).toBe("docs/plan.md");
+  });
+
+  test("names the file's node in its tab when the viewed session is on another node", () => {
+    const { reins, views, client, source } = testSdk();
+    client.fireMessage({ type: "node_updated", node: testNode("internal", "Internal") });
+    registerFileViewer(reins);
+
+    const view: FileView = { view: "file", source: { nodeId: "internal", path: "/scratch" }, path: "report.html" };
+    const pane = views.rendererFor(view)?.pane;
+
+    expect(pane?.title(view, { source })).toBe("report.html · Internal");
+    expect(pane?.description(view, { source })).toBe("/scratch/report.html · Internal");
   });
 
   test("mounts as a file viewer given its view and the SDK's files, updated in place, and removed on dispose", () => {
@@ -46,7 +58,7 @@ describe("the file viewer", () => {
     const requests: string[] = [];
     mockFetch((url) => {
       requests.push(url);
-      return new Response("line\n".repeat(20), { headers: { "content-type": "text/plain" } });
+      return fileResponse("line\n".repeat(20));
     });
     const { files, source } = testSdk({ projectId: 3 });
     const element = new FileViewer();
@@ -56,7 +68,7 @@ describe("the file viewer", () => {
     element.willUpdate(new Map<string, unknown>([["view", null], ["files", null]]));
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    expect(requests).toEqual(["/api/sessions/placed/files/content?path=docs%2Fplan.md"]);
+    expect(requests).toEqual(["/api/nodes/node/files/content?root=%2Fwork&path=docs%2Fplan.md"]);
     expect(collectTemplateProperties(element.render(), "file")).toEqual([{ loading: false, text: "line\n".repeat(20), isBinary: false, error: null }]);
     expect(collectTemplateProperties(element.render(), "highlightRequest")).toEqual([{ startLine: 4, endLine: 6 }]);
     expect(collectTemplateProperties(element.render(), "initialMode")).toEqual(["code"]);
@@ -110,7 +122,7 @@ describe("the file viewer", () => {
     const element = viewerOf({ view: "file", source, path: "docs/report.pdf" }, files);
 
     const output = templateToString(element.render());
-    expect(output).toContain("/api/sessions/placed/files/content?path=docs%2Freport.pdf&download=1");
+    expect(output).toContain("/api/nodes/node/files/content?root=%2Fwork&path=docs%2Freport.pdf&download=1");
     expect(output).toContain("Download docs/report.pdf");
   });
 });

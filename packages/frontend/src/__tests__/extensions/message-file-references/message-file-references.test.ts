@@ -3,7 +3,7 @@ import { LitElement } from "lit";
 import { FileReferenceIndex, referenceMount, registerFileReferences, type FileReferenceView } from "../../../extensions/message-file-references/message-file-references.js";
 import type { DecoratedSegment } from "../../../sdk-host/decorators.js";
 import { mockFetch, restoreFetch } from "../../helpers/mock-fetch.js";
-import { testSdk } from "../../helpers/reins-sdk.js";
+import { testNode, testSdk } from "../../helpers/reins-sdk.js";
 import { testElement } from "../../helpers/test-dom.js";
 
 const files = [
@@ -177,14 +177,19 @@ describe("file references as a message decorator", () => {
     expect(pieces(decorators.bind(source)?.segments("./NEW.md"))).toEqual([{ text: "./NEW.md", reference: { path: "NEW.md" } }]);
   });
 
-  test("decorates nothing while the source's node is offline", async () => {
-    mockFetch(() => Response.json({ files: ["README.md"] }));
-    const { reins, decorators, sessions } = testSdk({ source });
+  test("decorates nothing once its source's node goes offline", async () => {
+    let online = true;
+    mockFetch(() => (online ? Response.json({ files: ["README.md"] }) : Response.json({ error: "Node not connected" }, { status: 503 })));
+    const { reins, decorators, client } = testSdk({ source });
     registerFileReferences(reins);
     decorators.bind(source)?.segments("README.md");
     await settle();
 
-    sessions.set("placed", { placement: { available: false, removed: false, nodeId: "node", nodeName: "Node", path: source.path } });
+    online = false;
+    client.fireMessage({ type: "node_updated", node: testNode(source.nodeId, "Node", false) });
+    // Asking again reloads the listing, which the server now refuses.
+    decorators.bind(source)?.segments("README.md");
+    await settle();
 
     expect(decorators.bind(source)?.segments("./README.md")).toEqual(["./README.md"]);
     expect(decorators.bind(source)?.code("README.md")).toBeNull();
