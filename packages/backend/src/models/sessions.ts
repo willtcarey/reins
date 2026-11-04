@@ -147,6 +147,10 @@ export interface SessionSubmission {
   clientId: string;
   sourceSessionId?: string;
   sourceExtension?: string;
+  /** Where its hidden blocks begin in `content` (the chat collapses them), and their label: `metadata.details`. */
+  details?: { start: number; label: string | null };
+  /** What else the input carries (an extension's own keys), kept in its metadata beside Reins' keys. */
+  metadata?: Record<string, unknown>;
 }
 
 function toPlacementView(row: SessionRow, nodes: Pick<NodeHub, "get">): SessionPlacementView {
@@ -261,16 +265,19 @@ function stripPersistedUserSkillBlocks(msg: PersistedMessage): PersistedMessage 
  * anything is submitted, and rejects with what admission throws.
  */
 export async function submitToSession(serverProcess: ServerProcess, sessionId: string, input: SessionSubmission): Promise<void> {
-  const bytes = promptContentBytes(input.content);
+  const { content } = input;
+  const bytes = promptContentBytes(content);
   if (bytes > MAX_PROMPT_CONTENT_BYTES) throw new PromptTooLargeError(bytes);
   const metadata = {
+    ...input.metadata,
     ...(input.sourceSessionId ? { sourceSessionId: input.sourceSessionId } : {}),
     ...(input.sourceExtension ? { sourceExtension: input.sourceExtension } : {}),
+    ...(input.details ? { details: { label: input.details.label, start: input.details.start } } : {}),
   };
   const options = { reinsId: input.clientId, ...(Object.keys(metadata).length > 0 ? { metadata } : {}) };
   await inSessionRuntime(serverProcess, sessionId, async runtime => {
-    if (input.op === "prompt") await runtime.prompt(input.content, options);
-    else await runtime.steer(input.content, options);
+    if (input.op === "prompt") await runtime.prompt(content, options);
+    else await runtime.steer(content, options);
   });
 }
 

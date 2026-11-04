@@ -3,5 +3,6 @@
 
 import type { ExtensionRegistration } from "./host.js";
 import { mcp } from "./mcp/index.js";
+import { automations } from "./automations/index.js";
 
-export const BUILT_IN_EXTENSIONS: readonly ExtensionRegistration[] = [{ name: "mcp", ...mcp }];
+export const BUILT_IN_EXTENSIONS: readonly ExtensionRegistration[] = [{ name: "mcp", ...mcp }, { name: "automations", ...automations }];

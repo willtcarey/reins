@@ -57,8 +57,11 @@ export interface ServerSdk {
   readonly scripting: Scripting;
   readonly http: Http;
   readonly services: Services;
-  /** Sessions: start them, message them, read them, and hear when the runs of those it started end. */
+  /** Sessions: start them, message them, read them, and hear when the runs of those it started end. Call its
+   * methods on it (`reins.sessions.send(…)`): taken off it, they lose it. */
   readonly sessions: Sessions;
+  /** Nodes: the machines sessions work on. Run a command on one. Call `run` on it, as for `sessions`. */
+  readonly nodes: Nodes;
   /**
    * The extension's own directory, `<data dir>/extensions/<name>/` (absolute), which the host creates before
    * the extension registers and never deletes. The extension writes its files only here.
@@ -193,11 +196,39 @@ export interface SessionInfo {
   readonly running: boolean;
   /** The extension that started it (`SessionStart`), or null. */
   readonly startedBy: string | null;
+  /** When it was archived (hidden from the session lists), or null. */
+  readonly archivedAt: string | null;
+  /** The latest of its runs that ended (completed, failed or cancelled), as an opaque ID to compare; null before
+   * its first ends. A message `send` gave a running session is handled before that run ends, so a new
+   * `lastRunId` after a send means that the run which took the message has ended. */
+  readonly lastRunId: string | null;
   readonly createdAt: string;
   readonly updatedAt: string;
 }
 
 export type ThinkingLevel = "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+
+/**
+ * A message: its text, or its blocks in order. A block is a string (shown in the chat) or `{ text, hidden? }`.
+ * The model gets every block. The chat shows the visible ones and collapses the hidden ones under the message,
+ * for context the user need not read (a command's output, an automation's ID). Nothing tells the model which
+ * blocks are hidden: say in them what it needs to know about them (e.g. that an output is not the user's words).
+ * Visible blocks come first, at least one; no block is blank.
+ */
+export type MessageContent = string | readonly MessageBlock[];
+
+export type MessageBlock = string | {
+  readonly text: string;
+  readonly hidden?: boolean;
+  /** The first hidden block only: a heading the chat shows above the hidden blocks when opened (e.g. "Command
+   * output"); the model does not get it. 1 to 80 characters. */
+  readonly label?: string;
+};
+
+/** What a message carries beside its content, for the extension's own use: any plain JSON object of at most
+ * 64 KiB, kept with it in the session's transcript. The model does not get it. The keys Reins sets itself
+ * (`sourceExtension`, `sourceSessionId`, `details`) are refused. */
+export type MessageMetadata = Readonly<Record<string, unknown>>;
 
 /** A session to start, with its first prompt. It needs a `source` or a `projectId` (or both). */
 export interface SessionStart {
@@ -208,7 +239,9 @@ export interface SessionStart {
   readonly projectId?: number;
   /** A task of the project. */
   readonly taskId?: number;
-  readonly prompt: string;
+  readonly prompt: MessageContent;
+  /** The prompt's metadata (`MessageMetadata`). */
+  readonly metadata?: MessageMetadata;
   /** Its model; without it, the `default_model` setting's. */
   readonly model?: { readonly provider: string; readonly modelId: string; readonly thinkingLevel?: ThinkingLevel };
   /** A background session: one the browser never shows (not listed, counted or badged); it runs, settles and
@@ -216,6 +249,15 @@ export interface SessionStart {
   readonly background?: boolean;
   /** Its name; without it, it is named as any session is. */
   readonly title?: string;
+}
+
+/** How much of a session's context window its context takes now. */
+export interface ContextUsage {
+  /** The tokens of its context: those its latest model response reported (`exact`), or an estimate after a
+   * compaction until the next response (`estimated`). */
+  readonly usedTokens: number;
+  readonly contextWindow: number;
+  readonly measurement: "exact" | "estimated";
 }
 
 /** How a run of a session ended: its status, the text of its final reply (null without one) and, for a run
@@ -247,9 +289,21 @@ export interface Sessions {
    * Submits `message` to the session, as the agents' `api.sessions.send` does: it steers it, so a running
    * session takes it into its work and an idle one starts a run with it; resolves once Pi admitted it, not
    * when the work ends. It does not look at whether the session is busy: `get` tells. Rejects for an unknown
-   * session, a blank message and one the session refuses (its node was removed).
+   * session, content or metadata their rules refuse (`MessageContent`, `MessageMetadata`), and one the session
+   * refuses (its node was removed).
    */
-  send(sessionId: string, message: string): Promise<void>;
+  send(sessionId: string, message: MessageContent, options?: { metadata?: MessageMetadata }): Promise<void>;
+  /**
+   * Compacts the session's context now (a summary replaces its history; `instructions` focus the summary),
+   * as the composer's `/compact` does, in order with what was submitted to it before. Resolves once the
+   * compaction started, not when it ends: the session reads `running` until then. Rejects for an unknown
+   * session, a running one ("compact it once it is idle") and one with nothing to compact. The model already
+   * compacts by itself near the context limit: this is for a lower limit of the extension's own.
+   */
+  compact(sessionId: string, options?: { instructions?: string }): Promise<void>;
+  /** How full the session's context is (`ContextUsage`); null when it is not known (no model yet, or one the
+   * server no longer has). Rejects for an unknown session. */
+  contextUsage(sessionId: string): Promise<ContextUsage | null>;
   /**
    * Tells `listener` each time a run of a session this extension started ends, once its end is recorded,
    * with its outcome and final reply. Only the extension's own sessions (`startedBy`), and only while the
@@ -257,6 +311,40 @@ export interface Sessions {
    * read what a listener missed with `get`. A throw or rejection is the extension's error, logged.
    */
   onSettled(listener: (settlement: SessionSettlement) => void | Promise<void>): Disposer;
+}
+
+// ---------------------------------------------------------------------------
+// Nodes
+// ---------------------------------------------------------------------------
+
+/** How a command ended. */
+export interface CommandResult {
+  /** Its exit code (128 + the signal's number when a signal killed it). */
+  readonly exitCode: number;
+  /** stdout and stderr together, as text: at most the first 16 MiB. */
+  readonly output: string;
+  /** The output was longer than what `output` holds. */
+  readonly truncated: boolean;
+}
+
+export interface CommandOptions {
+  /** Where it starts: absolute, `~/…`, or relative to the node's home (the default). */
+  readonly cwd?: string;
+  /** 1 to 600 000 (10 min); 30 000 by default. A command still running then is killed, and `run` rejects. */
+  readonly timeoutMs?: number;
+  /** Aborting it kills the command, and `run` rejects. Give a service's `signal`, so a reload ends it. */
+  readonly signal?: AbortSignal;
+}
+
+export interface Nodes {
+  /**
+   * Runs a bash command on a node, named by its ID (stable: prefer it to keep) or its name (any case). It runs as
+   * the node's user, with nothing confined: as a session's commands do. A command that fails resolves with its
+   * exit code; `run` rejects for a blank command, a timeout out of range, an unknown or removed node, one that is
+   * not connected now (it does not wait for the node), the timeout and the signal. The output is held in the
+   * server's memory until it resolves.
+   */
+  run(node: string, command: string, options?: CommandOptions): Promise<CommandResult>;
 }
 
 /** A JSON Schema object, as JSON Schema defines it (a TypeBox schema is one). */

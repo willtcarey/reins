@@ -22,6 +22,14 @@ const inputs = (sessionId: string) => getDb().query<{ text: string; metadata: st
   FROM session_messages WHERE session_id = ? AND role = 'reinsInput' ORDER BY seq`).all(sessionId)
   .map(row => ({ text: row.text, metadata: row.metadata === null ? null : JSON.parse(row.metadata) }));
 
+const storedRoles = (sessionId: string) => getDb()
+  .query<{ role: string }, [string]>("SELECT role FROM session_messages WHERE session_id = ? ORDER BY seq").all(sessionId).map(row => row.role);
+
+/** The session's user inputs as stored: their content blocks and metadata, in order. */
+const storedInputs = (sessionId: string) => getDb().query<{ message: string }, [string]>(
+  "SELECT json_extract(message_json, '$.message') AS message FROM session_messages WHERE session_id = ? AND role = 'reinsInput' ORDER BY seq",
+).all(sessionId).map(row => { const { content, metadata } = JSON.parse(row.message); return { content, metadata }; });
+
 const sessionCount = () => getDb().query<{ n: number }, []>("SELECT COUNT(*) AS n FROM sessions").get()!.n;
 
 describe("reins.sessions", () => {
@@ -55,7 +63,7 @@ describe("reins.sessions", () => {
     const sessionId = await automation.sessions.start({ source: { nodeId: "internal", path: dir }, prompt: "Morning heartbeat", background: true, model: model.model });
 
     expect(await automation.sessions.get(sessionId)).toMatchObject({
-      id: sessionId, source: { nodeId: "internal", path: dir }, projectId: null, taskId: null, background: true, running: true, startedBy: "automation",
+      id: sessionId, source: { nodeId: "internal", path: dir }, projectId: null, taskId: null, background: true, running: true, startedBy: "automation", archivedAt: null, lastRunId: null,
     });
     const turn = await model.nextTurn(sessionId);
     expect(turn.input).toBe("Morning heartbeat");
@@ -76,6 +84,7 @@ describe("reins.sessions", () => {
     await other.sessions.send(sessionId, "Also check the logs");
     (await model.nextTurn(sessionId)).finish({ reply: "Watching" });
     await until(() => settled.automation!.length === 1, "the first run settled");
+    const firstRunId = (await automation.sessions.get(sessionId)).lastRunId;
     // Idle: the message starts a run.
     await automation.sessions.send(sessionId, "Wake up");
     (await model.nextTurn(sessionId)).finish({ status: "failed", error: "Provider down" });
@@ -90,6 +99,10 @@ describe("reins.sessions", () => {
       { sessionId, status: "completed", result: "Watching", error: null },
       { sessionId, status: "failed", result: null, error: "Provider down" },
     ]);
+    const secondRunId = (await automation.sessions.get(sessionId)).lastRunId;
+    expect(firstRunId).toEqual(expect.any(String));
+    expect(secondRunId).toEqual(expect.any(String));
+    expect(secondRunId).not.toBe(firstRunId);
     // Only the extension that started a session hears of its runs.
     expect(settled.other).toEqual([]);
   });
@@ -117,9 +130,73 @@ describe("reins.sessions", () => {
     expect(sessionCount()).toBe(1);
   });
 
-  test("get and send refuse a session the server does not have", async () => {
+  test("reads how full a session's context is, and compacts it with the given instructions", async () => {
+    const sessionId = await automation.sessions.start({ source: { nodeId: "internal", path: dir }, prompt: "Check the inbox", background: true, model: model.model });
+    (await model.nextTurn(sessionId)).finish({ reply: "Two new mails" });
+    await until(() => settled.automation!.length > 0, "the run settled");
+
+    const usage = await automation.sessions.contextUsage(sessionId);
+    expect(usage).toEqual({ usedTokens: expect.any(Number), contextWindow: 200_000, measurement: "exact" });
+    expect(usage!.usedTokens).toBeGreaterThan(0);
+    await automation.sessions.compact(sessionId, { instructions: "Keep the senders" });
+    expect(await automation.sessions.get(sessionId)).toMatchObject({ running: true });
+    const summary = await model.nextSummary();
+    expect(JSON.stringify(summary.context)).toContain("Keep the senders");
+    summary.finish({ reply: "Mail from Ana and Bo" });
+    await until(() => storedRoles(sessionId).at(-1) === "compaction", "the compaction was committed");
+    expect(await automation.sessions.contextUsage(sessionId)).toMatchObject({ measurement: "estimated" });
+  });
+
+  test("a message's hidden blocks reach the model after its text and the chat collapses them; its metadata is only kept", async () => {
+    const sessionId = await automation.sessions.start({
+      source: { nodeId: "internal", path: dir }, background: true, model: model.model,
+      prompt: ["The deploy finished", { text: "step 1 ok", hidden: true, label: "Deploy log" }, { text: "step 2 ok", hidden: true }],
+      metadata: { deployId: 18 },
+    });
+    const first = await model.nextTurn(sessionId);
+    first.finish();
+    await until(() => settled.automation!.length === 1, "the first run settled");
+    await automation.sessions.send(sessionId, ["Check it again", { text: "No label", hidden: true }]);
+    const second = await model.nextTurn(sessionId);
+
+    // The label is the chat's, and the metadata only kept: the model gets the blocks, the hidden ones a blank line apart.
+    expect(first.input).toBe("The deploy finished\n\n\nstep 1 ok\nstep 2 ok");
+    expect(second.input).toBe("Check it again\n\n\nNo label");
+    expect(storedInputs(sessionId)).toEqual([
+      {
+        content: [{ type: "text", text: "The deploy finished" }, { type: "text", text: "step 1 ok" }, { type: "text", text: "step 2 ok" }],
+        metadata: { deployId: 18, sourceExtension: "automation", details: { label: "Deploy log", start: 1 } },
+      },
+      { content: [{ type: "text", text: "Check it again" }, { type: "text", text: "No label" }], metadata: { sourceExtension: "automation", details: { label: null, start: 1 } } },
+    ]);
+    second.finish();
+  });
+
+  test("refuses blocks out of order, blank or without a visible one, and metadata that is not plain JSON or has Reins' keys", async () => {
+    const sessionId = await automation.sessions.start({ source: { nodeId: "internal", path: dir }, prompt: "Hello", background: true, model: model.model });
+    (await model.nextTurn(sessionId)).finish();
+    // As an extension without TypeScript could give them.
+    const refusal = (message: unknown, metadata?: unknown) => Reflect.apply(automation.sessions.send, automation.sessions, [sessionId, message, { metadata }])
+      .then(() => "sent", (error: Error) => error.message);
+
+    expect(await refusal([{ text: "Log", hidden: true }, "Hello"])).toBe("A message's hidden blocks come after its visible ones");
+    expect(await refusal([{ text: "Log", hidden: true }])).toBe("A message must not be blank");
+    expect(await refusal(["Hello", { text: " ", hidden: true }])).toBe("A message's blocks must not be blank");
+    expect(await refusal(["Hello", { text: "a", hidden: true }, { text: "b", hidden: true, label: "B" }])).toBe("Only a message's first hidden block has a label");
+    expect(await refusal(["Hello", { text: "Log", label: "Log" }])).toBe("Only a message's first hidden block has a label");
+    expect(await refusal("Hello", { sourceExtension: "mcp" })).toBe("Metadata key sourceExtension is set by Reins");
+    expect(await refusal("Hello", { details: { start: 0 } })).toBe("Metadata key details is set by Reins");
+    expect(await refusal("Hello", { when: new Date(0) })).toBe("Metadata must be plain JSON: a Date at when");
+    expect(await refusal("Hello", [1])).toBe("Metadata must be a plain object");
+    expect(await refusal("Hello", { big: "x".repeat(70_000) })).toBe("Metadata must be at most 65536 bytes of JSON");
+    expect(storedInputs(sessionId)).toHaveLength(1);
+  });
+
+  test("refuses a session the server does not have", async () => {
     await expect(automation.sessions.get("missing")).rejects.toThrow("Session not found: missing");
     await expect(automation.sessions.send("missing", "Hello")).rejects.toThrow("Session not found: missing");
+    await expect(automation.sessions.compact("missing")).rejects.toThrow("Session not found: missing");
+    await expect(automation.sessions.contextUsage("missing")).rejects.toThrow("Session not found: missing");
   });
 
   test("the host's report counts each extension's settlement listeners, gone once disposed", async () => {

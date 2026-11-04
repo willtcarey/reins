@@ -16,8 +16,9 @@ import { statSync } from "fs";
 import type { ExtensionStorage } from "../database.js";
 import type { ApiFunctionDef } from "../scripting/define-function.js";
 import type { NamedType } from "../scripting/api-registry.js";
-import type { ServerProcess, SessionSettledNotice } from "../state.js";
-import type { ExtensionSessionAccess } from "./sessions.js";
+import type { AppState, SessionSettledNotice } from "../state.js";
+import { ExtensionSessions } from "./sessions.js";
+import { ExtensionNodes } from "./nodes.js";
 import { createBroadcast } from "../models/broadcast.js";
 import { requestOrigin } from "../nodes/node-link.js";
 import { logger } from "../logger.js";
@@ -138,14 +139,14 @@ export class ExtensionHost {
   private readonly disposers: { name: string; dispose: Disposer }[] = [];
   private readonly records = new Map<string, ExtensionRecord>();
 
-  /** `process`: each extension's directory and database, and the broadcast. `reservedNamespaces`: the core's `api`
-   * namespaces, which no extension may take. `onError`: what an extension's failure to register or dispose
-   * is told to. `sessions`: each extension's `reins.sessions` (the app's sessions; `extensions/sessions.ts`). */
+  /** `app`: the app the host is of, read when an extension registers (the host is built with it): its process
+   * has each extension's directory and database and the broadcast, and its sessions and nodes are what
+   * `reins.sessions` and `reins.nodes` reach. `reservedNamespaces`: the core's `api` namespaces, which no
+   * extension may take. `onError`: what an extension's failure to register or dispose is told to. */
   constructor(
-    private readonly process: Pick<ServerProcess, "extensionData" | "broadcast">,
+    private readonly app: () => AppState,
     private readonly reservedNamespaces: ReadonlySet<string>,
     private readonly onError: (extension: string, error: unknown) => void,
-    private readonly sessions: (extension: string) => ExtensionSessionAccess,
   ) {}
 
   /** Opens the extension's directory and database, applies its pending migrations, then calls its register
@@ -158,7 +159,7 @@ export class ExtensionHost {
     this.records.set(name, record);
     let storage: ExtensionStorage;
     try {
-      storage = this.process.extensionData.open(name);
+      storage = this.app().process.extensionData.open(name);
     } catch (error) {
       this.fail(record, "storage", error);
       return;
@@ -398,8 +399,7 @@ export class ExtensionHost {
       const removals = methods.map(method => add(this.methods, method));
       return () => { for (const remove of removals) void remove(); };
     };
-    const broadcast = createBroadcast(this.process);
-    const sessions = this.sessions(name);
+    const broadcast = createBroadcast(this.app().process);
     return Object.freeze({
       name,
       dataDir,
@@ -418,15 +418,11 @@ export class ExtensionHost {
         match: matchTools,
       }),
       services: Object.freeze({ register: registerService }),
-      sessions: Object.freeze({
-        get: (sessionId: string) => sessions.get(sessionId),
-        start: (session: Parameters<ExtensionSessionAccess["start"]>[0]) => sessions.start(session),
-        send: (sessionId: string, message: string) => sessions.send(sessionId, message),
-        onSettled: (listener: SettlementListener["listener"]) => {
-          if (typeof listener !== "function") throw new Error("A settlement listener is a function");
-          return add(this.settlementListeners, { extension: name, listener });
-        },
-      }),
+      sessions: Object.freeze(new ExtensionSessions(this.app(), name, listener => {
+        if (typeof listener !== "function") throw new Error("A settlement listener is a function");
+        return add(this.settlementListeners, { extension: name, listener });
+      })),
+      nodes: Object.freeze(new ExtensionNodes(this.app())),
       prompt: Object.freeze({
         register: (contribution: PromptContribution) => add(this.contributions, { extension: name, contribution }),
       }),

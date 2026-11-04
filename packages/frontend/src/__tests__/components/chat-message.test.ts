@@ -129,7 +129,7 @@ describe("ChatMessage", () => {
     expect(output).not.toContain("bg-blue-600");
   });
 
-  test("names the extension a user message comes from", () => {
+  test("names the extension a user message comes from, below the message", () => {
     const fromExtension = templateToString(displayMessage({
       role: "user",
       timestamp: 2,
@@ -139,9 +139,30 @@ describe("ChatMessage", () => {
     const typed = templateToString(displayMessage({ role: "user", timestamp: 2, content: [{ type: "text", text: "Hello" }] }).render());
 
     expect(fromExtension).toContain('data-role="message-origin"');
-    expect(fromExtension).toContain("from automation");
-    expect(fromExtension).toContain("Morning heartbeat");
+    expect(fromExtension).toContain("sent from automation");
+    expect(fromExtension.indexOf("Morning heartbeat")).toBeLessThan(fromExtension.indexOf("sent from automation"));
     expect(typed).not.toContain('data-role="message-origin"');
+  });
+
+  test("shows a message's details collapsed under it, opened from its origin, and not in its bubble", () => {
+    const content = [{ type: "text" as const, text: "PR 42 merged" }, { type: "text" as const, text: "state: MERGED" }];
+    const output = templateToString(displayMessage({
+      role: "user", timestamp: 2, content, metadata: { sourceExtension: "automations", details: { label: "Command output", start: 1 } },
+    }).render());
+    const unattributed = templateToString(displayMessage({ role: "user", timestamp: 2, content, metadata: { details: { label: null, start: 1 } } }).render());
+    const bubble = output.slice(output.indexOf('data-role="user-message-bubble"'), output.indexOf('data-role="message-details"'));
+    const summary = output.slice(output.indexOf("<summary"), output.indexOf("</summary>"));
+
+    expect(bubble).toContain("PR 42 merged");
+    expect(bubble).not.toContain("state: MERGED");
+    expect(output).toMatch(/<details[^>]*data-role="message-details"/);
+    expect(output).not.toMatch(/<details[^>]*data-role="message-details"[^>]*open/);
+    expect(summary).toContain("sent from automations");
+    expect(output.indexOf("Command output")).toBeGreaterThan(output.indexOf("</summary>"));
+    expect(output.indexOf("state: MERGED")).toBeGreaterThan(output.indexOf("</summary>"));
+    expect(output.match(/sent from automations/g)).toHaveLength(1);
+    expect(unattributed.slice(unattributed.indexOf("<summary"), unattributed.indexOf("</summary>"))).toContain("Details");
+    expect(unattributed).toContain("state: MERGED");
   });
 
   test("renders assistant text and associated tool results in native content order", () => {

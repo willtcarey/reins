@@ -30,7 +30,6 @@ import { createNodeLinks, type NodeLinks } from "./nodes/node-link.js";
 import type { NodeBundleDelivery } from "./node-bundle/delivery.js";
 import { ExtensionHost, type ExtensionRegistration } from "./extensions/host.js";
 import { BUILT_IN_EXTENSIONS } from "./extensions/built-in.js";
-import { extensionSessions } from "./extensions/sessions.js";
 import { API_FUNCTIONS, fnNamespace } from "./scripting/api-registry.js";
 import type { PromptContext } from "@reins/sdk/server";
 import { logger } from "./logger.js";
@@ -310,7 +309,7 @@ export function createAppState(serverProcess: ServerProcess, nodeBundle: NodeBun
     nodes: createNodeHub(() => state, hub),
     nodeLinks: createNodeLinks((socket, options) => state.nodes.accept(socket, options)),
     nodeBundle,
-    extensions: new ExtensionHost(serverProcess, new Set(API_FUNCTIONS.map(fnNamespace)), onExtensionError, extension => extensionSessions(state, extension)),
+    extensions: new ExtensionHost(() => state, new Set(API_FUNCTIONS.map(fnNamespace)), onExtensionError),
   };
   for (const extension of extensions) state.extensions.register(extension);
   return state;

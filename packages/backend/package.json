@@ -23,6 +23,7 @@
     "@reins/telemetry": "workspace:*",
     "@sinclair/typebox": "^0.34.48",
     "change-case": "^5.4.4",
+    "croner": "^11.0.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {
