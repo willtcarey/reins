@@ -3,6 +3,7 @@
  */
 
 import { Type } from "@sinclair/typebox";
+import { getTask } from "../task-store.js";
 import { type ApiContext, type ApiFunctionDef, defineFunction } from "./define-function.js";
 
 // ---------------------------------------------------------------------------
@@ -27,11 +28,23 @@ export const TaskSchema = Type.Object({
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** The caller's project; throws for a session of no project: tasks belong to projects. */
-function projectModel(ctx: ApiContext) {
-  const { projectId } = ctx.session;
-  if (projectId === null) throw new Error("This session has no project, and tasks belong to projects");
-  return ctx.models.project(projectId);
+const ProjectIdSchema = Type.Optional(Type.Union([Type.Number(), Type.Literal("current")], {
+  description: 'The project: the caller\'s when omitted or "current".',
+}));
+
+/** Project `projectId`, by default the caller's; throws for a session of no project that names none: tasks
+ * belong to projects. */
+function projectModel(ctx: ApiContext, projectId: number | "current" = "current") {
+  const id = projectId === "current" ? ctx.session.projectId : projectId;
+  if (id === null) throw new Error("This session has no project, and tasks belong to projects");
+  return ctx.models.project(id);
+}
+
+/** The project of task `taskId`, whichever project that is. */
+function projectOfTask(ctx: ApiContext, taskId: number) {
+  const task = getTask(taskId);
+  if (!task) throw new Error(`Task ${taskId} not found`);
+  return ctx.models.project(task.project_id);
 }
 
 // ---------------------------------------------------------------------------
@@ -42,14 +55,15 @@ export const TASK_FUNCTIONS: ApiFunctionDef[] = [
   defineFunction({
     name: "tasks.list",
     description:
-      "List tasks for the current project. Open tasks appear before closed ones. " +
+      "List tasks of a project, the current one unless projectId names another. Open tasks appear before closed ones. " +
       "Optionally filter by status.",
     parameters: Type.Object({
       status: Type.Optional(TaskStatusSchema),
+      projectId: ProjectIdSchema,
     }),
     returns: Type.Array(TaskSchema),
     tags: ["tasks", "list", "query", "read", "filter"],
-    execute: (params, ctx) => projectModel(ctx).tasks().list(params.status),
+    execute: (params, ctx) => projectModel(ctx, params.projectId).tasks().list(params.status),
   }),
   defineFunction({
     name: "tasks.current",
@@ -61,29 +75,30 @@ export const TASK_FUNCTIONS: ApiFunctionDef[] = [
   }),
   defineFunction({
     name: "tasks.get",
-    description: "Get a single task by ID. Throws if not found.",
+    description: "Get a single task by ID, of any project. Throws if not found.",
     parameters: Type.Object({ taskId: Type.Number() }),
     returns: TaskSchema,
     tags: ["tasks", "get", "read", "lookup"],
     execute: (params, ctx) => {
-      const task = projectModel(ctx).tasks().get(params.taskId);
+      const task = projectOfTask(ctx, params.taskId).tasks().get(params.taskId);
       if (!task) throw new Error(`Task ${params.taskId} not found`);
       return task;
     },
   }),
   defineFunction({
     name: "tasks.create",
-    description: "Create a new task with a dedicated git branch. Derives branch name from title if not provided. No checkout is touched: its sessions' runs make the branch where they work, adopting one that exists there or on origin.",
+    description: "Create a new task with a dedicated git branch, in the current project unless projectId names another. Derives branch name from title if not provided. No checkout is touched: its sessions' runs make the branch where they work, adopting one that exists there or on origin.",
     parameters: Type.Object({
       title: Type.String(),
       description: Type.String(),
       branchName: Type.Optional(Type.String()),
+      projectId: ProjectIdSchema,
     }),
     returns: TaskSchema,
     async: true,
     tags: ["tasks", "create", "write", "branch"],
     execute: async (params, ctx) => {
-      return projectModel(ctx).tasks().create({
+      return projectModel(ctx, params.projectId).tasks().create({
         title: params.title,
         description: params.description,
         branch_name: params.branchName,
@@ -92,7 +107,7 @@ export const TASK_FUNCTIONS: ApiFunctionDef[] = [
   }),
   defineFunction({
     name: "tasks.update",
-    description: "Update a task's title, description, and/or base_commit. Throws if the task is not found.",
+    description: "Update a task's title, description, and/or base_commit, in any project. Throws if the task is not found.",
     parameters: Type.Object({
       taskId: Type.Number(),
       updates: Type.Object({
@@ -104,30 +119,30 @@ export const TASK_FUNCTIONS: ApiFunctionDef[] = [
     returns: TaskSchema,
     tags: ["tasks", "update", "write", "edit", "base_commit"],
     execute: (params, ctx) => {
-      const task = projectModel(ctx).tasks().update(params.taskId, params.updates);
+      const task = projectOfTask(ctx, params.taskId).tasks().update(params.taskId, params.updates);
       if (!task) throw new Error(`Task ${params.taskId} not found`);
       return task;
     },
   }),
   defineFunction({
     name: "tasks.close",
-    description: "Close an open task. Throws if the task is not found.",
+    description: "Close an open task, of any project. Throws if the task is not found.",
     parameters: Type.Object({ taskId: Type.Number() }),
     returns: TaskSchema,
     tags: ["tasks", "close", "write", "status"],
     execute: (params, ctx) => {
-      return projectModel(ctx).tasks().close(params.taskId);
+      return projectOfTask(ctx, params.taskId).tasks().close(params.taskId);
     },
   }),
   defineFunction({
     name: "tasks.reopen",
-    description: "Reopen a closed task. Throws if the task is not found.",
+    description: "Reopen a closed task, of any project. Throws if the task is not found.",
     parameters: Type.Object({ taskId: Type.Number() }),
     returns: TaskSchema,
     async: true,
     tags: ["tasks", "reopen", "write", "status"],
     execute: async (params, ctx) => {
-      return projectModel(ctx).tasks().reopen(params.taskId);
+      return projectOfTask(ctx, params.taskId).tasks().reopen(params.taskId);
     },
   }),
 ];

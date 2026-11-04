@@ -1,14 +1,18 @@
 import { getSession, type SessionRow } from "../session-store.js";
 import type { Models } from "../models/models.js";
+import { assertPlace, inheritedSource } from "./create-session.js";
 import type { SessionWaitResult } from "./session-runs.js";
 
 export interface SessionStartOptions {
   parentSessionId: "current" | null;
-  /** The caller's task when omitted or "current"; null for a scratch session. */
+  /** The project to start it in; the caller's when omitted or "current". */
+  projectId?: number | "current";
+  /** A task of its project: in the caller's project the caller's task when omitted or "current"; null for a
+   * scratch session. */
   taskId?: number | null | "current";
   title?: string;
   /** Where it works, a node and a path there (a directory not known yet is checked on its node); the
-   * caller's source by default. */
+   * caller's source by default, or in another project the source a session of it inherits. */
   source?: { nodeId: string; path: string } | null;
   modelProvider?: string;
   modelId?: string;
@@ -16,7 +20,7 @@ export interface SessionStartOptions {
 }
 
 /** Session operations of a calling session (the scripting API): start (with the caller's defaults and a
- * child-depth limit), send and wait. Send and wait reach any session. */
+ * child-depth limit), send and wait. All three reach any project. */
 export class SessionInstance {
   constructor(
     /** The calling script's or tool call's models. */
@@ -25,19 +29,30 @@ export class SessionInstance {
     private readonly sessionId: string,
   ) {}
 
-  /** What the caller leaves out is its own (its project, task, source and model); `Sessions.create` checks the rest. */
+  /** What the caller leaves out is its own (its project, task, source and model); `Sessions.create` checks the rest.
+   * In another project it gets no task unless one is named, and that project's source rather than the
+   * caller's (or its parent's, the caller). */
   async start(prompt: string, options: SessionStartOptions): Promise<{ sessionId: string }> {
     const caller = this.session(this.sessionId);
     if (!!options.modelProvider !== !!options.modelId) throw new Error("Both modelProvider and modelId are required for a model override");
     if (options.parentSessionId === "current") this.assertChildDepth(caller);
-    const taskId = options.taskId === undefined || options.taskId === "current" ? caller.task_id : options.taskId;
+    const projectId = options.projectId === undefined || options.projectId === "current" ? caller.project_id : options.projectId;
+    const elsewhere = projectId !== caller.project_id;
+    const taskId = options.taskId === undefined ? (elsewhere ? null : caller.task_id)
+      : options.taskId === "current" ? caller.task_id : options.taskId;
+    let source: { nodeId: string; path: string } | number = options.source ?? caller.source_id;
+    if (elsewhere && !options.source && projectId !== null) {
+      // Checked first: inheriting a source assumes the project, and the task of it, exist.
+      assertPlace(projectId, taskId ?? undefined, true);
+      source = inheritedSource(projectId, taskId ?? undefined).id;
+    }
     const provider = options.modelProvider ?? caller.model_provider;
     const modelId = options.modelId ?? caller.model_id;
     const thinkingLevel = options.thinkingLevel ?? (caller.thinking_level === "off" ? undefined : caller.thinking_level);
     const managed = await this.models.sessions.create({
-      ...(caller.project_id === null ? {} : { projectId: caller.project_id }),
+      ...(projectId === null ? {} : { projectId }),
       ...(taskId === null ? {} : { taskId }),
-      source: options.source ?? caller.source_id,
+      source,
       ...(options.parentSessionId === "current" ? { parentSessionId: caller.id } : {}),
       ...(options.title === undefined ? {} : { title: options.title }),
       ...(provider && modelId ? { model: { provider, modelId, ...(thinkingLevel === undefined ? {} : { thinkingLevel }) } } : {}),
