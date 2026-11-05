@@ -213,7 +213,7 @@ describe("search tool", () => {
 
     const text = result.content[0].type === "text" ? result.content[0].text : "";
     expect(text).toContain("ui: UiApi;");
-    expect(text).toContain("broadcast(message: unknown): string;");
+    expect(text).toContain("broadcast(message: unknown): Promise<string>;");
     expectGeneratedTypeScriptToBeValid(text);
   });
 

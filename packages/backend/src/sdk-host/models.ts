@@ -1,14 +1,9 @@
-/**
- * Models API function definitions and schemas.
- */
+/** `models` (docs/dev/server-sdk.md): the AI providers and their models, for an extension (`reins.models`) and an
+ * agent's script (`api.models`). */
 
 import { Type } from "@sinclair/typebox";
 import { listRuntimeProviders } from "../pi/model-catalog.js";
-import { type ApiFunctionDef, defineFunction } from "./define-function.js";
-
-// ---------------------------------------------------------------------------
-// Function definitions
-// ---------------------------------------------------------------------------
+import { sdkMethod, type SdkNamespace } from "./declaration.js";
 
 const AvailabilitySourceSchema = Type.Union([
   Type.Literal("db"),
@@ -34,28 +29,23 @@ export const ProviderInfoSchema = Type.Object({
   models: Type.Array(ModelInfoSchema),
 });
 
-export const modelsListFunction = defineFunction({
-  name: "models.list",
+const list = sdkMethod({
   description:
     "List all available AI providers with their models, including whether each provider is available " +
     "and the availability source (db, env, oauth, or local). Each provider includes its models " +
     "with id, name, reasoning capability, context window, and max tokens.",
-  parameters: Type.Object({}),
+  params: [],
   returns: Type.Array(ProviderInfoSchema),
   tags: ["models", "providers", "list", "read", "ai", "configuration"],
-  execute: (_params, ctx) => listRuntimeProviders(ctx.models.credentials),
+  run: context => listRuntimeProviders(context.models.credentials),
 });
 
-export const modelsListProvidersFunction = defineFunction({
-  name: "models.listProviders",
+const listProviders = sdkMethod({
   description: "List available AI provider names (e.g. 'anthropic', 'openai').",
-  parameters: Type.Object({}),
+  params: [],
   returns: Type.Array(Type.String()),
   tags: ["models", "providers", "list", "read", "names"],
-  execute: async (_params, ctx) => (await listRuntimeProviders(ctx.models.credentials)).map((provider) => provider.provider),
+  run: async context => (await listRuntimeProviders(context.models.credentials)).map(provider => provider.provider),
 });
 
-export const MODEL_FUNCTIONS: ApiFunctionDef[] = [
-  modelsListFunction,
-  modelsListProvidersFunction,
-];
+export const MODELS = { name: "models", methods: { list, listProviders }, types: { ProviderInfo: ProviderInfoSchema, ModelInfo: ModelInfoSchema } } satisfies SdkNamespace;

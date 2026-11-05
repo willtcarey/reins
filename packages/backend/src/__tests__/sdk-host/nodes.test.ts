@@ -6,8 +6,7 @@ import { NodeRejection } from "@reins/node-protocol";
 import { runScript } from "../../tools/execute.js";
 import { getDb } from "../../app-globals.js";
 import { upsertSource, defaultSource } from "../../node-store.js";
-import { nodesGetFunction, nodesListFunction, nodesReloadFunction } from "../../scripting/nodes.js";
-import type { ApiContext } from "../../scripting/define-function.js";
+import { buildApiObject } from "../../scripting/api-registry.js";
 import { createProject } from "../project-fixture.js";
 import { createSession } from "../session-fixture.js";
 import { createAppState } from "../helpers/app-state.js";
@@ -28,23 +27,23 @@ describe("nodes.list and nodes.get", () => {
     createSession("caller", project.id, { agentRuntimeType: "pi", sourceId: boxSource });
     upsertSource("box", "/srv/unused");
     const box = connectScriptedNode(state, "box", {});
-    const ctx = scriptContext(state, { sessionId: "caller" });
+    const api = buildApiObject(scriptContext(state, { sessionId: "caller" }));
     try {
       await box.ready();
       const boxView = { id: "box", name: "Box", hostname: "box.lan", connected: true, revoked: false, current: true, sourceCount: 1 };
       const localView = { id: SEEDED_NODE_ID, name: "Internal", hostname: null, connected: false, revoked: false, current: false, sourceCount: 1 };
-      expect(nodesListFunction.execute({}, ctx)).toEqual([
+      expect(await api.nodes.list()).toEqual([
         boxView,
         localView,
         { id: "old", name: "Old", hostname: null, connected: false, revoked: true, current: false, sourceCount: 0 },
       ]);
-      expect(nodesGetFunction.execute({}, ctx)).toEqual({ ...boxView, sources: [{ sourceId: boxSource, path: "/srv/work", projects: [{ id: project.id, name: "Listed" }] }] });
+      expect(await api.nodes.get()).toEqual({ ...boxView, sources: [{ sourceId: boxSource, path: "/srv/work", projects: [{ id: project.id, name: "Listed" }] }] });
       const localDetail = { ...localView, sources: [{ sourceId: defaultSource(project.id)!.id, path: "/tmp/list-local", projects: [{ id: project.id, name: "Listed" }] }] };
-      expect(nodesGetFunction.execute({ node: SEEDED_NODE_ID }, ctx)).toEqual(localDetail);
-      expect(nodesGetFunction.execute({ node: "INTERNAL" }, ctx)).toEqual(localDetail);
-      expect(nodesGetFunction.execute({ node: "current" }, ctx)).toEqual(nodesGetFunction.execute({}, ctx));
-      expect(() => nodesGetFunction.execute({ node: "gone" }, ctx)).toThrow("Node removed: gone");
-      expect(() => nodesGetFunction.execute({ node: "nowhere" }, ctx)).toThrow("Node not found: nowhere (the nodes: Box, Internal, Old)");
+      expect(await api.nodes.get(SEEDED_NODE_ID)).toEqual(localDetail);
+      expect(await api.nodes.get("INTERNAL")).toEqual(localDetail);
+      expect(await api.nodes.get("current")).toEqual(await api.nodes.get());
+      await expect(api.nodes.get("gone")).rejects.toThrow("Node removed: gone");
+      await expect(api.nodes.get("nowhere")).rejects.toThrow("Node not found: nowhere (the nodes: Box, Internal, Old)");
     } finally { box.stop(); state.nodes.close(); }
   });
 });
@@ -189,15 +188,15 @@ describe("nodes.reload", () => {
     const remote = connectScriptedNode(state, "remote", { reload: async () => {
       throw new NodeRejection("unavailable", refusal);
     } });
-    const ctx = (sourceId: number): ApiContext => scriptContext(state, { sessionId: `caller-${sourceId}`, projectId: project.id, sourceId });
+    const api = (sourceId: number) => buildApiObject(scriptContext(state, { sessionId: `caller-${sourceId}`, projectId: project.id, sourceId }));
     try {
       await local.ready();
       await remote.ready();
-      expect(await nodesReloadFunction.execute({}, ctx(defaultSource(project.id)!.id))).toEqual({ nodeId: SEEDED_NODE_ID, scheduled: true });
-      expect(await nodesReloadFunction.execute({ node: SEEDED_NODE_ID, force: true }, ctx(remoteSource))).toEqual({ nodeId: SEEDED_NODE_ID, scheduled: true });
-      expect(await nodesReloadFunction.execute({ node: "INTERNAL" }, ctx(remoteSource))).toEqual({ nodeId: SEEDED_NODE_ID, scheduled: true });
+      expect(await api(defaultSource(project.id)!.id).nodes.reload()).toEqual({ nodeId: SEEDED_NODE_ID, scheduled: true });
+      expect(await api(remoteSource).nodes.reload(SEEDED_NODE_ID, true)).toEqual({ nodeId: SEEDED_NODE_ID, scheduled: true });
+      expect(await api(remoteSource).nodes.reload("INTERNAL")).toEqual({ nodeId: SEEDED_NODE_ID, scheduled: true });
       expect(requests).toEqual([{ nodeId: SEEDED_NODE_ID, force: false }, { nodeId: SEEDED_NODE_ID, force: true }, { nodeId: SEEDED_NODE_ID, force: false }]);
-      await expect(nodesReloadFunction.execute({}, ctx(remoteSource))).rejects.toThrow(refusal);
+      await expect(api(remoteSource).nodes.reload()).rejects.toThrow(refusal);
     } finally { local.stop(); remote.stop(); state.nodes.close(); }
   });
 });

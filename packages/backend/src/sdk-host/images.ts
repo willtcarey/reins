@@ -1,13 +1,15 @@
-/** `api.images`: the image models of the extensions' image providers (`reins.images`). */
+/**
+ * `images` (docs/dev/server-sdk.md *Images*): the image models of the extensions' image providers
+ * (`reins.images.registerProvider`), listed and used by an extension (`reins.images`) and an agent's script
+ * (`api.images`) alike. A model's ID is `<extension>__<model>`.
+ */
 
 import { Type } from "@sinclair/typebox";
 import type { ExtensionHost } from "../extensions/host.js";
 import { collectImages } from "../tools/script-output.js";
-import { type ApiContext, type ApiFunctionDef, defineFunction } from "./define-function.js";
+import { SignalSchema, sdkMethod, signalOf, type SdkNamespace } from "./declaration.js";
 
 const SEPARATOR = "__";
-
-const signalOf = (ctx: ApiContext) => ctx.signal ?? new AbortController().signal;
 
 export const ImageBlockSchema = Type.Object({
   type: Type.Literal("image"),
@@ -26,49 +28,50 @@ async function listModels(host: ExtensionHost, signal: AbortSignal): Promise<str
   return lists.flat();
 }
 
-export const imagesListFunction = defineFunction({
-  name: "images.list",
+const list = sdkMethod({
   description: "List the image model IDs, to use with images.generate.\n\n  return await api.images.list();",
-  parameters: Type.Object({}),
+  params: [{ name: "options", schema: Type.Object({ signal: Type.Optional(SignalSchema) }), optional: true }],
   returns: Type.Array(Type.String()),
-  async: true,
   tags: ["images", "image", "models", "generate", "picture"],
-  execute: (_params, ctx) => listModels(ctx.models.extensions, signalOf(ctx)),
+  run: (context, options = {}) => listModels(context.models.extensions, signalOf(context, options.signal)),
 });
 
-export const imagesGenerateFunction = defineFunction({
-  name: "images.generate",
+const generate = sdkMethod({
   description:
     "Make images from a prompt (with the first model images.list gives, unless model names one). " +
     "Give images to edit them. It can take tens of seconds. " +
     "The images are not shown to you: give the result to image() to see them.\n\n" +
     "  const result = await api.images.generate(\"a red fox in snow\", { size: \"1024x1024\" });\n" +
     "  image(result);",
-  parameters: Type.Object({
-    prompt: Type.String(),
-    options: Type.Optional(Type.Object({
-      model: Type.Optional(Type.String({ description: "An ID from images.list." })),
-      images: Type.Optional(Type.Unknown({ description: "Images to edit: anything image() takes." })),
-      size: Type.Optional(Type.String({ description: "E.g. \"1024x1024\"." })),
-      count: Type.Optional(Type.Integer({ minimum: 1, maximum: 10 })),
-      parameters: Type.Optional(Type.Record(Type.String(), Type.Unknown(), { description: "The provider's own parameters, e.g. { seed: 7 }." })),
-    })),
-  }),
+  params: [
+    { name: "prompt", schema: Type.String() },
+    {
+      name: "options",
+      schema: Type.Object({
+        model: Type.Optional(Type.String({ description: "An ID from images.list." })),
+        images: Type.Optional(Type.Unknown({ description: "Images to edit: anything image() takes." })),
+        size: Type.Optional(Type.String({ description: "E.g. \"1024x1024\"." })),
+        count: Type.Optional(Type.Integer({ minimum: 1, maximum: 10 })),
+        parameters: Type.Optional(Type.Record(Type.String(), Type.Unknown(), { description: "The provider's own parameters, e.g. { seed: 7 }." })),
+        signal: Type.Optional(SignalSchema),
+      }),
+      optional: true,
+    },
+  ],
   returns: ImageGenerationSchema,
-  async: true,
   tags: ["images", "image", "generate", "create", "draw", "edit", "picture"],
-  async execute({ prompt, options = {} }, ctx) {
-    const host = ctx.models.extensions;
-    const signal = signalOf(ctx);
-    const model = options.model ?? (await listModels(host, signal))[0];
+  async run(context, prompt, options = {}) {
+    const host = context.models.extensions;
+    const { model: chosen, images, signal: given, ...rest } = options;
+    const signal = signalOf(context, given);
+    const model = chosen ?? (await listModels(host, signal))[0];
     if (!model) throw new Error("No image models: configure an image provider (docs/features/images.md)");
     const at = model.indexOf(SEPARATOR);
     const provider = at > 0 ? host.imageProviders.get(model.slice(0, at)) : undefined;
     if (!provider) throw new Error(`Unknown image model: ${model}. List them with api.images.list().`);
-    const { model: _, images, ...rest } = options;
     const request = { prompt, ...rest, ...(images === undefined ? {} : { images: collectImages(images) }) };
     return { model, images: await provider.generate(model.slice(at + SEPARATOR.length), request, signal) };
   },
 });
 
-export const IMAGES_FUNCTIONS: ApiFunctionDef[] = [imagesListFunction, imagesGenerateFunction];
+export const IMAGES = { name: "images", methods: { list, generate }, types: { ImageGeneration: ImageGenerationSchema, ImageBlock: ImageBlockSchema } } satisfies SdkNamespace;

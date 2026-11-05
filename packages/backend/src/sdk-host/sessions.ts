@@ -18,7 +18,7 @@ import { readNewestRunResult, readPendingPiOperation } from "../pi/run-state.js"
 import { firstMessage, getSession, listSessions, type SessionRow } from "../session-store.js";
 import { assertPlace, inheritedSource } from "../sessions/create-session.js";
 import { latestSettlement } from "../sessions/session-runs.js";
-import { LocationSchema } from "../scripting/nodes.js";
+import { LocationSchema } from "./nodes.js";
 import { notForScripts, sdkMethod, signalOf, type CallContext, type SdkNamespace } from "./declaration.js";
 
 const MAX_LABEL = 80;

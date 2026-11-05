@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { ImageRequest, ImagesProvider, RegisterExtension } from "@reins/sdk/server";
+import type { ImageRequest, ImagesProvider, RegisterExtension, ServerSdk } from "@reins/sdk/server";
 import { runScript } from "../../tools/execute.js";
 import { searchScriptApi } from "../../tools/search.js";
 import { createAppState, type TestAppState } from "../helpers/app-state.js";
@@ -42,6 +42,19 @@ describe("api.images", () => {
       { name: "second", register: extension(provider(["dall-e", "gpt-image"])) },
     ]);
     expect(await value(state, "return await api.images.list()")).toEqual(["first__local/qwen", "second__dall-e", "second__gpt-image"]);
+  });
+
+  test("an extension lists and uses another extension's image models through reins.images, as scripts do", async () => {
+    const generations: { model: string; request: ImageRequest }[] = [];
+    let reins: ServerSdk | undefined;
+    app([
+      { name: "maker", register: extension(provider(["sketch"], generations)) },
+      { name: "user", register: sdk => { reins = sdk; return () => {}; } },
+    ]);
+
+    expect(await reins!.images.list()).toEqual(["maker__sketch"]);
+    expect(await reins!.images.generate("a boat", { size: "256x256" })).toEqual({ model: "maker__sketch", images: [image] });
+    expect(generations).toEqual([{ model: "sketch", request: { prompt: "a boat", size: "256x256" } }]);
   });
 
   test("generate gives the model's provider its own ID and the request", async () => {

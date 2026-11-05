@@ -17,7 +17,6 @@ import type { ExtensionStorage } from "../database.js";
 import { namedArgs, type ApiFunctionDef } from "../scripting/define-function.js";
 import type { NamedType } from "../scripting/api-registry.js";
 import type { AppState, SessionSettledNotice } from "../state.js";
-import { ExtensionNodes } from "./nodes.js";
 import { createBroadcast } from "../models/broadcast.js";
 import { requestOrigin } from "../nodes/node-link.js";
 import { logger } from "../logger.js";
@@ -29,6 +28,11 @@ import { bind, type CallContext } from "../sdk-host/declaration.js";
 import { TOOLS } from "../sdk-host/tools.js";
 import { SESSIONS } from "../sdk-host/sessions.js";
 import { PROJECTS, TASKS } from "../sdk-host/projects.js";
+import { NODES } from "../sdk-host/nodes.js";
+import { IMAGES } from "../sdk-host/images.js";
+import { UI } from "../sdk-host/ui.js";
+import { MODELS } from "../sdk-host/models.js";
+import { REVIEWS } from "../sdk-host/reviews.js";
 
 /** A backend extension as the server registers it: its name, its migrations and its register function. */
 export interface ExtensionRegistration extends ServerExtension { name: string }
@@ -427,6 +431,7 @@ export class ExtensionHost {
         match: matchTools,
       }),
       images: Object.freeze({
+        ...bind(IMAGES.methods, context),
         registerProvider: (provider: ImagesProvider) => {
           if (this.imageProviders.has(name)) throw new Error("An extension registers one image provider at a time");
           this.imageProviders.set(name, provider);
@@ -443,7 +448,10 @@ export class ExtensionHost {
           return add(this.settlementListeners, { extension: name, listener });
         },
       }),
-      nodes: Object.freeze(new ExtensionNodes(this.app())),
+      nodes: Object.freeze(bind(NODES.methods, context)),
+      ui: Object.freeze(bind(UI.methods, context)),
+      models: Object.freeze(bind(MODELS.methods, context)),
+      reviews: Object.freeze(bind(REVIEWS.methods, context)),
       projects: Object.freeze(bind(PROJECTS.methods, context)),
       tasks: Object.freeze(bind(TASKS.methods, context)),
       prompt: Object.freeze({

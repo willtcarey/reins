@@ -227,6 +227,19 @@ describe("reins.sessions", () => {
     await expect(automation.tasks.get(999)).rejects.toThrow("Task not found: 999");
   });
 
+  test("waits for a session and lists a project's sessions, as scripts do; \"current\" is refused, as an extension has no session", async () => {
+    const project = createProject("Project", dir);
+    const { sessionId } = await automation.sessions.start("Build it", { projectId: project.id, model: model.model });
+    const waiting = automation.sessions.wait(sessionId, 10_000);
+    (await model.nextTurn(sessionId)).finish({ reply: "Built" });
+
+    expect(await waiting).toEqual({ sessionId, status: "completed", result: "Built", error: null });
+    expect((await automation.sessions.list({ projectId: project.id })).map(session => session.id)).toEqual([sessionId]);
+    await expect(automation.sessions.current()).rejects.toThrow("sessions.current names the calling session, and an extension has none");
+    await expect(automation.sessions.start("Child", { projectId: project.id, parentSessionId: "current" })).rejects.toThrow("options.parentSessionId \"current\" names the calling session, and an extension has none");
+    await expect(automation.tasks.list()).rejects.toThrow("An extension names the project: it has no calling session");
+  });
+
   test("refuses a session the server does not have", async () => {
     await expect(automation.sessions.get("missing")).rejects.toThrow("Session not found: missing");
     await expect(automation.sessions.send("missing", "Hello")).rejects.toThrow("Session not found: missing");

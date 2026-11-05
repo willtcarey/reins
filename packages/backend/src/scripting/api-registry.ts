@@ -25,24 +25,10 @@ import {
   schemaProperties,
   sameSchema,
 } from "./schema-utils.js";
-import { UI_FUNCTIONS } from "./ui.js";
-import { MODEL_FUNCTIONS, ProviderInfoSchema, ModelInfoSchema } from "./models.js";
-import { REVIEW_FUNCTIONS } from "./reviews.js";
-import { NODE_FUNCTIONS, NodeCopyResultSchema, NodeDetailSchema, NodeReloadSchema, NodeRunResultSchema, NodeSchema, NodeSourceSchema, ProjectRefSchema, LocationSchema } from "./nodes.js";
-import { TOOLS } from "../sdk-host/tools.js";
-import { SESSIONS } from "../sdk-host/sessions.js";
-import { PROJECTS, TASKS } from "../sdk-host/projects.js";
-import { scriptFunctions, scriptTypes } from "../sdk-host/projection.js";
-import { IMAGES_FUNCTIONS, ImageBlockSchema, ImageGenerationSchema } from "./images.js";
 import { rankByTerms } from "./term-search.js";
 import type { ExtensionHost } from "../extensions/host.js";
-import {
-  CodeReviewStateSchema,
-  ReviewAnchorEvidenceSchema,
-  ReviewAnnotationSchema,
-  ReviewDiffLineSchema,
-  ReviewEntrySchema,
-} from "../models/code-review.js";
+import { scriptFunctions, scriptTypes } from "../sdk-host/projection.js";
+import { CORE_NAMESPACES } from "../sdk-host/namespaces.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -53,7 +39,7 @@ export function fnNamespace(fn: { name: string }): string {
   return fn.name.split(".")[0];
 }
 
-/** Derive the method name from a fully qualified function name (e.g. "tasks.list" ��� "list"). */
+/** Derive the method name from a fully qualified function name (e.g. "tasks.list" → "list"). */
 export function fnMethod(fn: { name: string }): string {
   return fn.name.split(".")[1];
 }
@@ -67,43 +53,13 @@ export interface NamedType {
   schema: TSchema;
 }
 
-/** The SDK's namespaces that scripts call (`sdk-host/`), projected as `api`'s. */
-const SDK_NAMESPACES = [TASKS, SESSIONS, PROJECTS, TOOLS];
-
-export const DOMAIN_TYPES: NamedType[] = [
-  { name: "ProviderInfo", schema: ProviderInfoSchema },
-  { name: "ModelInfo", schema: ModelInfoSchema },
-  { name: "CodeReview", schema: CodeReviewStateSchema },
-  { name: "ReviewAnnotation", schema: ReviewAnnotationSchema },
-  { name: "ReviewAnchor", schema: ReviewAnchorEvidenceSchema },
-  { name: "ReviewDiffLine", schema: ReviewDiffLineSchema },
-  { name: "ReviewEntry", schema: ReviewEntrySchema },
-  { name: "Node", schema: NodeSchema },
-  { name: "NodeDetail", schema: NodeDetailSchema },
-  { name: "NodeSource", schema: NodeSourceSchema },
-  { name: "ProjectRef", schema: ProjectRefSchema },
-  { name: "Location", schema: LocationSchema },
-  { name: "NodeReload", schema: NodeReloadSchema },
-  { name: "NodeRunResult", schema: NodeRunResultSchema },
-  { name: "NodeCopyResult", schema: NodeCopyResultSchema },
-  { name: "ImageGeneration", schema: ImageGenerationSchema },
-  { name: "ImageBlock", schema: ImageBlockSchema },
-  ...SDK_NAMESPACES.flatMap(scriptTypes),
-];
+export const DOMAIN_TYPES: NamedType[] = CORE_NAMESPACES.flatMap(scriptTypes);
 
 // ---------------------------------------------------------------------------
-// Function registry (assembled from per-resource files)
+// Function registry: the SDK's namespaces, projected for scripts
 // ---------------------------------------------------------------------------
 
-export const API_FUNCTIONS: ApiFunctionDef[] = [
-  ...[TASKS, SESSIONS, PROJECTS].flatMap(scriptFunctions),
-  ...UI_FUNCTIONS,
-  ...MODEL_FUNCTIONS,
-  ...REVIEW_FUNCTIONS,
-  ...NODE_FUNCTIONS,
-  ...scriptFunctions(TOOLS),
-  ...IMAGES_FUNCTIONS,
-];
+export const API_FUNCTIONS: ApiFunctionDef[] = CORE_NAMESPACES.flatMap(scriptFunctions);
 
 /** The `api` an agent's scripts get: the core's functions and types, and those of the app's extensions. */
 export interface ScriptingApi { functions: ApiFunctionDef[]; types: NamedType[] }

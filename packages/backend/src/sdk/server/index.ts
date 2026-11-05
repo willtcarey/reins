@@ -53,7 +53,7 @@ export interface ServerSdk {
    * is under `/api/extensions/<name>/` and its pages under `/extensions/<name>/`. */
   readonly name: string;
   readonly tools: Tools;
-  /** Image models for agents' `api.images`. */
+  /** Image models: list and use them, and register a provider of them. */
   readonly images: Images;
   readonly prompt: Prompt;
   readonly scripting: Scripting;
@@ -62,8 +62,13 @@ export interface ServerSdk {
   /** Sessions: start them, message them, read them, and hear when the runs of those it started end. Call its
    * methods on it (`reins.sessions.send(…)`): taken off it, they lose it. */
   readonly sessions: Sessions;
-  /** Nodes: the machines sessions work on. Run a command on one. Call `run` on it, as for `sessions`. */
+  /** Nodes: the machines sessions work on, and files and commands on them. Call its methods on it, as for `sessions`. */
   readonly nodes: Nodes;
+  readonly ui: Ui;
+  /** The AI providers and their models. */
+  readonly models: Models;
+  /** Code reviews: a calling session's only, so an extension is refused (`Reviews`). */
+  readonly reviews: Reviews;
   /** Projects. Call its methods on it, as for `sessions`. */
   readonly projects: Projects;
   /** Tasks, of any project. Call its methods on it, as for `sessions`. */
@@ -527,15 +532,100 @@ export interface CommandOptions {
   readonly signal?: AbortSignal;
 }
 
+/** A node as `Nodes.list` gives it. */
+export interface NodeInfo {
+  readonly id: string;
+  readonly name: string;
+  /** The machine's hostname, as it said when it paired; null for a node never paired (the local one). */
+  readonly hostname: string | null;
+  readonly connected: boolean;
+  /** Revoked: it may not connect. */
+  readonly revoked: boolean;
+  /** The calling session runs its tools on it (never, for an extension). */
+  readonly current: boolean;
+  /** How many sources (directories sessions work in) are in use on it. */
+  readonly sourceCount: number;
+}
+
+export interface NodeDetail extends NodeInfo {
+  /** The sources in use on it, by path, each with the projects whose sessions work there or whose default source it is. */
+  readonly sources: readonly { readonly sourceId: number; readonly path: string; readonly projects: readonly { readonly id: number; readonly name: string }[] }[];
+}
+
+/**
+ * Nodes: the machines sessions work on, and files and commands on any of them. A node is named by its ID (stable:
+ * prefer it to keep) or its name (any case); `"current"` is the calling session's (scripts only), also the default
+ * where a node may be left out, so an extension names it. Nothing is confined: files and commands are the node's
+ * user's, as a session's are. An unknown or removed node rejects ("Node not found: <node> (the nodes: …)"), and one
+ * that is not connected now too ("Node unavailable: …"): nothing waits for it. What a call reads is held in the
+ * server's memory: at most 16 MiB.
+ */
 export interface Nodes {
+  /** The nodes not removed, in name order. */
+  list(): Promise<NodeInfo[]>;
+  /** A node with the sources in use on it. */
+  get(node?: string): Promise<NodeDetail>;
+  /** Restarts a node on its current code; resolves once the reload is scheduled. `force`: after 60 s, cut off the
+   * calls still in flight instead of giving up. */
+  reload(node?: string, force?: boolean): Promise<{ nodeId: string; scheduled: true }>;
+  /** A whole file, as text (UTF-8) or with `binary` as bytes; a file over 16 MiB rejects (copy it with `copy`). */
+  readFile(node: string, path: string, options?: { readonly binary?: boolean; readonly signal?: AbortSignal }): Promise<string | Uint8Array>;
+  /** Writes a whole file, making its directories and replacing a file there. */
+  writeFile(node: string, path: string, content: string | Uint8Array, options?: { readonly signal?: AbortSignal }): Promise<void>;
+  /** Copies a file of any size from one node to another (or within one); the file there is replaced once the whole
+   * file has arrived. */
+  copy(fromNode: string, fromPath: string, toNode: string, toPath: string, options?: { readonly signal?: AbortSignal }): Promise<{ bytes: number }>;
   /**
-   * Runs a bash command on a node, named by its ID (stable: prefer it to keep) or its name (any case). It runs as
-   * the node's user, with nothing confined: as a session's commands do. A command that fails resolves with its
-   * exit code; `run` rejects for a blank command, a timeout out of range, an unknown or removed node, one that is
-   * not connected now (it does not wait for the node), the timeout and the signal. The output is held in the
-   * server's memory until it resolves.
+   * Runs a bash command on a node. A command that fails resolves with its exit code; `run` rejects for a blank
+   * command, a timeout out of range (an extension's: 1 to 600 000), the timeout and the signal.
    */
   run(node: string, command: string, options?: CommandOptions): Promise<CommandResult>;
+}
+
+// ---------------------------------------------------------------------------
+// UI, models and code reviews
+// ---------------------------------------------------------------------------
+
+/** What browsers show. */
+export interface Ui {
+  /** Sends any frontend message to every browser (debugging; `ServerSdk.broadcast` is the extension's own channel). */
+  broadcast(message: unknown): Promise<string>;
+  /** Opens a file in the file browser of the users viewing a session (a script's own; an extension names it with
+   * `sessionId`), highlighting `startLine`–`endLine`; rejects when the file is not on the node. */
+  openFile(path: string, options?: { readonly node?: string; readonly startLine?: number; readonly endLine?: number; readonly sessionId?: string }): Promise<string>;
+}
+
+/** An AI provider and its models. */
+export interface ProviderInfo {
+  readonly runtimeType: string;
+  readonly provider: string;
+  readonly isAvailable: boolean;
+  readonly availabilitySource: "db" | "env" | "oauth" | "local" | null;
+  readonly availabilitySources: readonly ("db" | "env" | "oauth" | "local")[];
+  readonly models: readonly { readonly id: string; readonly name: string; readonly reasoning: boolean; readonly contextWindow: number; readonly maxTokens: number }[];
+}
+
+export interface Models {
+  list(): Promise<ProviderInfo[]>;
+  listProviders(): Promise<string[]>;
+}
+
+/** A pending code review: its annotations (comments anchored in a diff, with their threads). */
+export interface CodeReview {
+  readonly id: string;
+  readonly projectId: number;
+  readonly taskId: number | null;
+  readonly revision: number;
+  readonly annotations: readonly unknown[];
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+/** The pending code review of the calling session's project and task. It is about that session's branch diff, so
+ * an extension, which has none, is refused. */
+export interface Reviews {
+  current(): Promise<CodeReview | null>;
+  addComment(path: string, line: number, body: string, options?: { readonly endLine?: number; readonly side?: "old" | "new"; readonly author?: string }): Promise<CodeReview>;
 }
 
 /** A JSON Schema object, as JSON Schema defines it (a TypeBox schema is one). */
@@ -574,6 +664,10 @@ export interface ImagesProvider {
 }
 
 export interface Images {
+  /** Every provider's model IDs, `<extension>__<model>` (a provider's throw rejects the list). */
+  list(options?: { readonly signal?: AbortSignal }): Promise<string[]>;
+  /** Makes images with `model` (by default the first listed); `images` takes what a script's `image()` takes. */
+  generate(prompt: string, options?: { readonly model?: string; readonly images?: unknown; readonly size?: string; readonly count?: number; readonly parameters?: Readonly<Record<string, unknown>>; readonly signal?: AbortSignal }): Promise<{ model: string; images: ImageBlock[] }>;
   /** One per extension: a second throws while the first is registered. */
   registerProvider(provider: ImagesProvider): Disposer;
 }
