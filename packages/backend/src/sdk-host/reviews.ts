@@ -1,7 +1,6 @@
 /**
- * `reviews` (docs/dev/server-sdk.md): the pending code review of the calling session's project and task, for an
- * agent's script (`api.reviews`). A review is about a session's branch diff, so an extension, which has no session,
- * is refused (`reins.reviews` has the same methods).
+ * `reviews` (docs/dev/server-sdk.md): the pending code review of the calling session's project and task, `reins.reviews`,
+ * for an agent's script. A review is about a session's branch diff, so an extension, which has no session, is refused.
  */
 
 import { Type } from "@sinclair/typebox";

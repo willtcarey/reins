@@ -59,7 +59,7 @@ const searchParameters = Type.Object({
 const executeParameters = Type.Object({
   code: Type.String({
     description:
-      "Async JavaScript function body. Has access to the existing `api` object " +
+      "Async JavaScript function body. Has access to the existing `reins` object " +
       "for Reins-managed data or UI state. Use `return` to produce a result. " +
       "Use the `search` tool for functions not already documented in the system prompt.",
   }),
@@ -106,11 +106,11 @@ function searchTool(calls: ReinsToolCalls): AgentHarnessTool<HostToolContext | u
     label: "Search API",
     description:
       "Discover Reins internal API functions available to the `execute` tool. " +
-      "Returns documentation-only TypeScript interfaces for the existing `api` object " +
+      "Returns documentation-only TypeScript interfaces for the existing `reins` object " +
       "and referenced domain types, filtered by query. " +
       "Use this before writing `execute` scripts for Reins-managed data or UI state. " +
       "Use an empty query to inspect the full API surface. " +
-      "In `execute` scripts, call methods on the provided `api` object; " +
+      "In `execute` scripts, call methods on the provided `reins` object; " +
       "these interfaces are documentation only.",
     parameters: searchParameters,
     // Read-only on the server: a call an interruption cut off is run again.
@@ -132,10 +132,10 @@ function executeTool(calls: ReinsToolCalls): AgentHarnessTool<HostToolContext | 
     label: "Execute",
     description:
       "Run async JavaScript against Reins internals. " +
-      "Write a function body using the existing `api` object. " +
+      "Write a function body using the existing `reins` object, the server SDK bound to your session. " +
       "Use the `search` tool to discover functions not already documented in the system prompt. " +
       "Use `return` to produce a result; `text(value)` and `image(...images)` add content blocks before it, in call order. " +
-      "`image()` takes `{ data, mimeType }` (data base64 or bytes) and results of `api.tools.call` and `api.images.generate`.",
+      "`image()` takes `{ data, mimeType }` (data base64 or bytes) and results of `reins.tools.call` and `reins.images.generate`.",
     parameters: executeParameters,
     replay: "never",
     async execute(_toolCallId, params, _onUpdate, _toolContext, _invocation, context) {

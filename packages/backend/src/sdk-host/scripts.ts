@@ -1,5 +1,5 @@
 /**
- * `api` as scripts have it, and what `search` finds in it: the core's SDK namespaces (`namespaces.ts`) and the
+ * `reins` as scripts have it, and what `search` finds in it: the core's SDK namespaces (`namespaces.ts`) and the
  * app's extensions', each method projected from its declaration (`projection.ts`): its schemas are the single
  * source of truth, which `search` renders, with no hand-kept signatures.
  */
@@ -47,7 +47,7 @@ export const DOMAIN_TYPES: NamedType[] = CORE_NAMESPACES.flatMap(namespace => sc
 
 export const API_FUNCTIONS: ScriptFunction[] = CORE_NAMESPACES.flatMap(namespace => scriptFunctions(namespace, scriptCallContext));
 
-/** The `api` an agent's scripts get: the core's functions and types, and those of the app's extensions. */
+/** The `reins` an agent's scripts get: the core's functions and types, and those of the app's extensions. */
 export interface ScriptingApi { functions: ScriptFunction[]; types: NamedType[] }
 
 export function scriptingApi(extensions?: ExtensionHost): ScriptingApi {
@@ -88,7 +88,7 @@ export function searchFunctions(query: string, functions: readonly ScriptFunctio
 function normalizeSearchTerm(term: string): string {
   const withoutQuotes = term.replace(/^[`'"]+|[`'",;:]+$/g, "");
   const withoutCall = withoutQuotes.replace(/\(.*$/, "");
-  return withoutCall.startsWith("api.") ? withoutCall.slice(4) : withoutCall;
+  return withoutCall.startsWith("reins.") ? withoutCall.slice("reins.".length) : withoutCall;
 }
 
 /**
@@ -150,7 +150,7 @@ function schemaReferences(schema: TSchema, target: TSchema): boolean {
 // ---------------------------------------------------------------------------
 
 /**
- * Build the `api` object for agent scripts. Namespaces are derived
+ * Build the `reins` object for agent scripts. Namespaces are derived
  * from the registry — each function becomes a method on its namespace,
  * called with the script's positional arguments (`tasks.update(taskId, updates)`).
  */

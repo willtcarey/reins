@@ -1,5 +1,5 @@
-/** `models` (docs/dev/server-sdk.md): the AI providers and their models, for an extension (`reins.models`) and an
- * agent's script (`api.models`). */
+/** `models` (docs/dev/server-sdk.md): the AI providers and their models, `reins.models`, for an extension and an
+ * agent's script alike. */
 
 import { Type } from "@sinclair/typebox";
 import type { ScriptNamespace } from "@reins/sdk/server";

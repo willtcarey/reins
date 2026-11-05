@@ -1,8 +1,8 @@
 /**
  * The host of backend extensions (docs/dev/server-sdk.md): what one app's extensions registered through the
  * server SDK (`@reins/sdk/server`), and the SDK object each one gets. `createAppState` builds one and
- * registers the extensions; the app's `stop` disposes it. The core reads it: `api.tools` (`searchTools`,
- * `callTool`), `api.images` (`imageProviders`), `api.<namespace>` (`scriptFunctions`), the system prompt (`promptSections`) and
+ * registers the extensions; the app's `stop` disposes it. The core reads it: `reins.tools` (`searchTools`,
+ * `callTool`), `reins.images` (`imageProviders`), `reins.<namespace>` (`scriptFunctions`), the system prompt (`promptSections`) and
  * `/api/extensions/…` and `/extensions/…` (`handle`), and Settings' Extensions section (`list`).
  */
 
@@ -47,7 +47,7 @@ const LOCAL_ID = /^[a-zA-Z0-9_-]+$/;
 
 export class UnknownToolError extends Error {
   constructor(id: string) {
-    super(`Unknown tool: ${id}. Find tools with api.tools.search(query).`);
+    super(`Unknown tool: ${id}. Find tools with reins.tools.search(query).`);
     this.name = "UnknownToolError";
   }
 }
@@ -136,7 +136,7 @@ export class ExtensionHost {
 
   /** `app`: the app the host is of, read when an extension registers (the host is built with it): its process
    * has each extension's directory and database and the broadcast, and its sessions and nodes are what
-   * `reins.sessions` and `reins.nodes` reach. `reservedNamespaces`: the core's `api` namespaces, which no
+   * `reins.sessions` and `reins.nodes` reach. `reservedNamespaces`: the core's script namespaces, which no
    * extension may take. `onError`: what an extension's failure to register or dispose is told to. */
   constructor(
     private readonly app: () => AppState,
@@ -275,7 +275,7 @@ export class ExtensionHost {
     return entry.provider.call(localId, args, options);
   }
 
-  /** The extensions' `api` functions, as the core's registry holds functions. */
+  /** The extensions' script functions, as the core's registry holds functions. */
   scriptFunctions(): ScriptFunction[] {
     return this.scripts.flatMap(script => script.functions);
   }
@@ -456,12 +456,12 @@ export class ExtensionHost {
     });
   }
 
-  /** An extension's namespace as `api`'s functions (`scriptFunctions`), each called for the script's session;
+  /** An extension's namespace as script functions (`scriptFunctions`), each called for the script's session;
    * throws when its namespace is taken, or the projection cannot use it. */
   private script(extension: string, namespace: ScriptNamespace): Script {
     if (typeof namespace?.namespace !== "string") throw new Error("A script namespace needs its name (namespace)");
     if (this.reservedNamespaces.has(namespace.namespace) || this.scripts.some(script => script.namespace === namespace.namespace)) {
-      throw new Error(`The api namespace ${namespace.namespace} is taken`);
+      throw new Error(`The script namespace ${namespace.namespace} is taken`);
     }
     if (typeof namespace.methods !== "object" || namespace.methods === null) throw new Error(`${namespace.namespace}: no methods`);
     return { extension, namespace: namespace.namespace, functions: scriptFunctions(namespace, scriptContextOf), types: scriptTypes(namespace) };

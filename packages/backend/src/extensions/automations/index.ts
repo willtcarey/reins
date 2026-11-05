@@ -21,7 +21,7 @@ export interface AutomationsOptions {
 const POLL_MS = 30_000;
 
 /** Starts automations for one app: its scheduler service (which ticks at once, so what came due while Reins was
- * down runs at startup), its settlement listener, `api.automations` and its HTTP API. */
+ * down runs at startup), its settlement listener, `reins.automations` and its HTTP API. */
 export function startAutomations(reins: ServerSdk, { now = () => new Date(), pollMs = POLL_MS }: AutomationsOptions = {}): { automations: Automations; dispose: Disposer } {
   const automations = new Automations({ db: reins.db, sessions: reins.sessions, nodes: reins.nodes, logger: reins.logger, now });
   const removals = [

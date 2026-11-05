@@ -75,7 +75,7 @@ export function formatFunctionSignature(
 /**
  * Render matched API functions as partial TypeScript documentation interfaces.
  * Methods are grouped under namespace interfaces and use positional params,
- * matching the runtime `api.namespace.method(...args)` calling convention. Every method returns a promise.
+ * matching the runtime `reins.namespace.method(...args)` calling convention. Every method returns a promise.
  */
 export function formatApiInterfaces(
   fns: ScriptFunction[],
@@ -98,7 +98,7 @@ export function formatApiInterfaces(
   );
 
   const rootInterface = [
-    "interface Api {",
+    "interface Reins {",
     ...namespaceLines,
     "}",
   ].join("\n");

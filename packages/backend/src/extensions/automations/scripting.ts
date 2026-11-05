@@ -1,5 +1,5 @@
 /**
- * `api.automations`, the automations extension's scripting functions (`reins.scripting`): automations that wake
+ * `reins.automations`, the automations extension's scripting functions (`reins.scripting`): automations that wake
  * the calling session or a hidden session of their own, on a schedule or when a command succeeds
  * (docs/features/automations.md).
  */
@@ -105,9 +105,9 @@ export function automationsScripting(automations: Automations, sessions: Pick<Se
       "target \"new\": a new session at each delivery, in this session's project and shown in the session list (project: null for none; background: true hides it), for work that should start afresh each time " +
       "(\"review each new Dependabot PR\"); a delivery is skipped while the session the previous one started still runs.\n" +
       "A message to a running session joins its run. Cancel with automations.cancel(id).\n\n" +
-      "  return await api.automations.create({ trigger: { command: \"gh pr view 42 --json state -q .state | grep -x MERGED\", every: \"2m\" }, once: true,\n" +
+      "  return await reins.automations.create({ trigger: { command: \"gh pr view 42 --json state -q .state | grep -x MERGED\", every: \"2m\" }, once: true,\n" +
       "    message: \"PR 42 has merged: tell the user, then go on with the release notes.\" });\n" +
-      "  return await api.automations.create({ trigger: { schedule: \"daily 09:00\", timezone: \"Europe/London\" }, target: \"own\", name: \"GitHub\",\n" +
+      "  return await reins.automations.create({ trigger: { schedule: \"daily 09:00\", timezone: \"Europe/London\" }, target: \"own\", name: \"GitHub\",\n" +
       "    message: \"List my new GitHub notifications since the last run, most important first.\" });",
     params: [{
       name: "automation",

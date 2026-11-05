@@ -36,7 +36,7 @@ async function admitted(turns: unknown[], count: number): Promise<void> {
   expect(turns).toHaveLength(count);
 }
 
-describe("api.sessions orchestration", () => {
+describe("reins.sessions orchestration", () => {
   useTestDb();
   const repo = useTestRepo();
   const loopback = useLoopbackState();
@@ -56,7 +56,7 @@ describe("api.sessions orchestration", () => {
     state.process.clients.add({ ws: { send: data => { const message = JSON.parse(data); if (message.type !== "node_updated" && message.type !== "event") broadcasts.push(message); return 0; } } });
     /** The script context of session `sessionId`, which exists. */
     const contextFor = (sessionId: string) => scriptContext(state, { sessionId });
-    return { state, project, turns, broadcasts, contextFor, api: buildApiObject(contextFor("parent")) };
+    return { state, project, turns, broadcasts, contextFor, reins: buildApiObject(contextFor("parent")) };
   }
   /** Answers the session's model requests until it is idle. */
   async function answerUntilIdle(sessionId: string, reply?: string): Promise<void> {
@@ -77,28 +77,28 @@ describe("api.sessions orchestration", () => {
     for (const [id, sourceId] of [["loose", scratch.id], ["neighbour", scratch.id], ["far", elsewhere.id]] as const) {
       insertSession(id, null, { agentRuntimeType: "pi", modelProvider: provider(), modelId: "fake", sourceId, background: true });
     }
-    const api = buildApiObject(scriptContext(state, { sessionId: "loose" }));
+    const reins = buildApiObject(scriptContext(state, { sessionId: "loose" }));
 
-    const listed = Value.Parse(Type.Array(SessionSchema), await api.sessions.list({ background: "include" }));
+    const listed = Value.Parse(Type.Array(SessionSchema), await reins.sessions.list({ background: "include" }));
     expect(listed.map(session => session.id).toSorted()).toEqual(["loose", "neighbour"]);
-    const started = Value.Parse(SessionHandleSchema, await api.sessions.start("Look around", { parentSessionId: null }));
+    const started = Value.Parse(SessionHandleSchema, await reins.sessions.start("Look around", { parentSessionId: null }));
     expect(getSession(started.sessionId)).toMatchObject({ project_id: null, task_id: null, source_id: scratch.id });
     await answerUntilIdle(started.sessionId);
-    const placed = Value.Parse(SessionHandleSchema, await api.sessions.start("Over there", { parentSessionId: null, source: { nodeId: "internal", path: "/tmp/elsewhere" } }));
+    const placed = Value.Parse(SessionHandleSchema, await reins.sessions.start("Over there", { parentSessionId: null, source: { nodeId: "internal", path: "/tmp/elsewhere" } }));
     expect(getSession(placed.sessionId)).toMatchObject({ project_id: null, source_id: elsewhere.id });
     await answerUntilIdle(placed.sessionId);
-    await expect(api.sessions.send("neighbour", "Hello")).resolves.toBeUndefined();
+    await expect(reins.sessions.send("neighbour", "Hello")).resolves.toBeUndefined();
     await answerUntilIdle("neighbour");
-    await expect(api.sessions.send("far", "Hello")).resolves.toBeUndefined();
+    await expect(reins.sessions.send("far", "Hello")).resolves.toBeUndefined();
     await answerUntilIdle("far");
-    expect(await api.sessions.setName("parent", "Renamed")).toMatchObject({ id: "parent", name: "Renamed" });
-    await expect(api.sessions.start("In a task", { parentSessionId: null, taskId: createTask(project.id, "T", null, "task/t").id })).rejects.toThrow("A session of no project has no task");
-    await expect(api.tasks.list()).rejects.toThrow("This session has no project, and tasks belong to projects");
-    expect(await api.projects.current()).toBeNull();
+    expect(await reins.sessions.setName("parent", "Renamed")).toMatchObject({ id: "parent", name: "Renamed" });
+    await expect(reins.sessions.start("In a task", { parentSessionId: null, taskId: createTask(project.id, "T", null, "task/t").id })).rejects.toThrow("A session of no project has no task");
+    await expect(reins.tasks.list()).rejects.toThrow("This session has no project, and tasks belong to projects");
+    expect(await reins.projects.current()).toBeNull();
   });
 
   test("discovers unread activity and returns persisted status without marking sessions read", async () => {
-    const { api } = setup();
+    const { reins } = setup();
     const functions = searchFunctions("unread");
     expect(functions.map((fn) => fn.name)).toContain("sessions.list");
     expect(referencedTypes(functions).map((type) => JSON.stringify(type)).join("\n")).toContain("unread");
@@ -108,9 +108,9 @@ describe("api.sessions orchestration", () => {
       else loopback.state.process.sessions.live.delete("parent");
       updateActivityState("parent", activity === "finished" ? "finished" : null);
       const unread = activity === "finished";
-      expect(await api.sessions.current()).toMatchObject({ unread, pinned: false, archived: false });
-      expect(await api.sessions.get("parent")).toMatchObject({ unread, pinned: false, archived: false });
-      expect(await api.sessions.list()).toContainEqual(expect.objectContaining({
+      expect(await reins.sessions.current()).toMatchObject({ unread, pinned: false, archived: false });
+      expect(await reins.sessions.get("parent")).toMatchObject({ unread, pinned: false, archived: false });
+      expect(await reins.sessions.list()).toContainEqual(expect.objectContaining({
         id: "parent", unread, pinned: false, archived: false,
       }));
       expect(getSession("parent")!.activity_state).toBe(activity);
@@ -118,11 +118,11 @@ describe("api.sessions orchestration", () => {
   });
 
   test("exposes pin and archive state as booleans without leaking persistence timestamps", async () => {
-    const { api } = setup();
+    const { reins } = setup();
     updateSessionMetadata("parent", { pinned: true, archived: true });
 
-    const current = await api.sessions.current();
-    const fetched = await api.sessions.get("parent");
+    const current = await reins.sessions.current();
+    const fetched = await reins.sessions.get("parent");
 
     expect(current).toMatchObject({ pinned: true, archived: true });
     expect(fetched).toMatchObject({ pinned: true, archived: true });
@@ -131,22 +131,22 @@ describe("api.sessions orchestration", () => {
   });
 
   test("pins and archives independently through explicit session mutations", async () => {
-    const { api } = setup();
+    const { reins } = setup();
 
-    expect(await api.sessions.setPinned("parent", true)).toMatchObject({ pinned: true, archived: false });
-    expect(await api.sessions.setArchived("parent", true)).toMatchObject({ pinned: true, archived: true });
-    expect(await api.sessions.setArchived("parent", false)).toMatchObject({ pinned: true, archived: false });
+    expect(await reins.sessions.setPinned("parent", true)).toMatchObject({ pinned: true, archived: false });
+    expect(await reins.sessions.setArchived("parent", true)).toMatchObject({ pinned: true, archived: true });
+    expect(await reins.sessions.setArchived("parent", false)).toMatchObject({ pinned: true, archived: false });
     expect(getSession("parent")).toMatchObject({ pinned_at: expect.any(String), archived_at: null });
 
     const otherProject = createProject("Other organization", `${repo.dir}-organization`, "main");
     createSession("foreign-organization", otherProject.id, { agentRuntimeType: "pi" });
-    expect(await api.sessions.setPinned("foreign-organization", true)).toMatchObject({ pinned: true });
+    expect(await reins.sessions.setPinned("foreign-organization", true)).toMatchObject({ pinned: true });
   });
 
   test("renames and clears a session through an explicit scoped mutation", async () => {
-    const { api, broadcasts } = setup();
+    const { reins, broadcasts } = setup();
 
-    expect(await api.sessions.setName("parent", "  Important investigation  ")).toMatchObject({
+    expect(await reins.sessions.setName("parent", "  Important investigation  ")).toMatchObject({
       id: "parent",
       name: "Important investigation",
       pinned: false,
@@ -159,58 +159,58 @@ describe("api.sessions orchestration", () => {
       projectId: expect.any(Number),
     }]);
 
-    expect(await api.sessions.setName("parent", null)).toMatchObject({ name: null });
+    expect(await reins.sessions.setName("parent", null)).toMatchObject({ name: null });
     expect(getSession("parent")!.name).toBeNull();
   });
 
   test("rejects invalid names without side effects, and renames a session of another project", async () => {
-    const { api, broadcasts } = setup();
+    const { reins, broadcasts } = setup();
     updateSessionMetadata("parent", { name: "Original" });
 
-    await expect(Promise.resolve().then(() => api.sessions.setName("parent", "   "))).rejects.toThrow();
+    await expect(Promise.resolve().then(() => reins.sessions.setName("parent", "   "))).rejects.toThrow();
     expect(getSession("parent")!.name).toBe("Original");
     expect(broadcasts).toEqual([]);
 
     const otherProject = createProject("Other naming", `${repo.dir}-naming`, "main");
     createSession("foreign-name", otherProject.id, { agentRuntimeType: "pi" });
     updateSessionMetadata("foreign-name", { name: "Foreign original" });
-    expect(await api.sessions.setName("foreign-name", "Renamed here")).toMatchObject({ name: "Renamed here" });
+    expect(await reins.sessions.setName("foreign-name", "Renamed here")).toMatchObject({ name: "Renamed here" });
   });
 
   test("starts immediately with explicit child/title semantics and waits for native settlement", async () => {
-    const { api, turns, project } = setup();
-    const child = Value.Decode(SessionHandleSchema, await api.sessions.start("Investigate", { parentSessionId: "current", title: "Investigation" }));
+    const { reins, turns, project } = setup();
+    const child = Value.Decode(SessionHandleSchema, await reins.sessions.start("Investigate", { parentSessionId: "current", title: "Investigation" }));
     expect(getSession(child.sessionId)).toMatchObject({
       name: "Investigation", parent_session_id: "parent", project_id: project.id,
       model_provider: provider(), model_id: "fake", thinking_level: "high",
     });
     await admitted(turns, 1);
     expect(turns[0].input).toBe("Investigate");
-    expect(await api.sessions.wait(child.sessionId, 0)).toMatchObject({ status: "timeout" });
+    expect(await reins.sessions.wait(child.sessionId, 0)).toMatchObject({ status: "timeout" });
     turns[0].finish({ reply: "response 1" });
-    expect(await api.sessions.wait(child.sessionId, 1000)).toMatchObject({ status: "completed", result: "response 1" });
+    expect(await reins.sessions.wait(child.sessionId, 1000)).toMatchObject({ status: "completed", result: "response 1" });
     expect(transcript(child.sessionId)).toEqual([text("Investigate"), text("response 1")]);
   });
 
   test("a background session the server starts runs, settles and reports like any other, and scripts list it only when asked", async () => {
-    const { api, turns, state, project } = setup();
+    const { reins, turns, state, project } = setup();
     const child = createNewSession(state, {
       projectId: project.id,
       parentSessionId: "parent", model: { provider: provider(), modelId: "fake" }, thinkingLevel: "high", background: true,
     });
     await new Sessions(state, () => {}).submit(child.id, { op: "prompt", content: text("Hidden work"), clientId: "hidden" });
 
-    expect(await api.sessions.get(child.id)).toMatchObject({ background: true, parentSessionId: "parent" });
-    expect(await api.sessions.current()).toMatchObject({ background: false });
+    expect(await reins.sessions.get(child.id)).toMatchObject({ background: true, parentSessionId: "parent" });
+    expect(await reins.sessions.current()).toMatchObject({ background: false });
     // Session kinds are the server's: scripts do not see them.
-    expect(await api.sessions.get(child.id)).not.toHaveProperty("kind");
-    const listed = async (options?: object) => Value.Decode(Type.Array(SessionSchema), await api.sessions.list(options)).map((session) => session.id);
+    expect(await reins.sessions.get(child.id)).not.toHaveProperty("kind");
+    const listed = async (options?: object) => Value.Decode(Type.Array(SessionSchema), await reins.sessions.list(options)).map((session) => session.id);
     expect(await listed()).toEqual(["parent"]);
     expect(await listed({ background: "only" })).toEqual([child.id]);
     await admitted(turns, 1);
     expect(turns[0].input).toBe("Hidden work");
     turns[0].finish({ reply: "hidden result" });
-    expect(await api.sessions.wait(child.id, 1000)).toMatchObject({ status: "completed", result: "hidden result" });
+    expect(await reins.sessions.wait(child.id, 1000)).toMatchObject({ status: "completed", result: "hidden result" });
     expect(transcript(child.id)).toEqual([text("Hidden work"), text("hidden result")]);
     // Its report prompts the parent.
     await admitted(turns, 2);
@@ -218,52 +218,52 @@ describe("api.sessions orchestration", () => {
   });
 
   test("independent sessions preserve unnamed display defaults and allow model overrides", async () => {
-    const { api, turns, project } = setup();
-    const session = Value.Decode(SessionHandleSchema, await api.sessions.start("Independent", {
+    const { reins, turns, project } = setup();
+    const session = Value.Decode(SessionHandleSchema, await reins.sessions.start("Independent", {
       parentSessionId: null, model: { provider: provider(), modelId: "other", thinkingLevel: "minimal" },
     }));
     expect(getSession(session.sessionId)).toMatchObject({ name: null, parent_session_id: null, model_id: "other", thinking_level: "minimal" });
     await admitted(turns, 1);
     turns[0].finish();
-    await api.sessions.wait(session.sessionId, 1000);
+    await reins.sessions.wait(session.sessionId, 1000);
     expect(listSessions({ projectId: project.id }).find((row) => row.id === session.sessionId)?.first_message).toBe("Independent");
   });
 
   test("delivers to an existing session as steers, admitted in order, and resumes after settlement", async () => {
-    const { api, project } = setup();
+    const { reins, project } = setup();
     createSession("existing", project.id, { agentRuntimeType: "pi", modelProvider: provider(), modelId: "fake" });
     persistCanonicalMessages("existing", [{ role: "assistant", content: text("earlier"), timestamp: 1 }]);
-    await Promise.all([api.sessions.send("existing", "one"), api.sessions.send("existing", "two")]);
-    expect(await api.sessions.wait("existing", 0)).toMatchObject({ status: "timeout" });
+    await Promise.all([reins.sessions.send("existing", "one"), reins.sessions.send("existing", "two")]);
+    expect(await reins.sessions.wait("existing", 0)).toMatchObject({ status: "timeout" });
     await answerUntilIdle("existing", "response 3");
-    expect(await api.sessions.wait("existing", 1000)).toMatchObject({ status: "completed", result: "response 3" });
+    expect(await reins.sessions.wait("existing", 1000)).toMatchObject({ status: "completed", result: "response 3" });
     expect(transcript("existing", "user")).toEqual([text("one"), text("two")]);
-    await api.sessions.send("existing", "resume");
+    await reins.sessions.send("existing", "resume");
     await answerUntilIdle("existing", "response 5");
-    expect(await api.sessions.wait("existing", 1000)).toMatchObject({ status: "completed", result: "response 5" });
+    expect(await reins.sessions.wait("existing", 1000)).toMatchObject({ status: "completed", result: "response 5" });
     expect(transcript("existing", "user")).toEqual([text("one"), text("two"), text("resume")]);
   });
 
   test("validates parent, model, message and self-wait before side effects", async () => {
-    const { api, project, turns } = setup();
+    const { reins, project, turns } = setup();
     const before = listSessions({ projectId: project.id });
-    await expect(Promise.resolve().then(() => api.sessions.start("bad", {}))).rejects.toThrow();
-    await expect(Promise.resolve().then(() => api.sessions.start("bad", { parentSessionId: null, modelId: "alone" }))).rejects.toThrow();
-    await expect(Promise.resolve().then(() => api.sessions.send("parent", ""))).rejects.toThrow();
-    await expect(Promise.resolve().then(() => api.sessions.wait("parent", 0))).rejects.toThrow("itself");
+    await expect(Promise.resolve().then(() => reins.sessions.start("bad", {}))).rejects.toThrow();
+    await expect(Promise.resolve().then(() => reins.sessions.start("bad", { parentSessionId: null, modelId: "alone" }))).rejects.toThrow();
+    await expect(Promise.resolve().then(() => reins.sessions.send("parent", ""))).rejects.toThrow();
+    await expect(Promise.resolve().then(() => reins.sessions.wait("parent", 0))).rejects.toThrow("itself");
     expect(listSessions({ projectId: project.id })).toEqual(before);
     expect(turns).toEqual([]);
   });
 
   test("a send the session cannot admit is the script's error, and leaves its run alone", async () => {
-    const { api, turns, project } = setup();
-    const child = Value.Decode(SessionHandleSchema, await api.sessions.start("Work", { parentSessionId: null }));
+    const { reins, turns, project } = setup();
+    const child = Value.Decode(SessionHandleSchema, await reins.sessions.start("Work", { parentSessionId: null }));
     await admitted(turns, 1);
     createSession("broken", project.id, { agentRuntimeType: "pi", modelProvider: provider(), modelId: "missing" });
-    await expect(api.sessions.send("broken", "not accepted")).rejects.toThrow(`Model not found: ${provider()}/missing`);
+    await expect(reins.sessions.send("broken", "not accepted")).rejects.toThrow(`Model not found: ${provider()}/missing`);
     expect(getSession(child.sessionId)?.activity_state).toBe("running");
     turns[0].finish();
-    await api.sessions.wait(child.sessionId, 1000);
+    await reins.sessions.wait(child.sessionId, 1000);
     expect(turns).toHaveLength(1);
     expect(transcript("broken")).toEqual([]);
   });
@@ -273,12 +273,12 @@ describe("api.sessions orchestration", () => {
     await Bun.spawn(["git", "branch", "task/orchestration"], { cwd: repo.dir }).exited;
     const task = createTask(project.id, "Orchestration", null, "task/orchestration");
     createSession("task-parent", project.id, { agentRuntimeType: "pi", taskId: task.id, modelProvider: provider(), modelId: "fake" });
-    const api = buildApiObject(contextFor("task-parent"));
-    const child = Value.Decode(SessionHandleSchema, await api.sessions.start("Task work", { parentSessionId: "current" }));
+    const reins = buildApiObject(contextFor("task-parent"));
+    const child = Value.Decode(SessionHandleSchema, await reins.sessions.start("Task work", { parentSessionId: "current" }));
     expect(getSession(child.sessionId)).toMatchObject({ task_id: task.id, parent_session_id: "task-parent" });
     await admitted(turns, 1);
     turns[0].finish();
-    await api.sessions.wait(child.sessionId, 1000);
+    await reins.sessions.wait(child.sessionId, 1000);
 
     createSession("level-two", project.id, { agentRuntimeType: "pi", taskId: task.id, parentSessionId: child.sessionId });
     createSession("level-three", project.id, { agentRuntimeType: "pi", taskId: task.id, parentSessionId: "level-two", modelProvider: provider(), modelId: "fake" });
@@ -298,19 +298,19 @@ describe("api.sessions orchestration", () => {
   });
 
   test("starts sessions in another task or scratch, independent unless asked, and waits on any of them", async () => {
-    const { api, project, turns } = setup();
+    const { reins, project, turns } = setup();
     await Bun.spawn(["git", "branch", "task/elsewhere"], { cwd: repo.dir }).exited;
     const task = createTask(project.id, "Elsewhere", null, "task/elsewhere");
 
-    const independent = Value.Decode(SessionHandleSchema, await api.sessions.start("Independent", { parentSessionId: null, taskId: task.id }));
+    const independent = Value.Decode(SessionHandleSchema, await reins.sessions.start("Independent", { parentSessionId: null, taskId: task.id }));
     expect(getSession(independent.sessionId)).toMatchObject({ task_id: task.id, parent_session_id: null });
-    expect(await api.sessions.wait(independent.sessionId, 0)).toMatchObject({ sessionId: independent.sessionId });
+    expect(await reins.sessions.wait(independent.sessionId, 0)).toMatchObject({ sessionId: independent.sessionId });
 
-    const child = Value.Decode(SessionHandleSchema, await api.sessions.start("Child", { parentSessionId: "current", taskId: task.id }));
+    const child = Value.Decode(SessionHandleSchema, await reins.sessions.start("Child", { parentSessionId: "current", taskId: task.id }));
     expect(getSession(child.sessionId)).toMatchObject({ task_id: task.id, parent_session_id: "parent" });
     await admitted(turns, 2);
     turns.find(turn => turn.sessionId === child.sessionId)!.finish({ reply: "Done" });
-    expect(await api.sessions.wait(child.sessionId, 1000)).toMatchObject({ status: "completed", result: "Done" });
+    expect(await reins.sessions.wait(child.sessionId, 1000)).toMatchObject({ status: "completed", result: "Done" });
     await answerUntilIdle(independent.sessionId);
     await answerUntilIdle("parent");
   });
@@ -319,38 +319,38 @@ describe("api.sessions orchestration", () => {
     const { project, contextFor } = setup();
     const task = createTask(project.id, "Caller task", null, "task/caller");
     createSession("task-caller", project.id, { agentRuntimeType: "pi", taskId: task.id, modelProvider: provider(), modelId: "fake" });
-    const api = buildApiObject(contextFor("task-caller"));
+    const reins = buildApiObject(contextFor("task-caller"));
     const other = createProject("Other", `${repo.dir}/other`, "main");
     const foreignTask = createTask(other.id, "Foreign", null, "task/foreign");
     const before = listSessions({ projectId: project.id });
-    await expect(Promise.resolve().then(() => api.sessions.start("bad", { parentSessionId: null, taskId: foreignTask.id }))).rejects.toThrow(`Task ${foreignTask.id} is not a task of project ${project.id}`);
-    await expect(Promise.resolve().then(() => api.sessions.start("bad", { parentSessionId: null, taskId: 999_999 }))).rejects.toThrow("Task not found: 999999");
-    await expect(Promise.resolve().then(() => api.sessions.start("bad", { parentSessionId: null, model: { provider: provider(), modelId: "missing" } }))).rejects.toThrow(`Model 'missing' not found for provider '${provider()}'`);
+    await expect(Promise.resolve().then(() => reins.sessions.start("bad", { parentSessionId: null, taskId: foreignTask.id }))).rejects.toThrow(`Task ${foreignTask.id} is not a task of project ${project.id}`);
+    await expect(Promise.resolve().then(() => reins.sessions.start("bad", { parentSessionId: null, taskId: 999_999 }))).rejects.toThrow("Task not found: 999999");
+    await expect(Promise.resolve().then(() => reins.sessions.start("bad", { parentSessionId: null, model: { provider: provider(), modelId: "missing" } }))).rejects.toThrow(`Model 'missing' not found for provider '${provider()}'`);
     expect(listSessions({ projectId: project.id })).toEqual(before);
 
-    const scratch = Value.Decode(SessionHandleSchema, await api.sessions.start("Scratch", { parentSessionId: null, taskId: null }));
+    const scratch = Value.Decode(SessionHandleSchema, await reins.sessions.start("Scratch", { parentSessionId: null, taskId: null }));
     expect(getSession(scratch.sessionId)).toMatchObject({ task_id: null, parent_session_id: null });
     await answerUntilIdle(scratch.sessionId);
   });
 
   test("starts a child in another project's task at that project's home source, and sends to and waits for it", async () => {
-    const { api, turns } = setup();
+    const { reins, turns } = setup();
     const otherRepo = await createTestRepo();
     const other = createProject("Other", otherRepo.dir, "main");
     const task = createTask(other.id, "Foreign", null, "task/foreign");
 
-    const child = Value.Decode(SessionHandleSchema, await api.sessions.start("Over there", { parentSessionId: "current", projectId: other.id, taskId: task.id }));
+    const child = Value.Decode(SessionHandleSchema, await reins.sessions.start("Over there", { parentSessionId: "current", projectId: other.id, taskId: task.id }));
 
     expect(getSession(child.sessionId)).toMatchObject({
       project_id: other.id, task_id: task.id, source_id: other.default_source_id, parent_session_id: "parent",
     });
     await admitted(turns, 1);
     turns[0].finish({ reply: "first" });
-    expect(await api.sessions.wait(child.sessionId, 1000)).toMatchObject({ status: "completed", result: "first" });
+    expect(await reins.sessions.wait(child.sessionId, 1000)).toMatchObject({ status: "completed", result: "first" });
     await answerUntilIdle("parent");
-    await api.sessions.send(child.sessionId, "Again");
+    await reins.sessions.send(child.sessionId, "Again");
     await answerUntilIdle(child.sessionId, "second");
-    expect(await api.sessions.wait(child.sessionId, 1000)).toMatchObject({ status: "completed", result: "second" });
+    expect(await reins.sessions.wait(child.sessionId, 1000)).toMatchObject({ status: "completed", result: "second" });
     await answerUntilIdle("parent");
     otherRepo.cleanup();
   });
@@ -370,12 +370,12 @@ describe("api.sessions orchestration", () => {
   });
 
   test("a task that is not of the project named is refused", async () => {
-    const { api, project } = setup();
+    const { reins, project } = setup();
     const other = createProject("Other", `${repo.dir}-other`, "main");
     const homeTask = createTask(project.id, "Home", null, "task/home");
     const before = listSessions({ projectId: other.id });
 
-    await expect(Promise.resolve().then(() => api.sessions.start("bad", { parentSessionId: null, projectId: other.id, taskId: homeTask.id })))
+    await expect(Promise.resolve().then(() => reins.sessions.start("bad", { parentSessionId: null, projectId: other.id, taskId: homeTask.id })))
       .rejects.toThrow(`Task ${homeTask.id} is not a task of project ${other.id}`);
     expect(listSessions({ projectId: other.id })).toEqual(before);
   });
@@ -385,59 +385,59 @@ describe("api.sessions orchestration", () => {
     await Bun.spawn(["git", "checkout", "-b", "task/parallel"], { cwd: repo.dir, stderr: "ignore" }).exited;
     const task = createTask(project.id, "Parallel", null, "task/parallel");
     createSession("task-parent", project.id, { agentRuntimeType: "pi", taskId: task.id, modelProvider: provider(), modelId: "fake" });
-    const api = buildApiObject(contextFor("task-parent"));
+    const reins = buildApiObject(contextFor("task-parent"));
     // Another agent may be using Git; creating sessions on the already-active branch needs no checkout.
     const lock = join(repo.dir, ".git/index.lock");
     writeFileSync(lock, "held by another operation");
     let siblings: { sessionId: string }[];
     try {
       siblings = await Promise.all(["one", "two"].map(async (prompt) =>
-        Value.Decode(SessionHandleSchema, await api.sessions.start(prompt, { parentSessionId: "current" }))));
+        Value.Decode(SessionHandleSchema, await reins.sessions.start(prompt, { parentSessionId: "current" }))));
     } finally {
       unlinkSync(lock);
     }
     expect(new Set(siblings.map((child) => child.sessionId)).size).toBe(2);
     await Promise.all(siblings.map(child => answerUntilIdle(child.sessionId)));
-    await Promise.all(siblings.map((child) => api.sessions.wait(child.sessionId, 1000)));
+    await Promise.all(siblings.map((child) => reins.sessions.wait(child.sessionId, 1000)));
   });
 
   test("returns bounded timeout and already-settled idle, failure and cancellation outcomes", async () => {
-    const { api, turns, project } = setup();
+    const { reins, turns, project } = setup();
     createSession("empty", project.id, { agentRuntimeType: "pi" });
     persistCanonicalMessages("empty", []);
-    expect(await api.sessions.wait("empty", 0)).toEqual({ sessionId: "empty", status: "idle", result: null, error: null });
-    const child = Value.Decode(SessionHandleSchema, await api.sessions.start("Work", { parentSessionId: null }));
-    expect(await api.sessions.wait(child.sessionId, 5)).toMatchObject({ status: "timeout" });
+    expect(await reins.sessions.wait("empty", 0)).toEqual({ sessionId: "empty", status: "idle", result: null, error: null });
+    const child = Value.Decode(SessionHandleSchema, await reins.sessions.start("Work", { parentSessionId: null }));
+    expect(await reins.sessions.wait(child.sessionId, 5)).toMatchObject({ status: "timeout" });
     await admitted(turns, 1);
     expect(getSession(child.sessionId)?.activity_state).toBe("running");
     turns[0].finish();
-    await api.sessions.wait(child.sessionId, 1000);
+    await reins.sessions.wait(child.sessionId, 1000);
     // The run's durable settlement is the authoritative outcome.
-    await api.sessions.send(child.sessionId, "Fail");
+    await reins.sessions.send(child.sessionId, "Fail");
     await admitted(turns, 2);
     turns[1].finish({ status: "failed", error: "Authoritative provider failure" });
-    expect(await api.sessions.wait(child.sessionId, 1000)).toMatchObject({
+    expect(await reins.sessions.wait(child.sessionId, 1000)).toMatchObject({
       status: "failed", result: null, error: "Authoritative provider failure",
     });
-    await api.sessions.send(child.sessionId, "Abort");
+    await reins.sessions.send(child.sessionId, "Abort");
     await admitted(turns, 3);
     await new Sessions(loopback.state, () => {}).abort(child.sessionId);
-    expect(await api.sessions.wait(child.sessionId, 1000)).toMatchObject({ status: "cancelled", result: null });
-    await expect(api.sessions.wait(child.sessionId, 30_001)).rejects.toThrow("timeoutMs");
+    expect(await reins.sessions.wait(child.sessionId, 1000)).toMatchObject({ status: "cancelled", result: null });
+    await expect(reins.sessions.wait(child.sessionId, 30_001)).rejects.toThrow("timeoutMs");
   });
 
   test("execute cancellation interrupts only its wait, not the target session", async () => {
-    const { api, turns, project, state } = setup();
-    const child = Value.Decode(SessionHandleSchema, await api.sessions.start("Work", { parentSessionId: "current" }));
+    const { reins, turns, project, state } = setup();
+    const child = Value.Decode(SessionHandleSchema, await reins.sessions.start("Work", { parentSessionId: "current" }));
     const controller = new AbortController();
     const tool = reinsTool("execute", { sessionId: "parent", projectId: project.id, state });
-    const waiting = executeTool(tool, "wait", { code: `return await api.sessions.wait(${JSON.stringify(child.sessionId)}, 1000)` }, controller.signal, undefined);
+    const waiting = executeTool(tool, "wait", { code: `return await reins.sessions.wait(${JSON.stringify(child.sessionId)}, 1000)` }, controller.signal, undefined);
     controller.abort();
     expect((await waiting).details).toMatchObject({ success: false });
     await admitted(turns, 1);
     expect(getSession(child.sessionId)?.activity_state).toBe("running");
     turns[0].finish();
-    expect(await api.sessions.wait(child.sessionId, 1000)).toMatchObject({ status: "completed" });
+    expect(await reins.sessions.wait(child.sessionId, 1000)).toMatchObject({ status: "completed" });
   });
 });
 
@@ -455,10 +455,10 @@ describe("sessions from a script: what it starts and sends is the calling sessio
     createSession("target", project.id, withModel());
     const other = createProject("Target", `${repo.dir}/other`);
     createSession("stranger", other.id, withModel());
-    const api = apiOf("source");
+    const reins = apiOf("source");
 
-    expect(await api.sessions.send("target", "First")).toBeUndefined();
-    await api.sessions.send("stranger", "Also this");
+    expect(await reins.sessions.send("target", "First")).toBeUndefined();
+    await reins.sessions.send("stranger", "Also this");
 
     expect(inputsOf("target")).toEqual([{ role: "reinsInput", content: [{ type: "text", text: "First" }], reinsId: expect.any(String), metadata: { sourceSessionId: "source" }, timestamp: expect.any(Number) }]);
     expect(inputsOf("stranger")).toEqual([expect.objectContaining({ content: [{ type: "text", text: "Also this" }], metadata: { sourceSessionId: "source" } })]);
@@ -467,10 +467,10 @@ describe("sessions from a script: what it starts and sends is the calling sessio
   test("a child is created on the caller's source and prompted there; waiting on it resolves once it reported to its parent", async () => {
     const project = createProject("Children", repo.dir);
     const caller = createSession("parent", project.id, withModel());
-    const api = apiOf("parent");
+    const reins = apiOf("parent");
 
-    const { sessionId } = Value.Parse(SessionHandleSchema, await api.sessions.start("Child work", { parentSessionId: "current" }));
-    const waiting = api.sessions.wait(sessionId, 10_000);
+    const { sessionId } = Value.Parse(SessionHandleSchema, await reins.sessions.start("Child work", { parentSessionId: "current" }));
+    const waiting = reins.sessions.wait(sessionId, 10_000);
     (await model.nextTurn(sessionId)).finish({ reply: "Child result" });
 
     expect(getSession(sessionId)).toMatchObject({ source_id: caller.source_id, parent_session_id: "parent" });

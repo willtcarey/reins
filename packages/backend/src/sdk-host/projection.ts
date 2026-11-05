@@ -1,6 +1,6 @@
 /**
  * The SDK as agents' scripts get it (docs/dev/server-sdk.md *Scripts*): each method of a `ScriptNamespace` (the
- * core's, `namespaces.ts`, and the extensions' `api.<namespace>`) as a function of `api`, documented by `search`
+ * core's, `namespaces.ts`, and the extensions' `reins.<namespace>`) as a function of `reins`, documented by `search`
  * from its declaration and called with a script's positional arguments, which are checked against the declared
  * schemas first. The caller is the script's session.
  */
@@ -23,9 +23,9 @@ export interface ApiContext {
   signal?: AbortSignal;
 }
 
-/** A function of `api`: what `search` documents (`parameters`: an object schema whose properties are the
+/** A function of a script's `reins`: what `search` documents (`parameters`: an object schema whose properties are the
  * arguments, in order) and matches (its name, namespace, tags and description), and `call`, which a script's
- * `api.<namespace>.<method>(…)` runs with its arguments. */
+ * `reins.<namespace>.<method>(…)` runs with its arguments. */
 export interface ScriptFunction {
   /** `<namespace>.<method>`, e.g. `tasks.list`. */
   name: string;
@@ -44,12 +44,12 @@ export function scriptCallContext(ctx: ApiContext): CallContext {
   };
 }
 
-/** The namespace's methods as `api`'s functions; `contextOf` gives each call its method's context. Throws for a
+/** The namespace's methods as `reins`' functions; `contextOf` gives each call its method's context. Throws for a
  * name or schema the projection cannot use. */
 export function scriptFunctions<C>({ namespace, methods }: ScriptNamespace<C>, contextOf: (ctx: ApiContext) => C): ScriptFunction[] {
-  if (!/^[a-z][a-z0-9]*$/.test(namespace)) throw new Error(`Not an api namespace: ${namespace}`);
+  if (!/^[a-z][a-z0-9]*$/.test(namespace)) throw new Error(`Not a script namespace: ${namespace}`);
   return Object.entries(methods).map(([name, method]) => {
-    if (!/^[a-z][A-Za-z0-9]*$/.test(name)) throw new Error(`Not an api method name: ${namespace}.${name}`);
+    if (!/^[a-z][A-Za-z0-9]*$/.test(name)) throw new Error(`Not a script method name: ${namespace}.${name}`);
     return scriptFunction(`${namespace}.${name}`, method, contextOf);
   });
 }
@@ -136,7 +136,7 @@ function forScripts(schema: TSchema): TSchema | null {
 
 /** The script's arguments, checked against their schemas, or a throw naming the first that is wrong. */
 function checkedArgs(name: string, params: readonly (ScriptParam & { schema: TSchema })[], args: readonly unknown[]): unknown[] {
-  const fn = `api.${name}`;
+  const fn = `reins.${name}`;
   if (args.length > params.length) throw new Error(`${fn} takes ${params.length === 0 ? "no arguments" : `at most ${params.length} argument${params.length === 1 ? "" : "s"} (${params.map(param => param.name).join(", ")})`}`);
   return params.map((param, index) => {
     const value = args[index];

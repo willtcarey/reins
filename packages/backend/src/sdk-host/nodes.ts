@@ -1,6 +1,6 @@
 /**
  * `nodes` (docs/dev/server-sdk.md *Nodes*): the machines sessions work on, and files and commands on any of them,
- * for an extension (`reins.nodes`) and an agent's script (`api.nodes`), over the `Nodes` model and its `NodeHost`.
+ * `reins.nodes`, for an extension and an agent's script alike, over the `Nodes` model and its `NodeHost`.
  * A node is named by its ID or its name; a script may say `"current"`, its session's node, which is also the
  * default where a node may be left out. An extension has no session, so it names the node. What is read and run is
  * held in the server's memory, so it is bounded.
@@ -155,7 +155,7 @@ const readFile = sdkMethod({
     "Read a whole file on a node: as text (UTF-8), or as a Uint8Array with `{ binary: true }`. To copy a file, " +
     "use nodes.copy.\n\n" +
     "Read a note and return only a summary of it:\n" +
-    "  const note = await api.nodes.readFile(\"Mac mini\", \"~/Obsidian/Notes/Plans.md\");\n" +
+    "  const note = await reins.nodes.readFile(\"Mac mini\", \"~/Obsidian/Notes/Plans.md\");\n" +
     "  return { headings: note.split(\"\\n\").filter(line => line.startsWith(\"#\")), characters: note.length };",
   params: [
     { name: "node", schema: nodeParam },
@@ -179,7 +179,7 @@ const readFile = sdkMethod({
       // An agent copying with readFile and writeFile learns here that nodes.copy copies it.
       if (!(error instanceof FileTooLargeError)) throw error;
       throw new Error(`Cannot read ${error.path} on "${error.node.name}": it has ${error.size} bytes, more than a script may hold (${MAX_SCRIPT_BYTES / MIB} MiB). ` +
-        `To copy it, use api.nodes.copy(${JSON.stringify(node)}, ${JSON.stringify(error.path)}, toNode, toPath): it copies a file of any size.`, { cause: error });
+        `To copy it, use reins.nodes.copy(${JSON.stringify(node)}, ${JSON.stringify(error.path)}, toNode, toPath): it copies a file of any size.`, { cause: error });
     }
     return options.binary ? bytes : Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString("utf8");
   },
@@ -189,8 +189,8 @@ const writeFile = sdkMethod({
   description:
     "Write a whole file on a node, creating its directories and replacing any file there. To copy a file, use " +
     "nodes.copy.\n\n" +
-    "  const { output } = await api.nodes.run(\"build-box\", \"git log --oneline -20\", { cwd: \"/srv/app\" });\n" +
-    "  await api.nodes.writeFile(\"current\", \"~/notes/build-box-log.txt\", output);",
+    "  const { output } = await reins.nodes.run(\"build-box\", \"git log --oneline -20\", { cwd: \"/srv/app\" });\n" +
+    "  await reins.nodes.writeFile(\"current\", \"~/notes/build-box-log.txt\", output);",
   params: [
     { name: "node", schema: nodeParam },
     { name: "path", schema: pathParam },
@@ -209,7 +209,7 @@ const copy = sdkMethod({
   description:
     "Copy a file of any size between nodes, or within one, without it passing through the script. Creates the " +
     "destination's directories; a file already there is replaced only once the whole file has arrived.\n\n" +
-    "  await api.nodes.copy(\"Mac mini\", \"~/Movies/demo.mov\", \"current\", \"~/Downloads/demo.mov\");",
+    "  await reins.nodes.copy(\"Mac mini\", \"~/Movies/demo.mov\", \"current\", \"~/Downloads/demo.mov\");",
   params: [
     { name: "fromNode", schema: nodeParam },
     { name: "fromPath", schema: pathParam },
@@ -230,7 +230,7 @@ const run = sdkMethod({
   description:
     "Run a bash command on a node. A failing command returns its exit code rather than throwing; one still " +
     "running after `timeoutMs` is killed and the call fails. For longer work, start a session.\n\n" +
-    "  const { exitCode, output } = await api.nodes.run(\"Mac mini\", \"df -h ~ && uptime\");\n" +
+    "  const { exitCode, output } = await reins.nodes.run(\"Mac mini\", \"df -h ~ && uptime\");\n" +
     "  return exitCode === 0 ? output : `failed (${exitCode}): ${output}`;",
   params: [
     { name: "node", schema: nodeParam },

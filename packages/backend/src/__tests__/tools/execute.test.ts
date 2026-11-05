@@ -71,7 +71,7 @@ describe("execute tool", () => {
     test("projects.current() returns the current project", async () => {
       const tool = makeTool();
       const result = await executeTool(tool, "c1", {
-        code: "return api.projects.current()",
+        code: "return reins.projects.current()",
       }, undefined, undefined);
 
       const parsed = JSON.parse(textOf(result));
@@ -82,7 +82,7 @@ describe("execute tool", () => {
     test("projects.list() returns all projects", async () => {
       const tool = makeTool();
       const result = await executeTool(tool, "c2", {
-        code: "return api.projects.list()",
+        code: "return reins.projects.list()",
       }, undefined, undefined);
 
       const parsed = JSON.parse(textOf(result));
@@ -93,7 +93,7 @@ describe("execute tool", () => {
     test("projects.get() returns a project by ID", async () => {
       const tool = makeTool();
       const result = await executeTool(tool, "c3", {
-        code: `return api.projects.get(${project.id})`,
+        code: `return reins.projects.get(${project.id})`,
       }, undefined, undefined);
 
       const parsed = JSON.parse(textOf(result));
@@ -103,7 +103,7 @@ describe("execute tool", () => {
     test("projects.get() throws for nonexistent ID", async () => {
       const tool = makeTool();
       const result = await executeTool(tool, "c4", {
-        code: "return api.projects.get(99999)",
+        code: "return reins.projects.get(99999)",
       }, undefined, undefined);
 
       expect(textOf(result)).toContain("Error:");
@@ -114,7 +114,7 @@ describe("execute tool", () => {
       try {
         const tool = makeTool();
         const result = await executeTool(tool, "c-create", {
-          code: `return await api.projects.create("New Project", ${JSON.stringify(secondRepo.dir)})`,
+          code: `return await reins.projects.create("New Project", ${JSON.stringify(secondRepo.dir)})`,
         }, undefined, undefined);
 
         const parsed = JSON.parse(textOf(result));
@@ -131,7 +131,7 @@ describe("execute tool", () => {
       const secondRepo = await createTestRepo();
       try {
         const create = (nodeId: string) => executeTool(makeTool(), `c-node-${nodeId}`, {
-          code: `return await api.projects.create("Elsewhere", ${JSON.stringify(secondRepo.dir)}, undefined, ${JSON.stringify(nodeId)})`,
+          code: `return await reins.projects.create("Elsewhere", ${JSON.stringify(secondRepo.dir)}, undefined, ${JSON.stringify(nodeId)})`,
         }, undefined, undefined);
 
         expect(textOf(await create("nowhere"))).toBe("Error: Node not found: nowhere");
@@ -146,7 +146,7 @@ describe("execute tool", () => {
       const tool = makeTool();
       // repo.dir is the home of the project created in beforeEach
       const result = await executeTool(tool, "c-dup", {
-        code: `return (await api.projects.create("Shared", ${JSON.stringify(repo.dir)})).defaultSourceId`,
+        code: `return (await reins.projects.create("Shared", ${JSON.stringify(repo.dir)})).defaultSourceId`,
       }, undefined, undefined);
 
       expect(textOf(result)).toBe(String(project.default_source_id));
@@ -160,7 +160,7 @@ describe("execute tool", () => {
 
       const tool = makeTool();
       const result = await executeTool(tool, "c5", {
-        code: "return api.tasks.list()",
+        code: "return reins.tasks.list()",
       }, undefined, undefined);
 
       const parsed = JSON.parse(textOf(result));
@@ -174,7 +174,7 @@ describe("execute tool", () => {
       const tool = makeTool("task-sess", task.id);
 
       const result = await executeTool(tool, "c-tc", {
-        code: "return api.tasks.current()",
+        code: "return reins.tasks.current()",
       }, undefined, undefined);
 
       const parsed = JSON.parse(textOf(result));
@@ -185,7 +185,7 @@ describe("execute tool", () => {
     test("tasks.current() returns null for scratch sessions", async () => {
       const tool = makeTool("scratch-sess", null);
       const result = await executeTool(tool, "c-tc2", {
-        code: "return api.tasks.current()",
+        code: "return reins.tasks.current()",
       }, undefined, undefined);
 
       expect(textOf(result)).toBe("null");
@@ -196,7 +196,7 @@ describe("execute tool", () => {
 
       const tool = makeTool();
       const result = await executeTool(tool, "c6", {
-        code: `return api.tasks.get(${task.id})`,
+        code: `return reins.tasks.get(${task.id})`,
       }, undefined, undefined);
 
       const parsed = JSON.parse(textOf(result));
@@ -207,7 +207,7 @@ describe("execute tool", () => {
     test("tasks.create() creates a task with a git branch", async () => {
       const tool = makeTool();
       const result = await executeTool(tool, "c7", {
-        code: `return await api.tasks.create("New Task", "A new task")`,
+        code: `return await reins.tasks.create("New Task", "A new task")`,
       }, undefined, undefined);
 
       const parsed = JSON.parse(textOf(result));
@@ -225,7 +225,7 @@ describe("execute tool", () => {
 
       const tool = makeTool();
       const result = await executeTool(tool, "c8", {
-        code: `return api.tasks.update(${task.id}, { title: "Updated" })`,
+        code: `return reins.tasks.update(${task.id}, { title: "Updated" })`,
       }, undefined, undefined);
 
       const parsed = JSON.parse(textOf(result));
@@ -242,13 +242,13 @@ describe("execute tool", () => {
 
       const result = await executeTool(tool, "c-review", {
         code: `
-          const created = await api.reviews.addComment(
+          const created = await reins.reviews.addComment(
             "README.md",
             1,
             "Use a more descriptive heading.",
             { author: "Review Bot" },
           );
-          return { created, current: await api.reviews.current() };
+          return { created, current: await reins.reviews.current() };
         `,
       }, undefined, undefined);
 
@@ -287,7 +287,7 @@ describe("execute tool", () => {
 
       const tool = makeTool();
       const result = await executeTool(tool, "c9", {
-        code: "return api.sessions.list()",
+        code: "return reins.sessions.list()",
       }, undefined, undefined);
 
       const parsed = JSON.parse(textOf(result));
@@ -300,7 +300,7 @@ describe("execute tool", () => {
       const tool = makeTool("current-sess");
 
       const result = await executeTool(tool, "c-sc", {
-        code: "return api.sessions.current()",
+        code: "return reins.sessions.current()",
       }, undefined, undefined);
 
       const parsed = JSON.parse(textOf(result));
@@ -312,7 +312,7 @@ describe("execute tool", () => {
 
       const tool = makeTool();
       const result = await executeTool(tool, "c11", {
-        code: `return api.sessions.get("sess-x")`,
+        code: `return reins.sessions.get("sess-x")`,
       }, undefined, undefined);
 
       const parsed = JSON.parse(textOf(result));
@@ -328,7 +328,7 @@ describe("execute tool", () => {
 
       const tool = makeTool();
       const result = await executeTool(tool, "c12", {
-        code: `return api.sessions.entries("sess-m")`,
+        code: `return reins.sessions.entries("sess-m")`,
       }, undefined, undefined);
 
       const parsed = JSON.parse(textOf(result));
@@ -358,9 +358,9 @@ describe("execute tool", () => {
       const tool = makeTool();
       const result = await executeTool(tool, "c-cross-project-session-reads", {
         code: `return {
-          session: await api.sessions.get("other-read"),
-          messages: await api.sessions.entries("other-read", { types: ["user", "assistant"], limit: 1 }),
-          trace: await api.sessions.entries("other-read", { types: ["toolCall"] }),
+          session: await reins.sessions.get("other-read"),
+          messages: await reins.sessions.entries("other-read", { types: ["user", "assistant"], limit: 1 }),
+          trace: await reins.sessions.entries("other-read", { types: ["toolCall"] }),
         }`,
       }, undefined, undefined);
 
@@ -400,7 +400,7 @@ describe("execute tool", () => {
 
       const tool = makeTool();
       const result = await executeTool(tool, "c-list-filter", {
-        code: `return api.sessions.list({ search: "needle", minMessages: 2, since: "2024-02-01T00:00:00.000Z", limit: 1 })`,
+        code: `return reins.sessions.list({ search: "needle", minMessages: 2, since: "2024-02-01T00:00:00.000Z", limit: 1 })`,
       }, undefined, undefined);
 
       const parsed = JSON.parse(textOf(result));
@@ -416,7 +416,7 @@ describe("execute tool", () => {
 
       const tool = makeTool();
       const result = await executeTool(tool, "c-list-task", {
-        code: `return api.sessions.list({ taskId: ${task.id} })`,
+        code: `return reins.sessions.list({ taskId: ${task.id} })`,
       }, undefined, undefined);
 
       const parsed = JSON.parse(textOf(result));
@@ -430,7 +430,7 @@ describe("execute tool", () => {
 
       const tool = makeTool();
       const result = await executeTool(tool, "c-list-scratch", {
-        code: "return api.sessions.list({ taskId: null })",
+        code: "return reins.sessions.list({ taskId: null })",
       }, undefined, undefined);
 
       const parsed = JSON.parse(textOf(result));
@@ -445,7 +445,7 @@ describe("execute tool", () => {
 
       const tool = makeTool("task-context", task.id);
       const result = await executeTool(tool, "c-list-current-identifiers", {
-        code: `return api.sessions.list({ projectId: "current", taskId: "current" })`,
+        code: `return reins.sessions.list({ projectId: "current", taskId: "current" })`,
       }, undefined, undefined);
 
       const parsed = JSON.parse(textOf(result));
@@ -465,7 +465,7 @@ describe("execute tool", () => {
 
       const tool = makeTool();
       const result = await executeTool(tool, "c-list-other-project", {
-        code: `return api.sessions.list({ projectId: ${otherProject.id}, search: "scope needle" })`,
+        code: `return reins.sessions.list({ projectId: ${otherProject.id}, search: "scope needle" })`,
       }, undefined, undefined);
 
       const parsed = JSON.parse(textOf(result));
@@ -483,7 +483,7 @@ describe("execute tool", () => {
 
       const tool = makeTool();
       const result = await executeTool(tool, "c-msg-filter", {
-        code: `return api.sessions.entries("sess-filter", { types: ["user"], search: "needle", limit: 1 })`,
+        code: `return reins.sessions.entries("sess-filter", { types: ["user"], search: "needle", limit: 1 })`,
       }, undefined, undefined);
 
       const parsed = JSON.parse(textOf(result));
@@ -503,7 +503,7 @@ describe("execute tool", () => {
 
       const tool = makeTool();
       const result = await executeTool(tool, "c-msg-limit", {
-        code: `return (await api.sessions.entries("sess-latest", { types: ["user", "assistant"], limit: 2 })).map((m) => ({ seq: m.seq, type: m.type }))`,
+        code: `return (await reins.sessions.entries("sess-latest", { types: ["user", "assistant"], limit: 2 })).map((m) => ({ seq: m.seq, type: m.type }))`,
       }, undefined, undefined);
 
       expect(JSON.parse(textOf(result))).toEqual([
@@ -544,10 +544,10 @@ describe("execute tool", () => {
 
       const tool = makeTool();
       const traceResult = await executeTool(tool, "c-tool-trace", {
-        code: `return api.sessions.entries("sess-tools", { types: ["toolCall"], toolName: "bash" })`,
+        code: `return reins.sessions.entries("sess-tools", { types: ["toolCall"], toolName: "bash" })`,
       }, undefined, undefined);
       const errorResult = await executeTool(tool, "c-tool-error-trace", {
-        code: `return api.sessions.entries("sess-tools", { isError: true })`,
+        code: `return reins.sessions.entries("sess-tools", { isError: true })`,
       }, undefined, undefined);
 
       const trace = JSON.parse(textOf(traceResult));
@@ -583,7 +583,7 @@ describe("execute tool", () => {
       };
 
       const result = await executeTool(tool, "c-ui-broadcast", {
-        code: `return api.ui.broadcast(${JSON.stringify(message)})`,
+        code: `return reins.ui.broadcast(${JSON.stringify(message)})`,
       }, undefined, undefined);
 
       expect(textOf(result)).toBe("Broadcast sent");

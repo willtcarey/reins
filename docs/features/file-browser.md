@@ -1,6 +1,6 @@
 # File Browser
 
-A file browser overlay for viewing the files of a directory on a node, and uploading files into it: usually the checkout of the session you are viewing, or the directory of a file an agent opened for you on any node (`api.ui.openFile`, [scripting.md](scripting.md)). When the directory is on another node than the session you are viewing, the header names that node after the directory's name (for example "scratch · Internal").
+A file browser overlay for viewing the files of a directory on a node, and uploading files into it: usually the checkout of the session you are viewing, or the directory of a file an agent opened for you on any node (`reins.ui.openFile`, [scripting.md](scripting.md)). When the directory is on another node than the session you are viewing, the header names that node after the directory's name (for example "scratch · Internal").
 
 ## How to Open
 
@@ -11,7 +11,7 @@ A file browser overlay for viewing the files of a directory on a node, and uploa
 | Click file path in read/edit/write tool result | Opens file in the browser |
 | 👁 button in diff file card header | Opens file in the browser |
 | Folder button in an Inspector file tab | Opens that file in the browser, with the tab's lines and the Code/Preview tab you are on |
-| An agent calls `api.ui.openFile` | Opens that file, on whichever node it is, with any lines it names |
+| An agent calls `reins.ui.openFile` | Opens that file, on whichever node it is, with any lines it names |
 | Mobile: search icon in file browser header | Opens fuzzy file search |
 | Mobile: hamburger in file browser header | Toggles tree sidebar |
 

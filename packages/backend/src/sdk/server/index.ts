@@ -379,7 +379,7 @@ export type SessionEntry =
   };
 
 /**
- * Sessions, as agents' `api.sessions` has them: any session can be read, messaged, waited for and changed. The
+ * Sessions, as agents' `reins.sessions` has them: any session can be read, messaged, waited for and changed. The
  * caller decides the defaults (`SessionStartOptions`, `SessionListQuery`) and the origin of what it starts and
  * sends: an extension's sessions and messages record it (the session's `startedBy`; its messages'
  * `metadata.sourceExtension`), which the chat shows ("from <name>"); its messages reach the model as they are,
@@ -684,7 +684,7 @@ export interface ToolAnnotations {
   openWorldHint?: boolean;
 }
 
-/** A tool an agent can call through `api.tools.call(id, args)`. */
+/** A tool an agent can call through `reins.tools.call(id, args)`. */
 export interface Tool {
   /**
    * Its local ID: unique among the extension's tools, and stable, as an agent may call it from an earlier
@@ -715,7 +715,7 @@ export interface ToolResult {
   isError?: boolean;
 }
 
-/** What an agent gives `api.tools.search` to narrow it, given to every provider as it is. Each provider decides
+/** What an agent gives `reins.tools.search` to narrow it, given to every provider as it is. Each provider decides
  * what its keys mean, and what it does with keys it does not know: the core makes no rule. A provider tells
  * agents its filters in its prompt section. */
 export type ToolFilters = Readonly<Record<string, unknown>>;
@@ -760,13 +760,13 @@ export interface ToolCallOptions {
 
 export interface Tools {
   /**
-   * The tools of every extension (its own too) that match `query` and `options.filters`, as agents' `api.tools.search`
+   * The tools of every extension (its own too) that match `query` and `options.filters`, as agents' `reins.tools.search`
    * finds them: each provider asked at the same time, in the order of registration, its tools by their final IDs
    * (`<extension>__<local ID>`). A provider that throws is a group with its `error`, and the others still answer.
    */
   search(query: string, options?: ToolSearchOptions): Promise<ToolSearchGroup[]>;
   /**
-   * Runs a tool by its final ID, as agents' `api.tools.call` does, on the provider of the extension its prefix names.
+   * Runs a tool by its final ID, as agents' `reins.tools.call` does, on the provider of the extension its prefix names.
    * A failure the tool reports is a result with `isError`; an unknown ID ("Unknown tool: …") and a tool that cannot
    * be run reject.
    */
@@ -808,11 +808,11 @@ export interface Prompt {
 }
 
 // ---------------------------------------------------------------------------
-// Scripting: an extension's own `api.<namespace>` in `execute`
+// Scripting: an extension's own `reins.<namespace>` in `execute`
 // ---------------------------------------------------------------------------
 
 /**
- * A positional argument of a method that agents' scripts call (`api.<namespace>.<method>(…)`): its name, as `search`
+ * A positional argument of a method that agents' scripts call (`reins.<namespace>.<method>(…)`): its name, as `search`
  * documents it, and its schema, which the host checks a script's argument against before the call. Only the last
  * arguments may be `optional`. A property of an object schema with `scripts: false` (an `AbortSignal`, an option only
  * an extension may set) is not for scripts: `search` leaves it out, and a script that gives it is refused.
@@ -866,22 +866,22 @@ export interface AnyScriptMethod<C> {
 }
 
 /**
- * A namespace of `api` in `execute`, which `search` documents: the core's (`api.sessions`, the SDK's own methods)
- * and an extension's (`api.mcp`). A script calls `api.<namespace>.<method>(…)` with positional arguments, in the
+ * A namespace of `reins` in `execute`, which `search` documents: the core's (`reins.sessions`, the SDK's own methods)
+ * and an extension's (`reins.mcp`). A script calls `reins.<namespace>.<method>(…)` with positional arguments, in the
  * order of the method's `params`, checked against their schemas before `run`. Its result reaches the script as it
  * is; a throw reaches it as an error.
  */
 export interface ScriptNamespace<C = ScriptContext> {
-  /** Lowercase letters and digits, starting with a letter: `mcp` for `api.mcp`. */
+  /** Lowercase letters and digits, starting with a letter: `mcp` for `reins.mcp`. */
   readonly namespace: string;
-  /** By name (`[a-z][A-Za-z0-9]*`): `list` for `api.mcp.list(…)`. */
+  /** By name (`[a-z][A-Za-z0-9]*`): `list` for `reins.mcp.list(…)`. */
   readonly methods: Readonly<Record<string, AnyScriptMethod<C>>>;
   /** Schemas that `search` shows by their name where a method's params or result use them (by identity). */
   readonly types?: Readonly<Record<string, JsonSchema>>;
 }
 
 export interface Scripting {
-  /** Adds a namespace to `api`. It must not be the core's or another registration's, and its params' schemas must be
+  /** Adds a namespace to scripts' `reins`. It must not be the core's or another registration's, and its params' schemas must be
    * TypeBox schemas (the host checks a script's arguments with them): else it throws. */
   register(namespace: ScriptNamespace): Disposer;
 }

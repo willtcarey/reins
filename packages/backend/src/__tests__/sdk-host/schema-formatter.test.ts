@@ -155,7 +155,7 @@ describe("formatApiInterfaces", () => {
       },
     ], { names });
 
-    expect(result).toContain("interface Api {");
+    expect(result).toContain("interface Reins {");
     expect(result).toContain("tasks: TasksApi;");
     expect(result).toContain("interface TasksApi {");
     expect(result).toContain("/** List tasks. */");

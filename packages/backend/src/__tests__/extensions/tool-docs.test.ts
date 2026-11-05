@@ -37,7 +37,7 @@ describe("matchTools", () => {
 });
 
 describe("toolSearchDocs", () => {
-  test("documents each provider's tools as a TypeScript interface keyed by ID, to call through api.tools.call", () => {
+  test("documents each provider's tools as a TypeScript interface keyed by ID, to call through reins.tools.call", () => {
     const docs = toolSearchDocs([{
       title: "MCP servers",
       tools: [tool("vercel__list_deployments", "Lists a project's deployments.\nNewest first.", {
@@ -50,7 +50,7 @@ describe("toolSearchDocs", () => {
       })],
     }], "deployments");
 
-    expect(docs).toStartWith(`Call a tool with api.tools.call(id, args), by its ID.\n\nMCP servers: 1 tool matches "deployments".`);
+    expect(docs).toStartWith(`Call a tool with reins.tools.call(id, args), by its ID.\n\nMCP servers: 1 tool matches "deployments".`);
     expect(typescript(docs)).toBe(`interface Tools {
   /**
    * Lists a project's deployments.
@@ -126,7 +126,7 @@ interface ToolResult {
 
     expect(matched).toContain(`MCP servers: 12 tools match "deploy".`);
     expect(matched).toContain("Also matching, not shown: vercel__deploy_10, vercel__deploy_11. Narrow the query to see them.");
-    expect(unqueried).toBe(`Call a tool with api.tools.call(id, args), by its ID.\n\nMCP servers: 12 tools. Give a query to see their arguments.\n\n${tools.map(t => t.id).join(", ")}`);
+    expect(unqueried).toBe(`Call a tool with reins.tools.call(id, args), by its ID.\n\nMCP servers: 12 tools. Give a query to see their arguments.\n\n${tools.map(t => t.id).join(", ")}`);
   });
 
   test("groups by provider, in order, a failed provider in its place, and leaves out a provider with no match", () => {

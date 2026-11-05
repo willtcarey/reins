@@ -1,6 +1,6 @@
 /**
  * `tools`: the tools extensions give (docs/dev/server-sdk.md *Tools*), found with `search` and run with `call` by
- * their final IDs, for an extension (`reins.tools`) and an agent's script (`api.tools`) alike. The providers are
+ * their final IDs, `reins.tools`, for an extension and an agent's script alike. The providers are
  * asked at each search and each call. A script gets a search as TypeScript documentation (`toolSearchDocs`).
  */
 
@@ -19,7 +19,7 @@ const search = sdkMethod({
     "ID, name, title, argument names or description match the query's words, best first (a query that is a tool's ID or " +
     "name finds it first), grouped by where they come from, to call with tools.call. options.filters narrow the search. " +
     "Without a query, a provider with many tools only names them. search does not list the tools themselves.\n\n" +
-    "  return await api.tools.search(\"list deployments\", { filters: { server: \"vercel\" } });",
+    "  return await reins.tools.search(\"list deployments\", { filters: { server: \"vercel\" } });",
   params: [
     { name: "query", schema: Type.String({ description: "Words to look for, e.g. \"list deployments\"; any case. Empty for every tool the filters let through." }) },
     { name: "options", schema: Type.Object({ filters: Type.Optional(FiltersSchema), signal: Type.Optional(SignalSchema) }), optional: true },
@@ -34,7 +34,7 @@ const call = sdkMethod({
   description:
     "Call a tool by its ID, <extension>__<tool> (find it and its arguments with tools.search). Returns the tool's result; a failure the tool " +
     "reports is a result with isError, not a throw. Throws for an unknown ID, and when the tool cannot be run.\n\n" +
-    "  const result = await api.tools.call(\"mcp__vercel__list_projects\", { teamId: \"team_123\" });\n" +
+    "  const result = await reins.tools.call(\"mcp__vercel__list_projects\", { teamId: \"team_123\" });\n" +
     "  return result.content[0].text;",
   params: [
     { name: "id", schema: Type.String({ description: "The tool's ID, as tools.search shows it." }) },

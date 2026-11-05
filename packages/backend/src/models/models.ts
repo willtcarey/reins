@@ -32,7 +32,7 @@ export class Models {
     return this.built.credentials ??= createDbCredentialStore(this.state.process);
   }
 
-  /** What the app's extensions registered (`api.tools`, their `api` functions, prompt sections, routes). */
+  /** What the app's extensions registered (`reins.tools`, their script functions, prompt sections, routes). */
   get extensions(): ExtensionHost {
     return this.state.extensions;
   }

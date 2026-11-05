@@ -42,10 +42,10 @@ function formatResults(fns: ScriptFunction[], types: readonly NamedType[]): stri
   return [
     "## API documentation",
     "",
-    "Documentation only: these TypeScript interfaces describe the existing `api` object " +
+    "Documentation only: these TypeScript interfaces describe the existing `reins` object " +
       "available inside `execute` scripts. They may be partial: only functions matched by " +
-      "this search are shown. Do not construct or import `Api`; call methods positionally " +
-      "on the provided `api`, e.g. `api.tasks.update(taskId, updates)`.",
+      "this search are shown. Do not construct or import `Reins`; call methods positionally " +
+      "on the provided `reins`, e.g. `reins.tasks.update(taskId, updates)`.",
     "",
     "```typescript",
     code,

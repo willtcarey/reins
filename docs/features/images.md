@@ -1,6 +1,6 @@
 # Images
 
-Agents can make and edit images in `execute` scripts with `api.images`. The models come from extensions. The built-in one, **openai-images**, gives the models of OpenAI-compatible image APIs (OpenAI, or an SGLang server such as the Qwen-Image server on william-pc).
+Agents can make and edit images in `execute` scripts with `reins.images`. The models come from extensions. The built-in one, **openai-images**, gives the models of OpenAI-compatible image APIs (OpenAI, or an SGLang server such as the Qwen-Image server on william-pc).
 
 ## Configure endpoints
 
@@ -30,13 +30,13 @@ The SGLang Qwen-Image server fails with HTTP 500 (`cannot write mode RGBA as JPE
 ## What agents do
 
 ```javascript
-const models = await api.images.list();   // ["openai-images__william-pc/Qwen-Image-2.1-Turbo", …]
-const result = await api.images.generate("a red fox in snow, watercolor", { size: "1024x1024" });
+const models = await reins.images.list();   // ["openai-images__william-pc/Qwen-Image-2.1-Turbo", …]
+const result = await reins.images.generate("a red fox in snow, watercolor", { size: "1024x1024" });
 image(result);                            // the agent sees the image
 ```
 
-- **`api.images.list()`** gives the model IDs, `<extension>__<model>`. An openai-images model is `openai-images__<endpoint>/<model>`.
-- **`api.images.generate(prompt, options?)`** gives `{ model, images }`. `options`: `model` (the first listed model by default), `images` (images to edit: anything `image()` takes, such as an earlier result), `size`, `count` and `parameters` (the provider's own, for example `{ seed: 7 }`).
+- **`reins.images.list()`** gives the model IDs, `<extension>__<model>`. An openai-images model is `openai-images__<endpoint>/<model>`.
+- **`reins.images.generate(prompt, options?)`** gives `{ model, images }`. `options`: `model` (the first listed model by default), `images` (images to edit: anything `image()` takes, such as an earlier result), `size`, `count` and `parameters` (the provider's own, for example `{ seed: 7 }`).
 - **The agent does not see an image until it gives it to `image()`.**
 - **The chat** shows the images under the script. Click one to open it full screen.
 

@@ -1,7 +1,7 @@
 /**
  * `images` (docs/dev/server-sdk.md *Images*): the image models of the extensions' image providers
- * (`reins.images.registerProvider`), listed and used by an extension (`reins.images`) and an agent's script
- * (`api.images`) alike. A model's ID is `<extension>__<model>`.
+ * (`reins.images.registerProvider`), listed and used (`reins.images`) by an extension and an agent's
+ * script alike. A model's ID is `<extension>__<model>`.
  */
 
 import { Type } from "@sinclair/typebox";
@@ -30,7 +30,7 @@ async function listModels(host: ExtensionHost, signal: AbortSignal): Promise<str
 }
 
 const list = sdkMethod({
-  description: "List the image model IDs, to use with images.generate.\n\n  return await api.images.list();",
+  description: "List the image model IDs, to use with images.generate.\n\n  return await reins.images.list();",
   params: [{ name: "options", schema: Type.Object({ signal: Type.Optional(SignalSchema) }), optional: true }],
   returns: Type.Array(Type.String()),
   tags: ["images", "image", "models", "generate", "picture"],
@@ -42,7 +42,7 @@ const generate = sdkMethod({
     "Make images from a prompt (with the first model images.list gives, unless model names one). " +
     "Give images to edit them. It can take tens of seconds. " +
     "The images are not shown to you: give the result to image() to see them.\n\n" +
-    "  const result = await api.images.generate(\"a red fox in snow\", { size: \"1024x1024\" });\n" +
+    "  const result = await reins.images.generate(\"a red fox in snow\", { size: \"1024x1024\" });\n" +
     "  image(result);",
   params: [
     { name: "prompt", schema: Type.String() },
@@ -69,7 +69,7 @@ const generate = sdkMethod({
     if (!model) throw new Error("No image models: configure an image provider (docs/features/images.md)");
     const at = model.indexOf(SEPARATOR);
     const provider = at > 0 ? host.imageProviders.get(model.slice(0, at)) : undefined;
-    if (!provider) throw new Error(`Unknown image model: ${model}. List them with api.images.list().`);
+    if (!provider) throw new Error(`Unknown image model: ${model}. List them with reins.images.list().`);
     const request = { prompt, ...rest, ...(images === undefined ? {} : { images: collectImages(images) }) };
     return { model, images: await provider.generate(model.slice(at + SEPARATOR.length), request, signal) };
   },

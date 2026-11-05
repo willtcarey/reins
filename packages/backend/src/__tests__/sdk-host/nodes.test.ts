@@ -27,23 +27,23 @@ describe("nodes.list and nodes.get", () => {
     createSession("caller", project.id, { agentRuntimeType: "pi", sourceId: boxSource });
     upsertSource("box", "/srv/unused");
     const box = connectScriptedNode(state, "box", {});
-    const api = buildApiObject(scriptContext(state, { sessionId: "caller" }));
+    const reins = buildApiObject(scriptContext(state, { sessionId: "caller" }));
     try {
       await box.ready();
       const boxView = { id: "box", name: "Box", hostname: "box.lan", connected: true, revoked: false, current: true, sourceCount: 1 };
       const localView = { id: SEEDED_NODE_ID, name: "Internal", hostname: null, connected: false, revoked: false, current: false, sourceCount: 1 };
-      expect(await api.nodes.list()).toEqual([
+      expect(await reins.nodes.list()).toEqual([
         boxView,
         localView,
         { id: "old", name: "Old", hostname: null, connected: false, revoked: true, current: false, sourceCount: 0 },
       ]);
-      expect(await api.nodes.get()).toEqual({ ...boxView, sources: [{ sourceId: boxSource, path: "/srv/work", projects: [{ id: project.id, name: "Listed" }] }] });
+      expect(await reins.nodes.get()).toEqual({ ...boxView, sources: [{ sourceId: boxSource, path: "/srv/work", projects: [{ id: project.id, name: "Listed" }] }] });
       const localDetail = { ...localView, sources: [{ sourceId: defaultSource(project.id)!.id, path: "/tmp/list-local", projects: [{ id: project.id, name: "Listed" }] }] };
-      expect(await api.nodes.get(SEEDED_NODE_ID)).toEqual(localDetail);
-      expect(await api.nodes.get("INTERNAL")).toEqual(localDetail);
-      expect(await api.nodes.get("current")).toEqual(await api.nodes.get());
-      await expect(api.nodes.get("gone")).rejects.toThrow("Node removed: gone");
-      await expect(api.nodes.get("nowhere")).rejects.toThrow("Node not found: nowhere (the nodes: Box, Internal, Old)");
+      expect(await reins.nodes.get(SEEDED_NODE_ID)).toEqual(localDetail);
+      expect(await reins.nodes.get("INTERNAL")).toEqual(localDetail);
+      expect(await reins.nodes.get("current")).toEqual(await reins.nodes.get());
+      await expect(reins.nodes.get("gone")).rejects.toThrow("Node removed: gone");
+      await expect(reins.nodes.get("nowhere")).rejects.toThrow("Node not found: nowhere (the nodes: Box, Internal, Old)");
     } finally { box.stop(); state.nodes.close(); }
   });
 });
@@ -83,13 +83,13 @@ describe("nodes.readFile, nodes.writeFile, nodes.copy and nodes.run", () => {
       writeFileSync(join(dir, "video.mp4"), bytes);
       writeFileSync(join(dir, "empty.txt"), "");
       const result = await script(`
-        const copied = await api.nodes.copy("mac MINI", ${JSON.stringify(join(dir, "video.mp4"))}, "internal", ${JSON.stringify(join(dir, "copies/new/video.mp4"))});
-        const empty = await api.nodes.copy("mini", ${JSON.stringify(join(dir, "empty.txt"))}, "current", ${JSON.stringify(join(dir, "copies/empty.txt"))});
+        const copied = await reins.nodes.copy("mac MINI", ${JSON.stringify(join(dir, "video.mp4"))}, "internal", ${JSON.stringify(join(dir, "copies/new/video.mp4"))});
+        const empty = await reins.nodes.copy("mini", ${JSON.stringify(join(dir, "empty.txt"))}, "current", ${JSON.stringify(join(dir, "copies/empty.txt"))});
         return [copied, empty];`);
       expect(result).toEqual({ ok: true, text: JSON.stringify([{ bytes: bytes.length }, { bytes: 0 }], null, 2) });
       expect(readFileSync(join(dir, "copies/new/video.mp4")).equals(Buffer.from(bytes))).toBe(true);
       expect(readFileSync(join(dir, "copies/empty.txt"), "utf8")).toBe("");
-      expect(await script(`return await api.nodes.copy("mini", ${JSON.stringify(join(dir, "missing.mp4"))}, "current", ${JSON.stringify(join(dir, "copies/missing.mp4"))});`))
+      expect(await script(`return await reins.nodes.copy("mini", ${JSON.stringify(join(dir, "missing.mp4"))}, "current", ${JSON.stringify(join(dir, "copies/missing.mp4"))});`))
         .toEqual({ ok: false, error: expect.stringContaining(`Cannot read ${join(dir, "missing.mp4")} on "Mac mini": ENOENT`) });
     } finally { await stop(); }
   });
@@ -100,8 +100,8 @@ describe("nodes.readFile, nodes.writeFile, nodes.copy and nodes.run", () => {
       const bytes = Uint8Array.from({ length: 256 * 4 }, (_, i) => i % 256);
       writeFileSync(join(dir, "photo.png"), bytes);
       const result = await script(`
-        const bytes = await api.nodes.readFile("mac MINI", ${JSON.stringify(join(dir, "photo.png"))}, { binary: true });
-        await api.nodes.writeFile("internal", ${JSON.stringify(join(dir, "copies/new/photo.png"))}, bytes);
+        const bytes = await reins.nodes.readFile("mac MINI", ${JSON.stringify(join(dir, "photo.png"))}, { binary: true });
+        await reins.nodes.writeFile("internal", ${JSON.stringify(join(dir, "copies/new/photo.png"))}, bytes);
         return bytes.length;`);
       expect(result).toEqual({ ok: true, text: "1024" });
       expect(readFileSync(join(dir, "copies/new/photo.png"))).toEqual(Buffer.from(bytes));
@@ -112,10 +112,10 @@ describe("nodes.readFile, nodes.writeFile, nodes.copy and nodes.run", () => {
     const { dir, script, stop } = await twoNodes();
     try {
       const result = await script(`
-        await api.nodes.writeFile("current", ${JSON.stringify(join(dir, "note.md"))}, "# Plans\\nCafé ☕\\n");
-        await api.nodes.writeFile("current", ${JSON.stringify(join(dir, "hi.txt"))}, new Uint8Array([104, 105]));
-        const note = await api.nodes.readFile("Mac mini", ${JSON.stringify(join(dir, "note.md"))});
-        return { note, hi: await api.nodes.readFile("mini", ${JSON.stringify(join(dir, "hi.txt"))}) };`);
+        await reins.nodes.writeFile("current", ${JSON.stringify(join(dir, "note.md"))}, "# Plans\\nCafé ☕\\n");
+        await reins.nodes.writeFile("current", ${JSON.stringify(join(dir, "hi.txt"))}, new Uint8Array([104, 105]));
+        const note = await reins.nodes.readFile("Mac mini", ${JSON.stringify(join(dir, "note.md"))});
+        return { note, hi: await reins.nodes.readFile("mini", ${JSON.stringify(join(dir, "hi.txt"))}) };`);
       expect(result).toEqual({ ok: true, text: JSON.stringify({ note: "# Plans\nCafé ☕\n", hi: "hi" }, null, 2) });
       expect(readFileSync(join(dir, "note.md"), "utf8")).toBe("# Plans\nCafé ☕\n");
     } finally { await stop(); }
@@ -128,10 +128,10 @@ describe("nodes.readFile, nodes.writeFile, nodes.copy and nodes.run", () => {
       const fromHome = relative(homedir(), join(dir, "home.txt"));
       const result = await script(`
         return [
-          await api.nodes.readFile("mini", ${JSON.stringify(`~/${fromHome}`)}),
-          await api.nodes.readFile("mini", ${JSON.stringify(fromHome)}),
-          (await api.nodes.run("mini", "pwd")).output,
-          (await api.nodes.run("mini", "pwd", { cwd: ${JSON.stringify(dir)} })).output,
+          await reins.nodes.readFile("mini", ${JSON.stringify(`~/${fromHome}`)}),
+          await reins.nodes.readFile("mini", ${JSON.stringify(fromHome)}),
+          (await reins.nodes.run("mini", "pwd")).output,
+          (await reins.nodes.run("mini", "pwd", { cwd: ${JSON.stringify(dir)} })).output,
         ];`);
       expect(result).toEqual({ ok: true, text: JSON.stringify(["found", "found", `${homedir()}\n`, `${dir}\n`], null, 2) });
     } finally { await stop(); }
@@ -140,11 +140,11 @@ describe("nodes.readFile, nodes.writeFile, nodes.copy and nodes.run", () => {
   test("a command's exit code and output come back, a failing one included; one past its timeout fails", async () => {
     const { script, stop } = await twoNodes();
     try {
-      expect(await script(`return await api.nodes.run("current", "echo out; exit 3");`))
+      expect(await script(`return await reins.nodes.run("current", "echo out; exit 3");`))
         .toEqual({ ok: true, text: JSON.stringify({ exitCode: 3, output: "out\n", truncated: false }, null, 2) });
-      expect(await script(`return await api.nodes.run("Mac mini", "echo err >&2");`))
+      expect(await script(`return await reins.nodes.run("Mac mini", "echo err >&2");`))
         .toEqual({ ok: true, text: JSON.stringify({ exitCode: 0, output: "err\n", truncated: false }, null, 2) });
-      const timedOut = await script(`return await api.nodes.run("mini", "sleep 5", { timeoutMs: 200 });`);
+      const timedOut = await script(`return await reins.nodes.run("mini", "sleep 5", { timeoutMs: 200 });`);
       expect(timedOut).toEqual({ ok: false, error: 'Command timed out after 200 ms on "Mac mini"' });
     } finally { await stop(); }
   });
@@ -153,23 +153,23 @@ describe("nodes.readFile, nodes.writeFile, nodes.copy and nodes.run", () => {
     const { dir, script, stop } = await twoNodes();
     try {
       const sizes = await script(`
-        const outputs = [await api.nodes.run("mini", "head -c 2097152 /dev/zero | tr '\\\\0' a"), await api.nodes.run("mini", "head -c 17000000 /dev/zero | tr '\\\\0' b")];
+        const outputs = [await reins.nodes.run("mini", "head -c 2097152 /dev/zero | tr '\\\\0' a"), await reins.nodes.run("mini", "head -c 17000000 /dev/zero | tr '\\\\0' b")];
         return outputs.map(run => ({ length: run.output.length, last: run.output.at(-1), truncated: run.truncated }));`);
       expect(sizes).toEqual({ ok: true, text: JSON.stringify([{ length: 2097152, last: "a", truncated: false }, { length: 16 * 1024 * 1024, last: "b", truncated: true }], null, 2) });
       mkdirSync(join(dir, "big"));
       writeFileSync(join(dir, "big/video.mp4"), "");
       truncateSync(join(dir, "big/video.mp4"), 16 * 1024 * 1024 + 1);
-      const big = await script(`return (await api.nodes.readFile("mini", ${JSON.stringify(join(dir, "big/video.mp4"))}, { binary: true })).length;`);
-      expect(big).toEqual({ ok: false, error: `Cannot read ${join(dir, "big/video.mp4")} on "Mac mini": it has 16777217 bytes, more than a script may hold (16 MiB). To copy it, use api.nodes.copy("mini", ${JSON.stringify(join(dir, "big/video.mp4"))}, toNode, toPath): it copies a file of any size.` });
+      const big = await script(`return (await reins.nodes.readFile("mini", ${JSON.stringify(join(dir, "big/video.mp4"))}, { binary: true })).length;`);
+      expect(big).toEqual({ ok: false, error: `Cannot read ${join(dir, "big/video.mp4")} on "Mac mini": it has 16777217 bytes, more than a script may hold (16 MiB). To copy it, use reins.nodes.copy("mini", ${JSON.stringify(join(dir, "big/video.mp4"))}, toNode, toPath): it copies a file of any size.` });
     } finally { await stop(); }
   });
 
   test("a node that is not connected fails at once; an unknown one too, naming the nodes there are", async () => {
     const { script, stop } = await twoNodes();
     try {
-      expect(await script(`return await api.nodes.run("Away", "true");`)).toEqual({ ok: false, error: 'Node unavailable: "Away" (away) is not connected' });
-      expect(await script(`return await api.nodes.readFile("away", "~/notes.md");`)).toEqual({ ok: false, error: 'Node unavailable: "Away" (away) is not connected' });
-      expect(await script(`return await api.nodes.writeFile("nowhere", "~/notes.md", "x");`)).toEqual({ ok: false, error: "Node not found: nowhere (the nodes: Away, Internal, Mac mini)" });
+      expect(await script(`return await reins.nodes.run("Away", "true");`)).toEqual({ ok: false, error: 'Node unavailable: "Away" (away) is not connected' });
+      expect(await script(`return await reins.nodes.readFile("away", "~/notes.md");`)).toEqual({ ok: false, error: 'Node unavailable: "Away" (away) is not connected' });
+      expect(await script(`return await reins.nodes.writeFile("nowhere", "~/notes.md", "x");`)).toEqual({ ok: false, error: "Node not found: nowhere (the nodes: Away, Internal, Mac mini)" });
     } finally { await stop(); }
   });
 });
@@ -188,15 +188,15 @@ describe("nodes.reload", () => {
     const remote = connectScriptedNode(state, "remote", { reload: async () => {
       throw new NodeRejection("unavailable", refusal);
     } });
-    const api = (sourceId: number) => buildApiObject(scriptContext(state, { sessionId: `caller-${sourceId}`, projectId: project.id, sourceId }));
+    const reins = (sourceId: number) => buildApiObject(scriptContext(state, { sessionId: `caller-${sourceId}`, projectId: project.id, sourceId }));
     try {
       await local.ready();
       await remote.ready();
-      expect(await api(defaultSource(project.id)!.id).nodes.reload()).toEqual({ nodeId: SEEDED_NODE_ID, scheduled: true });
-      expect(await api(remoteSource).nodes.reload(SEEDED_NODE_ID, true)).toEqual({ nodeId: SEEDED_NODE_ID, scheduled: true });
-      expect(await api(remoteSource).nodes.reload("INTERNAL")).toEqual({ nodeId: SEEDED_NODE_ID, scheduled: true });
+      expect(await reins(defaultSource(project.id)!.id).nodes.reload()).toEqual({ nodeId: SEEDED_NODE_ID, scheduled: true });
+      expect(await reins(remoteSource).nodes.reload(SEEDED_NODE_ID, true)).toEqual({ nodeId: SEEDED_NODE_ID, scheduled: true });
+      expect(await reins(remoteSource).nodes.reload("INTERNAL")).toEqual({ nodeId: SEEDED_NODE_ID, scheduled: true });
       expect(requests).toEqual([{ nodeId: SEEDED_NODE_ID, force: false }, { nodeId: SEEDED_NODE_ID, force: true }, { nodeId: SEEDED_NODE_ID, force: false }]);
-      await expect(api(remoteSource).nodes.reload()).rejects.toThrow(refusal);
+      await expect(reins(remoteSource).nodes.reload()).rejects.toThrow(refusal);
     } finally { local.stop(); remote.stop(); state.nodes.close(); }
   });
 });

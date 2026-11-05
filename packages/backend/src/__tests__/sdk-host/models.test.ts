@@ -1,5 +1,5 @@
 /**
- * Tests for api.models.
+ * Tests for reins.models.
  */
 
 import { describe, test, expect } from "bun:test";
@@ -12,12 +12,12 @@ import { buildApiObject } from "../../sdk-host/scripts.js";
 import { ProviderInfoSchema } from "../../sdk-host/models.js";
 import { scriptContext } from "../helpers/script-context.js";
 
-/** A script's `api.models`. */
+/** A script's `reins.models`. */
 function makeCtx() {
-  const api = buildApiObject(scriptContext(createAppState()));
+  const reins = buildApiObject(scriptContext(createAppState()));
   return {
-    list: async () => Value.Parse(Type.Array(ProviderInfoSchema), await api.models.list()),
-    listProviders: async () => Value.Parse(Type.Array(Type.String()), await api.models.listProviders()),
+    list: async () => Value.Parse(Type.Array(ProviderInfoSchema), await reins.models.list()),
+    listProviders: async () => Value.Parse(Type.Array(Type.String()), await reins.models.listProviders()),
   };
 }
 

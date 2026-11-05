@@ -286,7 +286,7 @@ Metadata is supplied at admission and never reconstructed from timestamps, IDs, 
 
 ## Session orchestration
 
-Scripts reach sessions through `api.sessions` (see [scripting](../features/scripting.md)); `sessions/session-instance.ts` implements it over `Sessions.submit` and projections (`sessions/session-runs.ts` for waits):
+Scripts reach sessions through `reins.sessions` (see [scripting](../features/scripting.md)); `sessions/session-instance.ts` implements it over `Sessions.submit` and projections (`sessions/session-runs.ts` for waits):
 
 - `start(prompt, options)` creates a session (child or independent, depth limit three) in the caller's project (none for a caller of no project) on the caller's source, or the location `options.source` names, and submits its prompt; it returns `{sessionId}` once the prompt was admitted, without waiting for the run.
 - `send(sessionId, message)` submits a steer with `metadata.sourceSessionId` for any session, resolving once admitted; Pi's native steering decides how it joins or starts work.

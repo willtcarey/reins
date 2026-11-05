@@ -1,6 +1,6 @@
 /**
  * The automations extension's HTTP API (`reins.http`): `POST /api/extensions/automations/<method>`, the same
- * operations as `api.automations`, for a later Automations tab. Schemas only. Handled in `routes.ts`.
+ * operations as `reins.automations`, for a later Automations tab. Schemas only. Handled in `routes.ts`.
  */
 
 import { Type } from "@sinclair/typebox";

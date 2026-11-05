@@ -1,12 +1,12 @@
 /**
  * Server side of the `execute` agent tool (`ReinsToolCalls.executeScript`).
  *
- * Runs agent-written async JavaScript against a curated `api` object that exposes Reins-managed
+ * Runs agent-written async JavaScript against a curated `reins` object that exposes Reins-managed
  * data and UI state, scoped to the calling session. The tool definition lives on the node
  * (`runtime/reins-tools.ts` in the node package); the server only runs the script.
  *
  * Code runs inside a Node.js `vm` context so it cannot access the host process, filesystem,
- * network, or native modules. Only the `api` object and safe JS builtins are available.
+ * network, or native modules. Only the `reins` object and safe JS builtins are available.
  *
  * NOTE: The vm sandbox is a lightweight isolation layer — it prevents accidental misuse and casual
  * prompt-injection exploits but is NOT a security boundary against a determined attacker. See
@@ -31,13 +31,13 @@ export type ScriptExecuteResult = { ok: true; text: string; content?: ScriptCont
 /** A script that throws is a completed call: its message is returned for the model unchanged. */
 export async function runScript(ctx: ApiContext, code: string): Promise<ScriptExecuteResult> {
   try {
-    const api = buildApiObject(ctx, scriptingApi(ctx.models.extensions).functions);
+    const reins = buildApiObject(ctx, scriptingApi(ctx.models.extensions).functions);
     const output = scriptOutput();
 
-    // Build a vm context with only the api object and safe JS builtins.
+    // Build a vm context with only the reins object and safe JS builtins.
     // This prevents access to process, require, import(), fs, network, etc.
     const vmContext = createContext({
-      api,
+      reins,
       ...output.globals,
       // Safe builtins
       JSON,
@@ -71,7 +71,7 @@ export async function runScript(ctx: ApiContext, code: string): Promise<ScriptEx
 
     // Wrap the agent's code in an async IIFE so `return` and `await` work.
     // The trailing newline ensures a closing `//` comment doesn't eat the `})`.
-    const wrapped = `(async function(api) { ${code}\n})(api)`;
+    const wrapped = `(async function(reins) { ${code}\n})(reins)`;
     const result = await runInContext(wrapped, vmContext, { timeout: TIMEOUT_MS });
     const content = await output.blocks();
     if (content.length === 0) return { ok: true, text: formatValue(result) };

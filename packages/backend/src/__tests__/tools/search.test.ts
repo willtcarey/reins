@@ -27,7 +27,7 @@ describe("searchFunctions", () => {
   });
 
   test("normalizes api-prefixed function queries", () => {
-    const results = searchFunctions("api.tasks");
+    const results = searchFunctions("reins.tasks");
     expect(results.length).toBeGreaterThan(0);
     expect(results[0].name).toBe("tasks.list");
   });
@@ -134,9 +134,9 @@ describe("search tool", () => {
     const text = result.content[0].type === "text" ? result.content[0].text : "";
     expect(text).toContain("## API documentation");
     expect(text).toContain("Documentation only");
-    expect(text).toContain("existing `api` object");
+    expect(text).toContain("existing `reins` object");
     expect(text).toContain("positionally");
-    expect(text).toContain("interface Api {");
+    expect(text).toContain("interface Reins {");
     expect(text).toContain("tasks: TasksApi;");
     expect(text).toContain("interface TasksApi {");
     expect(text).toContain("list(status?: \"open\" | \"closed\", projectId?: number | \"current\"): Promise<Task[]>;");

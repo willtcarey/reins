@@ -2,8 +2,8 @@
  * The server SDK's capabilities, declared once (docs/dev/server-sdk.md *One layer*): each method that agents'
  * scripts may call is a `ScriptMethod` of `@reins/sdk/server`, its schemas beside its implementation. `bind`
  * makes a namespace's methods the SDK object of one caller: an extension (`ServerSdk`), or an agent's session, whose
- * script gets them as `api` (`projection.ts`, which documents and checks them from the same declaration). A namespace
- * is a `ScriptNamespace` of the SDK, as an extension's own `api.<namespace>` is.
+ * script gets them as its `reins` (`projection.ts`, which documents and checks them from the same declaration). A namespace
+ * is a `ScriptNamespace` of the SDK, as an extension's own `reins.<namespace>` is.
  */
 
 import { Type, type Static, type TSchema } from "@sinclair/typebox";

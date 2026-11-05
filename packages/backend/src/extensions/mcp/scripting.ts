@@ -1,6 +1,6 @@
 /**
- * `api.mcp`, the MCP extension's scripting functions (`reins.scripting`): managing the remote MCP servers of
- * Settings → MCP (docs/dev/mcp-servers.md). Their tools are `api.tools`' (`tools.ts`).
+ * `reins.mcp`, the MCP extension's scripting functions (`reins.scripting`): managing the remote MCP servers of
+ * Settings → MCP (docs/dev/mcp-servers.md). Their tools are `reins.tools`' (`tools.ts`).
  */
 
 import { Type, type Static, type TSchema } from "@sinclair/typebox";
@@ -91,8 +91,8 @@ export function mcpScripting(servers: McpServers, callbackPath: string): ScriptN
       "Add a remote MCP server (HTTP; stdio is not supported). transport is \"http\" (streamable HTTP, the default) or " +
       "\"sse\" for a legacy HTTP+SSE server. Header auth needs headerName and headerValue. " +
       `It is not connected until used: mcp.test connects and reports. ${SIGN_IN}\n\n` +
-      "  await api.mcp.add({ name: \"executor\", url: \"https://executor.example.com/mcp\", authKind: \"oauth\" });\n" +
-      "  return await api.mcp.test(\"executor\");",
+      "  await reins.mcp.add({ name: \"executor\", url: \"https://executor.example.com/mcp\", authKind: \"oauth\" });\n" +
+      "  return await reins.mcp.test(\"executor\");",
     params: [{ name: "server", schema: McpServerInputSchema }],
     returns: McpServerSchema,
     tags: ["mcp", "server", "add", "create", "write", "oauth", "header", "api key"],
@@ -145,7 +145,7 @@ export function mcpScripting(servers: McpServers, callbackPath: string): ScriptN
       "signedIn). If that page does not load (Reins is not at that address for their browser), ask them for the URL " +
       "in their address bar and pass it to mcp.finishSignIn. The sign-in must end within 15 minutes; starting another " +
       "replaces it.\n\n" +
-      "  const { authorizationUrl } = await api.mcp.signIn(\"executor\");\n" +
+      "  const { authorizationUrl } = await reins.mcp.signIn(\"executor\");\n" +
       "  return authorizationUrl; // for the user to open",
     params: [
       serverParam,

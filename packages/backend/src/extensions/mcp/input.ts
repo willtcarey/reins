@@ -1,7 +1,7 @@
 /**
  * A server as callers give it, to add (`McpServerInputSchema`) or change (`McpServerUpdateSchema`), and its
  * check, `parseMcpServerInput`. The model checks it (`McpServers.create`, `McpServerModel.update`), so the
- * HTTP API and `api.mcp` refuse the same input with the same message; they give the model what they got.
+ * HTTP API and `reins.mcp` refuse the same input with the same message; they give the model what they got.
  */
 
 import { Type, type Static, type TSchema } from "@sinclair/typebox";

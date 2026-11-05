@@ -39,11 +39,11 @@ describe("sessions.setModel", () => {
     return { state, models };
   }
 
-  /** `api.sessions.setModel` of a script of a session of the project, its result checked as a session. */
+  /** `reins.sessions.setModel` of a script of a session of the project, its result checked as a session. */
   function makeCtx() {
     const { state } = contextState();
-    const api = buildApiObject(scriptContext(state, { sessionId: "ctx-session", projectId: project.id }));
-    return async (...args: unknown[]) => Value.Parse(SessionSchema, await api.sessions.setModel(...args));
+    const reins = buildApiObject(scriptContext(state, { sessionId: "ctx-session", projectId: project.id }));
+    return async (...args: unknown[]) => Value.Parse(SessionSchema, await reins.sessions.setModel(...args));
   }
 
   test("updates DB row with new model", async () => {
@@ -188,6 +188,6 @@ describe("sessions.setModel", () => {
     createSession("sess-10", project.id, { agentRuntimeType: "pi" });
 
     const ctx = makeCtx();
-    await expect(ctx("sess-10", "anthropic", "claude-sonnet-4-5", "invalid-level")).rejects.toThrow("api.sessions.setModel: thinkingLevel");
+    await expect(ctx("sess-10", "anthropic", "claude-sonnet-4-5", "invalid-level")).rejects.toThrow("reins.sessions.setModel: thinkingLevel");
   });
 });

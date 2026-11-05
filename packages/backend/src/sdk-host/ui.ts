@@ -1,6 +1,6 @@
 /**
- * `ui` (docs/dev/server-sdk.md *UI*): what the browsers show, for an extension (`reins.ui`) and an agent's script
- * (`api.ui`). A file is opened for the users viewing a session: a script's own, or the one an extension names.
+ * `ui` (docs/dev/server-sdk.md *UI*): what the browsers show, `reins.ui`, for an extension and an agent's
+ * script alike. A file is opened for the users viewing a session: a script's own, or the one an extension names.
  */
 
 import { posix } from "node:path";
@@ -26,8 +26,8 @@ const openFile = sdkMethod({
   description:
     "Open a file in the file browser of the users viewing the calling session, optionally highlighting a line range. " +
     "The file may be on any node (`node`, the calling session's by default). Throws when the file is not there.\n\n" +
-    "  await api.ui.openFile(\"src/index.ts\", { startLine: 10, endLine: 20 });\n" +
-    "  await api.ui.openFile(\"/home/will/Workspaces/scratch/report.html\", { node: \"Internal\" });",
+    "  await reins.ui.openFile(\"src/index.ts\", { startLine: 10, endLine: 20 });\n" +
+    "  await reins.ui.openFile(\"/home/will/Workspaces/scratch/report.html\", { node: \"Internal\" });",
   params: [
     { name: "path", schema: Type.String({ minLength: 1, description: "Absolute, or relative to the session's checkout." }) },
     {

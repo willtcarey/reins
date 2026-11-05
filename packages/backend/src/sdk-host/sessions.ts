@@ -1,6 +1,6 @@
 /**
  * `sessions` (docs/dev/server-sdk.md *Sessions*): starting, messaging, waiting for, reading and changing sessions,
- * for an extension (`reins.sessions`) and an agent's script (`api.sessions`), over the `Sessions` model. The caller
+ * `reins.sessions`, for an extension and an agent's script alike, over the `Sessions` model. The caller
  * decides the defaults and the origin: a script's session starts where the caller works and reports back to it as
  * its child, and its messages are session updates from it (`sourceSessionId`); an extension acts as no session,
  * so it names where a session works, and what it starts and sends records it (`sourceExtension`). Settlement

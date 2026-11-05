@@ -33,7 +33,7 @@ async function run(state: TestAppState, code: string) {
 }
 const value = async (state: TestAppState, code: string) => JSON.parse((await run(state, code)).text);
 
-describe("api.images", () => {
+describe("reins.images", () => {
   useTestDb();
 
   test("list gives every provider's models as <extension>__<model>", async () => {
@@ -41,7 +41,7 @@ describe("api.images", () => {
       { name: "first", register: extension(provider(["local/qwen"])) },
       { name: "second", register: extension(provider(["dall-e", "gpt-image"])) },
     ]);
-    expect(await value(state, "return await api.images.list()")).toEqual(["first__local/qwen", "second__dall-e", "second__gpt-image"]);
+    expect(await value(state, "return await reins.images.list()")).toEqual(["first__local/qwen", "second__dall-e", "second__gpt-image"]);
   });
 
   test("an extension lists and uses another extension's image models through reins.images, as scripts do", async () => {
@@ -64,7 +64,7 @@ describe("api.images", () => {
       { name: "second", register: extension(provider(["b/c"], generations)) },
     ]);
 
-    const result = await value(state, `return await api.images.generate("a cat", {
+    const result = await value(state, `return await reins.images.generate("a cat", {
       model: "second__b/c", images: [${JSON.stringify(image)}], size: "512x512", count: 2, parameters: { seed: 7 },
     })`);
 
@@ -77,8 +77,8 @@ describe("api.images", () => {
     const state = app([{ name: "first", register: extension(provider(["one", "two"], generations)) }]);
 
     const result = await run(state, `
-      const first = await api.images.generate("a cat");
-      image(await api.images.generate("make it blue", { images: first }));
+      const first = await reins.images.generate("a cat");
+      image(await reins.images.generate("make it blue", { images: first }));
     `);
 
     expect(generations).toEqual([
@@ -89,9 +89,9 @@ describe("api.images", () => {
   });
 
   test("no models, and an unknown model, throw", async () => {
-    await expect(run(app([]), `return await api.images.generate("x")`)).rejects.toThrow("No image models");
+    await expect(run(app([]), `return await reins.images.generate("x")`)).rejects.toThrow("No image models");
     const state = app([{ name: "first", register: extension(provider(["one"])) }]);
-    await expect(run(state, `return await api.images.generate("x", { model: "nobody__one" })`)).rejects.toThrow("Unknown image model: nobody__one");
+    await expect(run(state, `return await reins.images.generate("x", { model: "nobody__one" })`)).rejects.toThrow("Unknown image model: nobody__one");
   });
 
   test("an extension has one image provider at a time", () => {
@@ -105,7 +105,7 @@ describe("api.images", () => {
     expect(errors).toEqual(["twice: An extension registers one image provider at a time"]);
   });
 
-  test("search documents api.images", () => {
+  test("search documents reins.images", () => {
     expect(searchScriptApi("images generate", undefined).text).toContain("generate(prompt: string");
   });
 });

@@ -385,7 +385,7 @@ export interface Nodes {
 // Sessions
 // ---------------------------------------------------------------------------
 
-/** A session, as the agents' `api.sessions.get` gives it, in the SDK's camelCase. */
+/** A session, as the agents' `reins.sessions.get` (in `execute`) gives it, in the SDK's camelCase. */
 export interface Session {
   readonly id: string;
   /** Its project; null for a session of no project (which has no task). */

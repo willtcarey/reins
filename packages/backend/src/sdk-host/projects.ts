@@ -1,6 +1,6 @@
 /**
- * `projects` and `tasks` (docs/dev/server-sdk.md *Projects and tasks*), for an extension (`reins.projects`,
- * `reins.tasks`) and an agent's script (`api.projects`, `api.tasks`): any project or task, by its ID. What a
+ * `projects` and `tasks` (docs/dev/server-sdk.md *Projects and tasks*), `reins.projects` and
+ * `reins.tasks`, for an extension and an agent's script alike: any project or task, by its ID. What a
  * script leaves out is its session's (its project, its node); an extension names it.
  */
 
