@@ -9,7 +9,7 @@ const source = { nodeId: "laptop", path: "/work/api" };
 const knowingS1: Partial<Sessions> = {
   get: async (id): Promise<Session> => {
     if (id !== "s1") throw new Error(`Session ${id} not found`);
-    return { id, projectId: 7, taskId: 3, parentSessionId: null, name: null, source };
+    return { id, projectId: 7, taskId: 3, parentSessionId: null, name: null, source, activity: null };
   },
 };
 

@@ -43,6 +43,28 @@ describe("Recent sessions", () => {
     expect(requests).toEqual(Array(2).fill('POST /api/extensions/recent-sessions/list {"limit":8}'));
   });
 
+  test("a row's activity follows the app's session at once, before its backend part answers again", async () => {
+    const sdk = testSdk<RecentSessionsApi>({ extension });
+    sdk.sessions.setMany([makeSessionListItem("a", { activityState: "finished" }), makeSessionListItem("b")]);
+    // The backend part has not seen the change yet: it still answers unread.
+    mockFetch(() => json([row("a", { activity: "unread" }), row("b")]));
+    const recent = new RecentSessions(sdk.reins, 60_000);
+    let heard = 0;
+    recent.subscribe(() => { heard += 1; });
+    recent.start();
+    await settle();
+    const before = recent.rows.map(({ activity }) => activity);
+    const heardBefore = heard;
+
+    sdk.sessions.set("a", { activityState: null });
+    await settle();
+    recent.stop();
+
+    expect(before).toEqual(["unread", null]);
+    expect(recent.rows.map(({ id, activity }) => ({ id, activity }))).toEqual([{ id: "a", activity: null }, { id: "b", activity: null }]);
+    expect(heard).toBeGreaterThan(heardBefore);
+  });
+
   test("a row's menu copies its ID, marks it read or unread unless it runs, renames it and archives it", () => {
     const { reins } = testSdk<RecentSessionsApi>({ extension });
     const renamed: string[] = [];

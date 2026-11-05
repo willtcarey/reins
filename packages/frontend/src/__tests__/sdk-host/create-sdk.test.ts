@@ -149,7 +149,7 @@ describe("workspace.current", () => {
 
 describe("sessions", () => {
   test("reaches the app's sessions with every operation", async () => {
-    const { reins, sessionCalls } = testSdk({ sessions: { get: async (id) => ({ id, projectId: 7, taskId: null, parentSessionId: null, name: null, source }) } });
+    const { reins, sessionCalls } = testSdk({ sessions: { get: async (id) => ({ id, projectId: 7, taskId: null, parentSessionId: null, name: null, source, activity: null }) } });
 
     expect((await reins.sessions.get("s1")).projectId).toBe(7);
     await reins.sessions.create({ projectId: 7 });

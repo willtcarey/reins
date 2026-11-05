@@ -29,10 +29,14 @@ const REFRESH_DELAY_MS = 250;
 /**
  * The rows, as the backend part answers them, kept current while started: asked again (once, after a short
  * delay) when sessions, tasks or projects change, and on reconnect. A change while a request is out asks again
- * after it, so the last answer is never older than the last change.
+ * after it, so the last answer is never older than the last change. Each row's activity is the app's own
+ * (`sessions.get`), which changes with the session at once: the backend part's answer comes a request later, and
+ * may be older than a session just marked read.
  */
 export class RecentSessions {
   rows: readonly RecentSession[] = [];
+  private answered: readonly RecentSession[] = [];
+  private shows = 0;
   loaded = false;
   private listeners = new Set<() => void>();
   private stops: Disposer[] = [];
@@ -47,7 +51,10 @@ export class RecentSessions {
     // Any session may now be recent, a task closing puts its sessions away, a project's name shows on its rows.
     const later = () => this.refreshSoon();
     this.stops = [
-      this.reins.sessions.onDidChange(later),
+      this.reins.sessions.onDidChange((change) => {
+        if (change.sessionIds.some((sessionId) => this.answered.some(({ id }) => id === sessionId))) void this.show();
+        later();
+      }),
       this.reins.tasks.onDidChange(later),
       this.reins.projects.onDidChange(later),
       this.reins.onReconnect(later),
@@ -95,12 +102,25 @@ export class RecentSessions {
 
   private async load(): Promise<void> {
     try {
-      this.rows = await this.reins.http.call("list", { limit: RECENT_SHOWN });
-      this.loaded = true;
-      for (const listener of this.listeners) listener();
+      this.answered = await this.reins.http.call("list", { limit: RECENT_SHOWN });
     } catch {
       // The rows stay as they were; the next change or reconnect asks again.
+      return;
     }
+    this.loaded = true;
+    await this.show();
+  }
+
+  /** The answered rows with the app's activity; a session it cannot get keeps the answer's. */
+  private async show(): Promise<void> {
+    const show = ++this.shows;
+    const answered = this.answered;
+    const activities = await Promise.all(answered.map(({ id, activity }) => (
+      this.reins.sessions.get(id).then((session) => session.activity, () => activity)
+    )));
+    if (show !== this.shows) return;
+    this.rows = answered.map((row, index) => activities[index] === row.activity ? row : { ...row, activity: activities[index]! });
+    for (const listener of this.listeners) listener();
   }
 }
 

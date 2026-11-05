@@ -34,12 +34,16 @@ export type SessionCall =
   | { send: string; message: string }
   | { create: SessionCreation };
 
-/** Sessions whose operations record what reaches them: none is known (`get` rejects), and a session created is
- * `new-1`, `new-2`, …; their lists and actions are the app's (`live`), over its stores. `overrides` replace any. */
-function recordingSessions(calls: SessionCall[], live: SdkSessions, overrides: Partial<Sessions>): Sessions {
+/** Sessions whose operations record what reaches them: `get` answers for a session the app has (`cache`), as the
+ * app does, and rejects for any other without asking a server; a session created is `new-1`, `new-2`, …; their
+ * lists and actions are the app's (`live`), over its stores. `overrides` replace any. */
+function recordingSessions(calls: SessionCall[], live: SdkSessions, cache: SessionCache, overrides: Partial<Sessions>): Sessions {
   let created = 0;
   return {
-    get: async (sessionId) => { throw new Error(`Session ${sessionId} not found`); },
+    get: async (sessionId) => {
+      if (!cache.get(sessionId)?.placement) throw new Error(`Session ${sessionId} not found`);
+      return live.get(sessionId);
+    },
     send: async (sessionId, message) => { calls.push({ send: sessionId, message }); },
     compact: async (sessionId, instructions) => { calls.push(instructions === undefined ? { compact: sessionId } : { compact: sessionId, instructions }); },
     create: async (options) => { calls.push({ create: options }); return `new-${++created}`; },
@@ -132,7 +136,7 @@ export function testSdk<A extends HttpApi = HttpApi>({ source = { nodeId: "node"
     shown = view;
     for (const listener of mainListeners) listener();
   };
-  const recorded = recordingSessions(sessionCalls, live, sessionOverrides);
+  const recorded = recordingSessions(sessionCalls, live, sessions, sessionOverrides);
   const host: SdkHost = {
     app: { files, views, decorators, commands, settingsPages, sidebar, open: (view, container) => opened.push({ view, container }) },
     sessions: recorded,

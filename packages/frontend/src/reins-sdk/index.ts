@@ -398,6 +398,8 @@ export interface Session {
   readonly name: string | null;
   /** Where it runs. */
   readonly source: Source;
+  /** Running, or finished with something the user has not seen; null otherwise. */
+  readonly activity: Activity;
 }
 
 export type ThinkingLevel = "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
@@ -494,7 +496,10 @@ export interface Sessions {
   moveTargets(sessionId: string): Promise<readonly SessionMoveTarget[]>;
   /** Moves an idle session to a directory on a node; its tools run there from then on. */
   move(sessionId: string, to: Source): Promise<void>;
-  /** The session, from the server. Rejects for a session it does not have. */
+  /**
+   * The session as the app has it now, kept current by the server's messages, so it resolves at once; one the app
+   * has not loaded is asked of the server. Rejects for a session the server does not have.
+   */
   get(sessionId: string): Promise<Session>;
   /**
    * Creates a session and resolves with its ID once it exists and its `prompt`, if given, was admitted.

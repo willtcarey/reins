@@ -16,7 +16,7 @@ function sdkSessions() {
   const conversations = new ConversationsStore();
   const sessionOperations = new SessionOperations({ conversations });
   const sessions = new SdkSessions({ sessionOperations, sessionCache, projectsStore: new ProjectsStore(sessionCache, client) });
-  return { sessions, conversations };
+  return { sessions, conversations, sessionCache };
 }
 
 /** Answers creating a session with `created` and records the requests that change something. */
@@ -33,7 +33,26 @@ function recordWrites(respond: (url: string) => Response = () => json({ id: "cre
 afterEach(restoreFetch);
 
 describe("SdkSessions.get", () => {
-  test("asks the server for the session: its project, task, parent, name and source", async () => {
+  test("answers from what the app has, without a request: its project, task, parent, name, source and activity", async () => {
+    const { sessions, sessionCache } = sdkSessions();
+    const placement = { available: true, removed: false, nodeId: "laptop", nodeName: "Laptop", path: "/work/api" };
+    sessionCache.set("on-task", { projectId: 7, taskId: 3, parentSessionId: "lead", name: "Plan", placement, activityState: "finished" });
+    const requests: string[] = [];
+    mockFetch((url) => { requests.push(url); return json({}); });
+
+    expect(await sessions.get("on-task")).toEqual({
+      id: "on-task",
+      projectId: 7,
+      taskId: 3,
+      parentSessionId: "lead",
+      name: "Plan",
+      source: { nodeId: "laptop", path: "/work/api" },
+      activity: "unread",
+    });
+    expect(requests).toEqual([]);
+  });
+
+  test("asks the server for a session the app does not have: its project, task, parent, name, source and activity", async () => {
     const { sessions } = sdkSessions();
     const placement = { available: true, removed: false, nodeId: "laptop", nodeName: "Laptop", path: "/work/api" };
     mockFetch(() => json({ id: "on-task", projectId: 7, taskId: 3, parentSessionId: "lead", name: "Plan", placement }));
@@ -45,6 +64,7 @@ describe("SdkSessions.get", () => {
       parentSessionId: "lead",
       name: "Plan",
       source: { nodeId: "laptop", path: "/work/api" },
+      activity: null,
     });
   });
 

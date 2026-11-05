@@ -68,8 +68,11 @@ export class SdkSessions implements Sessions {
   }
 
   async get(sessionId: string): Promise<Session> {
-    const session = await this.app.sessionCache.loadDetail(sessionId);
-    const { placement } = session;
+    const { sessionCache } = this.app;
+    if (!sessionCache.get(sessionId)?.placement) await sessionCache.loadDetail(sessionId);
+    const session = sessionCache.get(sessionId);
+    const placement = session?.placement;
+    if (!session || !placement) throw new Error(`Session ${sessionId} not found`);
     return {
       id: session.id,
       projectId: session.projectId,
@@ -77,6 +80,7 @@ export class SdkSessions implements Sessions {
       parentSessionId: session.parentSessionId,
       name: session.name,
       source: { nodeId: placement.nodeId, path: placement.path },
+      activity: sdkActivity(session.activityState),
     };
   }
 
