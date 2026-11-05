@@ -8,6 +8,7 @@ interface AnchorBox {
 
 interface AnchorContainer extends AnchorBox {
   scrollTop: number;
+  readonly scrollHeight: number;
   readonly clientWidth: number;
   readonly clientHeight: number;
 }
@@ -25,6 +26,9 @@ type Options = {
   container(): AnchorContainer | null;
   /** While true, a resize moves nothing (another animation owns the scroll position). */
   locked?(): boolean;
+  /** While true, any change of size keeps the container at its end, before the change is painted (a reply or
+   * a command's output growing under a reader who follows it). */
+  followEnd?(): boolean;
 };
 
 /**
@@ -40,6 +44,7 @@ type Options = {
  *
  * Content added above the reader (earlier history) changes only the content's size, so it moves the
  * text unless the anchor is pinned for it (`pin`), which restores the anchor after every change.
+ * A reader who follows the end (`followEnd`) is kept there through every change of size instead.
  */
 export class ScrollAnchorController implements ReactiveController {
   private anchor: Anchor | null = null;
@@ -99,6 +104,11 @@ export class ScrollAnchorController implements ReactiveController {
   private resized() {
     const container = this.shown();
     if (!container) return;
+    if (this.options.followEnd?.() && !this.options.locked?.()) {
+      container.scrollTop = container.scrollHeight - container.clientHeight;
+      this.save();
+      return;
+    }
     const anchor = this.anchor;
     if (anchor && (this.pins > 0 || anchor.width !== container.clientWidth || anchor.height !== container.clientHeight)) this.restore();
     this.save();

@@ -7,7 +7,8 @@
  * `tool_execution_update`) notify listeners at most once per animation frame
  * per session; every other change notifies synchronously and absorbs any
  * pending frame. Views are memoized so streaming-only changes keep transcript
- * `Message` objects identical.
+ * `Message` objects identical, and a tool update replaces only the assistant
+ * that holds the tool call.
  */
 
 import {
@@ -19,7 +20,7 @@ import {
   type ChatState,
 } from "../chat-state.js";
 import type { ClientPromptContent } from "../chat-content.js";
-import { buildMessages, buildStreamingMessages, type AssistantMessage, type Message } from "../message.js";
+import { applyLiveTools, buildMessages, buildStreamingMessages, type AssistantMessage, type LiveTools, type Message } from "../message.js";
 import { streamingTelemetry, type StreamingTelemetry } from "../streaming-telemetry.js";
 import type { ConversationEntry as BackendConversationEntry, SessionMessagePage } from "@backend/messages-store.js";
 import type { AgentMessage } from "../agent-message.js";
@@ -85,6 +86,7 @@ interface PendingNotification {
 
 interface ViewCache {
   state: ConversationState;
+  running: boolean;
   view: ConversationView;
 }
 
@@ -123,9 +125,30 @@ function blankConversationState(): ConversationState {
     previousCursor: null,
     latestCursor: null,
     streamingAssistants: state.streamingAssistants,
+    toolExecutions: state.toolExecutions,
     isCompacting: state.isCompacting,
     errorMessage: state.errorMessage,
   };
+}
+
+const savedResultsByEntries = new WeakMap<readonly ConversationEntry[], ReadonlySet<string>>();
+
+/** The tool call IDs with a saved result, computed once per entries array. */
+function savedToolResults(entries: readonly ConversationEntry[]): ReadonlySet<string> {
+  let ids = savedResultsByEntries.get(entries);
+  if (!ids) {
+    ids = new Set(entries.flatMap(({ message }) => message.role === "toolResult" ? [message.toolCallId] : []));
+    savedResultsByEntries.set(entries, ids);
+  }
+  return ids;
+}
+
+/** Live tool state ends where a saved result takes over. Preserves identity when nothing goes. */
+function withoutSavedResults(executions: ChatState["toolExecutions"], entries: readonly ConversationEntry[]): ChatState["toolExecutions"] {
+  const saved = savedToolResults(entries);
+  const ids = Object.keys(executions);
+  if (!ids.some((id) => saved.has(id))) return executions;
+  return Object.fromEntries(ids.flatMap((id) => saved.has(id) ? [] : [[id, executions[id]!]]));
 }
 
 /** Idempotent canonical upsert. Harness sequence is the transcript order. */
@@ -154,7 +177,7 @@ export class ConversationsStore {
     this._sessionCache = options.sessionCache ?? null;
     this._scheduleFrame = options.scheduleFrame;
     this._telemetry = options.telemetry ?? streamingTelemetry;
-    this._unsubscribeSessionCache = this._sessionCache?.subscribeAll((sessionId) => this.pruneSessionIfInactive(sessionId)) ?? null;
+    this._unsubscribeSessionCache = this._sessionCache?.subscribeAll((sessionId) => this.sessionChanged(sessionId)) ?? null;
     this._unsubscribeEvents = options.eventSource?.subscribe({
       event: (message) => this.applyEvent(message.sessionId, message.event, message.seq),
     }) ?? null;
@@ -163,21 +186,25 @@ export class ConversationsStore {
   /** Memoized per state; transcript and streaming messages are rebuilt only when their inputs change. */
   get(sessionId: string): ConversationView {
     const state = sessionId ? this.stateFor(sessionId) : blankConversationState();
+    const running = this.isRunning(sessionId);
     const cached = this._views.get(sessionId);
-    if (cached?.state === state) return cached.view;
+    if (cached?.state === state && cached.running === running) return cached.view;
     const previous = cached?.state;
+    const live: LiveTools = { executions: state.toolExecutions, running };
+    const sameTranscript = cached && previous?.entries === state.entries && previous.pendingSubmissions === state.pendingSubmissions;
+    const sameLiveTools = cached && previous?.toolExecutions === state.toolExecutions && cached.running === running;
     const view: ConversationView = {
-      messages: cached && previous?.entries === state.entries && previous.pendingSubmissions === state.pendingSubmissions
-        ? cached.view.messages
-        : buildTranscript(state),
-      streamingMessages: cached && previous?.streamingAssistants === state.streamingAssistants
+      messages: sameTranscript
+        ? sameLiveTools ? cached.view.messages : applyLiveTools(cached.view.messages, live)
+        : buildTranscript(state, live),
+      streamingMessages: cached && previous?.streamingAssistants === state.streamingAssistants && previous.toolExecutions === state.toolExecutions
         ? cached.view.streamingMessages
-        : buildStreamingMessages(state.streamingAssistants),
+        : buildStreamingMessages(state.streamingAssistants, state.toolExecutions),
       hasEarlierMessages: state.previousCursor !== null,
       isCompacting: state.isCompacting,
       errorMessage: state.errorMessage,
     };
-    if (this._states.get(sessionId) === state) this._views.set(sessionId, { state, view });
+    if (this._states.get(sessionId) === state) this._views.set(sessionId, { state, running, view });
     return view;
   }
 
@@ -305,10 +332,12 @@ export class ConversationsStore {
     this.update(sessionId, (state) => {
       const next = applyChatEvent(state, event);
       if (next.streamingAssistants === state.streamingAssistants
+        && next.toolExecutions === state.toolExecutions
         && next.isCompacting === state.isCompacting
         && next.errorMessage === state.errorMessage) return undefined;
       return {
         streamingAssistants: next.streamingAssistants,
+        toolExecutions: next.toolExecutions,
         isCompacting: next.isCompacting,
         errorMessage: next.errorMessage,
       };
@@ -356,9 +385,20 @@ export class ConversationsStore {
     this._views.clear();
   }
 
+  /** A session's activity shows in its saved tool calls (*running* without a result), so a change re-renders its viewers. */
+  private sessionChanged(sessionId: string): void {
+    this.pruneSessionIfInactive(sessionId);
+    const cached = this._views.get(sessionId);
+    if (cached && this._listeners.has(sessionId) && cached.running !== this.isRunning(sessionId)) this.notify(sessionId);
+  }
+
+  private isRunning(sessionId: string): boolean {
+    return this._sessionCache?.get(sessionId)?.activityState === "running";
+  }
+
   private pruneSessionIfInactive(sessionId: string): void {
     if (!this._states.has(sessionId) || this._listeners.has(sessionId)) return;
-    if (this._sessionCache?.get(sessionId)?.activityState === "running") return;
+    if (this.isRunning(sessionId)) return;
     this._eventSeqs.delete(sessionId);
     this._eventVersions.delete(sessionId);
     this._views.delete(sessionId);
@@ -396,12 +436,15 @@ export class ConversationsStore {
         new Set(entries.map(({ id }) => id)),
       ).streamingAssistants;
     }
+    let toolExecutions = patch.toolExecutions ?? current.toolExecutions;
+    if (patch.entries || patch.toolExecutions) toolExecutions = withoutSavedResults(toolExecutions, entries);
     this._states.set(sessionId, {
       ...current,
       ...patch,
       entries,
       pendingSubmissions,
       streamingAssistants,
+      toolExecutions,
     });
     if (streamingPartial) this.notifyNextFrame(sessionId, streamingPartial);
     else this.notify(sessionId);
@@ -440,7 +483,7 @@ export class ConversationsStore {
   }
 }
 
-function buildTranscript(state: ConversationState): Message[] {
+function buildTranscript(state: ConversationState, live: LiveTools): Message[] {
   const entries = [...state.entries, ...state.pendingSubmissions.values()];
   return buildMessages(entries.map((entry) => ({
     entryId: entry.id,
@@ -449,5 +492,5 @@ function buildTranscript(state: ConversationState): Message[] {
       ? `submission-${entry.clientId}`
       : entry.id!,
     message: entry.message,
-  })));
+  })), live);
 }

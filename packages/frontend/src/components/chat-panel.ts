@@ -65,6 +65,7 @@ export class ChatPanel extends LitElement {
   private scrollAnchor = new ScrollAnchorController(this, {
     container: () => this.querySelector<HTMLElement>("#chat-scroll"),
     locked: () => this.sendAnimator.scrollLocked,
+    followEnd: () => this.shouldAutoScroll,
   });
   private history = new ChatHistoryController(this, {
     hasEarlierMessages: () => this.store?.conversation.hasEarlierMessages ?? false,

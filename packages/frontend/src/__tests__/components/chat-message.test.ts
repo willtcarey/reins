@@ -213,7 +213,7 @@ describe("ChatMessage", () => {
         type: "toolCall",
         id: "write-1",
         name: "write",
-        arguments: { path: "/work/project/file.ts", content: "partial" },
+        arguments: { path: "/work/project/file.ts", content: "complete" },
       }],
     };
     const element = new ChatMessage();
@@ -228,14 +228,7 @@ describe("ChatMessage", () => {
       "streaming-assistant-20",
       true,
       new Map(),
-      {
-        "write-1": {
-          id: "write-1",
-          name: "write",
-          args: { path: "/work/project/file.ts", content: "complete" },
-          status: "running",
-        },
-      },
+      { "write-1": { status: "running" } },
     );
     const output = templateToString(element.render());
     expect(output).toContain("write-tool-block");

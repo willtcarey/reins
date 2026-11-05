@@ -94,7 +94,19 @@ export class SessionUpdateMessage extends MessageBase<AgentUserMessage, "session
   }
 }
 
-/** A tool call enriched with the result or live execution owned by its assistant. */
+/**
+ * What a transcript knows of tool calls beyond their saved results: the live
+ * state by call ID, and whether the session is running (a saved call with no
+ * result then shows as running, as after a reload mid-run).
+ */
+export interface LiveTools {
+  executions: Readonly<Record<string, ToolExecution>>;
+  running: boolean;
+}
+
+const NO_LIVE_TOOLS: LiveTools = { executions: {}, running: false };
+
+/** A tool call enriched with its saved result or its live execution. */
 export class AssistantToolCallBlock {
   readonly type = "toolCall" as const;
 
@@ -103,6 +115,8 @@ export class AssistantToolCallBlock {
     readonly result: ToolResultMessage | undefined,
     readonly execution: ToolExecution | undefined,
     private readonly streaming: boolean,
+    /** Saved with no result while its session runs: it is running, though no event said so since the page loaded. */
+    readonly awaitingResult = false,
   ) {}
 
   get id(): string { return this.call.id; }
@@ -111,18 +125,18 @@ export class AssistantToolCallBlock {
 
   /** Rendering data is unavailable for partial streaming calls until execution starts. */
   get renderData(): ToolBlockData | null {
-    if (this.streaming) return this.execution ?? null;
-
-    return {
-      id: this.call.id,
-      name: this.call.name,
-      args: this.call.arguments,
-      status: "done",
-      ...(this.result ? {
+    const base = { id: this.call.id, name: this.call.name, args: this.call.arguments };
+    if (this.result) {
+      return {
+        ...base,
+        status: "done",
         result: { content: this.result.content, details: this.result.details },
         isError: this.result.isError,
-      } : {}),
-    };
+      };
+    }
+    if (this.execution) return { ...base, ...this.execution };
+    if (this.streaming) return null;
+    return { ...base, status: this.awaitingResult ? "running" : "done" };
   }
 }
 
@@ -139,7 +153,8 @@ export class AssistantMessage extends MessageBase<AgentAssistantMessage> {
     renderKey: string,
     readonly streaming: boolean,
     toolResults: ReadonlyMap<string, ToolResultMessage> = new Map(),
-    toolExecutions: Readonly<Record<string, ToolExecution>> = {},
+    toolExecutions: LiveTools["executions"] = {},
+    awaitingResults = false,
   ) {
     super(raw, entryId, parentEntryId, renderKey);
     this.blocks = raw.content.map((block) => block.type === "toolCall"
@@ -148,8 +163,20 @@ export class AssistantMessage extends MessageBase<AgentAssistantMessage> {
         toolResults.get(block.id),
         toolExecutions[block.id],
         streaming,
+        awaitingResults && !toolResults.has(block.id),
       )
       : block);
+  }
+
+  /** This message with other live tool state, or itself when none of its tool calls would show differently. */
+  withLiveTools(executions: LiveTools["executions"], awaitingResults: boolean): AssistantMessage {
+    const toolCalls = this.blocks.filter((block) => block instanceof AssistantToolCallBlock);
+    const unchanged = toolCalls.every((block) => (
+      block.execution === executions[block.id] && block.awaitingResult === (awaitingResults && !block.result)
+    ));
+    if (unchanged) return this;
+    const results = new Map(toolCalls.flatMap((block) => block.result ? [[block.id, block.result] as const] : []));
+    return new AssistantMessage(this.raw, this.entryId, this.parentEntryId, this.renderKey, this.streaming, results, executions, awaitingResults);
   }
 
   toMarkdown(): string | null {
@@ -186,13 +213,14 @@ export type Message =
  */
 export function buildMessages(
   sources: readonly MessageSource[],
+  live: LiveTools = NO_LIVE_TOOLS,
 ): Message[] {
   const toolResults = new Map<string, ToolResultMessage>();
   for (const { message } of sources) {
     if (message.role === "toolResult") toolResults.set(message.toolCallId, message);
   }
 
-  return sources.flatMap((source): Message[] => {
+  const messages = sources.flatMap((source): Message[] => {
     const { message, entryId, parentEntryId, renderKey } = source;
     switch (message.role) {
       case "user":
@@ -214,13 +242,33 @@ export function buildMessages(
         return [];
     }
   });
+  return applyLiveTools(messages, live);
+}
+
+/**
+ * Apply live tool state to built messages, replacing only the assistants it
+ * changes so the others keep their identity (and their rows skip rendering).
+ * Only the latest assistant can still be waiting for results: an older call
+ * with none was cut off, and is not shown as running.
+ */
+export function applyLiveTools(messages: Message[], live: LiveTools): Message[] {
+  const latest = messages.findLastIndex((message) => message.role === "assistant");
+  let changed = false;
+  const next = messages.map((message, index) => {
+    if (!(message instanceof AssistantMessage)) return message;
+    const updated = message.withLiveTools(live.executions, live.running && index === latest);
+    if (updated !== message) changed = true;
+    return updated;
+  });
+  return changed ? next : messages;
 }
 
 /** Project authoritative runtime snapshots through the same assistant interface. */
 export function buildStreamingMessages(
   assistants: readonly StreamingAssistant[],
+  toolExecutions: LiveTools["executions"],
 ): AssistantMessage[] {
-  return assistants.map(({ streamId, message, toolExecutions }) => new AssistantMessage(
+  return assistants.map(({ streamId, message }) => new AssistantMessage(
     message,
     null,
     null,

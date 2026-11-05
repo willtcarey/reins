@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, jest, test } from "bun:test";
 import { ConversationsStore } from "../../../models/stores/conversations-store.js";
+import { SessionCache } from "../../../models/stores/session-cache.js";
 import type { AgentMessage } from "../../../models/agent-message.js";
 import { conversationPage } from "../../helpers/conversations.js";
 import { mockFetch, restoreFetch } from "../../helpers/mock-fetch.js";
@@ -273,5 +274,139 @@ describe("ConversationsStore streaming notifications", () => {
 
     store.applyEvent("session", { type: "entry_added", entry: entry("entry-3", 3, user("next", 3)) });
     expect(raw(store)).toEqual([user("hi", 1), assistant("hello", 2), user("next", 3)]);
+  });
+});
+
+const toolCall = (id: string, command: string) => ({ type: "toolCall" as const, id, name: "bash", arguments: { command } });
+const toolUse = (calls: ReturnType<typeof toolCall>[], timestamp: number): AgentMessage => ({ role: "assistant", content: calls, stopReason: "toolUse", timestamp });
+const toolResult = (toolCallId: string, text: string, timestamp: number): AgentMessage => ({ role: "toolResult", toolCallId, toolName: "bash", content: content(text), isError: false, timestamp });
+const partial = (toolCallId: string, text: string) => ({ type: "tool_execution_update" as const, toolCallId, toolName: "bash", args: {}, partialResult: { content: content(text), details: { fullOutputPath: "/tmp/out" } } });
+const tools = (store: ConversationsStore, sessionId = "session") => {
+  const view = store.get(sessionId);
+  return [...view.messages, ...view.streamingMessages].flatMap((message) => (
+    message.role === "assistant" ? message.blocks.flatMap((block) => block.type === "toolCall" ? [block.renderData] : []) : []
+  ));
+};
+/** The assistant is saved at message_end, before its tools run. */
+const savedToolUse = (store: ConversationsStore, message: AgentMessage) => {
+  store.applyEvent("session", { type: "agent_start" });
+  store.applyEvent("session", { type: "message_start", streamId: "s-1", message });
+  store.applyEvent("session", { type: "message_end", streamId: "s-1", entryId: "entry-2", message });
+  store.applyEvent("session", { type: "entry_added", entry: entry("entry-2", 2, message) });
+};
+
+describe("ConversationsStore live tool state", () => {
+  test("a tool that starts after its assistant was saved runs, streams its output and ends with its saved result", () => {
+    const store = new ConversationsStore();
+    savedToolUse(store, toolUse([toolCall("call-1", "make")], 10));
+
+    store.applyEvent("session", { type: "tool_execution_start", toolCallId: "call-1", toolName: "bash", args: { command: "make" } });
+    expect(tools(store)).toEqual([{ id: "call-1", name: "bash", args: { command: "make" }, status: "running" }]);
+
+    store.applyEvent("session", partial("call-1", "compiling a\n"));
+    store.applyEvent("session", partial("call-1", "compiling a\ncompiling b\n"));
+    expect(tools(store)).toEqual([{
+      id: "call-1", name: "bash", args: { command: "make" }, status: "running",
+      result: { content: content("compiling a\ncompiling b\n"), details: { fullOutputPath: "/tmp/out" } },
+    }]);
+
+    store.applyEvent("session", { type: "tool_execution_end", toolCallId: "call-1", toolName: "bash", result: { content: content("compiling a\ncompiling b\n") }, isError: false });
+    expect(tools(store)).toEqual([{ id: "call-1", name: "bash", args: { command: "make" }, status: "done", result: { content: content("compiling a\ncompiling b\n") }, isError: false }]);
+
+    store.applyEvent("session", { type: "entry_added", entry: entry("entry-3", 3, toolResult("call-1", "built", 11)) });
+    expect(tools(store)).toEqual([{ id: "call-1", name: "bash", args: { command: "make" }, status: "done", result: { content: content("built"), details: undefined }, isError: false }]);
+
+    // The live state went with the saved result: a late update cannot bring the call back to running.
+    store.applyEvent("session", partial("call-1", "late"));
+    expect(tools(store)[0]).toMatchObject({ status: "done", result: { content: content("built") } });
+  });
+
+  test("two tool calls of one message run, stream and end separately", () => {
+    const store = new ConversationsStore();
+    savedToolUse(store, toolUse([toolCall("call-a", "a"), toolCall("call-b", "b")], 10));
+    store.applyEvent("session", { type: "tool_execution_start", toolCallId: "call-a", toolName: "bash", args: { command: "a" } });
+    store.applyEvent("session", { type: "tool_execution_start", toolCallId: "call-b", toolName: "bash", args: { command: "b" } });
+    store.applyEvent("session", partial("call-a", "from a"));
+    store.applyEvent("session", partial("call-b", "from b"));
+    store.applyEvent("session", { type: "tool_execution_end", toolCallId: "call-b", toolName: "bash", result: { content: content("b done") }, isError: true });
+
+    expect(tools(store).map((tool) => [tool?.id, tool?.status, tool?.result?.content, tool?.isError])).toEqual([
+      ["call-a", "running", content("from a"), undefined],
+      ["call-b", "done", content("b done"), true],
+    ]);
+  });
+
+  test("after a reload mid-run, a saved tool call with no result runs, and its output resumes with the next update", () => {
+    const sessionCache = new SessionCache();
+    sessionCache.set("session", { activityState: "running" });
+    const store = new ConversationsStore({ sessionCache });
+    store.mergeMessages("session", conversationPage([
+      entry("entry-1", 1, user("build it", 1)),
+      entry("entry-2", 2, toolUse([toolCall("call-1", "make")], 2)),
+    ]));
+    expect(tools(store)).toEqual([{ id: "call-1", name: "bash", args: { command: "make" }, status: "running" }]);
+
+    store.applyEvent("session", partial("call-1", "compiling b\n"));
+    expect(tools(store)[0]).toMatchObject({ status: "running", result: { content: content("compiling b\n") } });
+  });
+
+  test("a saved tool call with no result is done once its session stops running", () => {
+    const sessionCache = new SessionCache();
+    sessionCache.set("session", { activityState: "running" });
+    const store = new ConversationsStore({ sessionCache });
+    let notifications = 0;
+    store.subscribe("session", () => { notifications += 1; });
+    store.mergeMessages("session", conversationPage([entry("entry-1", 1, toolUse([toolCall("call-1", "make")], 1))]));
+    store.applyEvent("session", { type: "tool_execution_start", toolCallId: "call-1", toolName: "bash", args: { command: "make" } });
+    store.applyEvent("session", { type: "agent_end", status: "aborted" });
+    expect(tools(store)).toEqual([{ id: "call-1", name: "bash", args: { command: "make" }, status: "running" }]);
+
+    const before = notifications;
+    sessionCache.set("session", { activityState: "finished" });
+    expect(notifications).toBe(before + 1);
+    expect(tools(store)).toEqual([{ id: "call-1", name: "bash", args: { command: "make" }, status: "done" }]);
+  });
+
+  test("only the latest assistant's unresolved tool calls run while its session runs", () => {
+    const sessionCache = new SessionCache();
+    sessionCache.set("session", { activityState: "running" });
+    const store = new ConversationsStore({ sessionCache });
+    store.mergeMessages("session", conversationPage([
+      entry("entry-1", 1, toolUse([toolCall("old", "lost")], 1)),
+      entry("entry-2", 2, assistant("moving on", 2)),
+      entry("entry-3", 3, toolUse([toolCall("new", "make")], 3)),
+    ]));
+
+    expect(tools(store).map((tool) => [tool?.id, tool?.status])).toEqual([["old", "done"], ["new", "running"]]);
+  });
+
+  test("huge partial output keeps only its tail", () => {
+    const store = new ConversationsStore();
+    savedToolUse(store, toolUse([toolCall("call-1", "yes")], 10));
+    const output = `${"x".repeat(200_000)}the end`;
+    store.applyEvent("session", partial("call-1", output));
+
+    const text = tools(store)[0]?.result?.content.flatMap((block) => block.type === "text" ? [block.text] : []).join("") ?? "";
+    expect(text.length).toBe(50 * 1024);
+    expect(text.endsWith("the end")).toBe(true);
+  });
+
+  test("tool updates notify once per frame and leave other transcript messages identical", () => {
+    const frames: (() => void)[] = [];
+    const store = new ConversationsStore({ scheduleFrame: (callback) => { frames.push(callback); return () => {}; } });
+    store.mergeMessages("session", conversationPage([entry("entry-1", 1, user("build it", 1))]));
+    savedToolUse(store, toolUse([toolCall("call-1", "make")], 10));
+    store.applyEvent("session", { type: "tool_execution_start", toolCallId: "call-1", toolName: "bash", args: { command: "make" } });
+    let notifications = 0;
+    store.subscribe("session", () => { notifications += 1; });
+    const before = store.get("session").messages;
+
+    store.applyEvent("session", partial("call-1", "a"));
+    store.applyEvent("session", partial("call-1", "ab"));
+    expect(notifications).toBe(0);
+    expect(frames).toHaveLength(1);
+    const after = store.get("session").messages;
+    expect(after[0]).toBe(before[0]!);
+    expect(after[1]).not.toBe(before[1]!);
   });
 });

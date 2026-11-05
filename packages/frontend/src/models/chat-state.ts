@@ -6,7 +6,7 @@
  * belongs exclusively to SessionCache and is not represented here.
  */
 
-import type { ChatImageBlock } from "./chat-content.js";
+import { isImageAttachmentBlock, isInlineImageBlock, type ChatImageBlock } from "./chat-content.js";
 import type { AgentMessage, AssistantMessage, ToolCall } from "./agent-message.js";
 
 /** Normalized rendering data shared by live and finalized tool calls. */
@@ -20,20 +20,28 @@ export interface ToolBlockData {
   sessionId?: string;
 }
 
-export interface ToolExecution extends ToolBlockData {}
-
 /**
- * One live assistant message: the last full snapshot with the deltas since
- * applied. Tool overlays stay with their owner and are keyed by stable call ID
- * so concurrent assistants cannot mix.
+ * What the runtime has said about one tool call while it runs: applied over
+ * the call with its ID, whether that call is still streaming or already saved
+ * (Pi saves an assistant before its tools run). `result` is the latest
+ * partial result until the call ends, then its final one.
  */
+export interface ToolExecution {
+  status: "running" | "done";
+  result?: ToolBlockData["result"];
+  isError?: boolean;
+}
+
+/** Partial text kept per tool call: as much as bash keeps of its output (its tail). */
+export const MAX_PARTIAL_TOOL_TEXT = 50 * 1024;
+
+/** One live assistant message: the last full snapshot with the deltas since applied. */
 export interface StreamingAssistant {
   /** Runtime-owned identity for one streaming assistant lifecycle. */
   streamId: string;
   /** Durable identity learned at message_end, before the canonical entry arrives. */
   durableId?: string;
   message: AssistantMessage;
-  toolExecutions: Record<string, ToolExecution>;
   /** Deltas may have been missed: the content is kept, but further deltas are
    * ignored until the next full snapshot (keyframe or message_end). */
   stale?: true;
@@ -80,6 +88,8 @@ export type ChatEvent =
 
 export interface ChatState {
   streamingAssistants: StreamingAssistant[];
+  /** Live tool state by tool call ID, until the call's result is saved or its run ends. */
+  toolExecutions: Readonly<Record<string, ToolExecution>>;
   isCompacting: boolean;
   errorMessage: string;
 }
@@ -87,6 +97,7 @@ export interface ChatState {
 export function initialChatState(): ChatState {
   return {
     streamingAssistants: [],
+    toolExecutions: {},
     isCompacting: false,
     errorMessage: "",
   };
@@ -108,21 +119,15 @@ function upsertAssistantSnapshot(
         streamId,
         ...(entryId ? { durableId: entryId } : {}),
         message,
-        toolExecutions: {},
       }],
     };
   }
   const streamingAssistants = [...state.streamingAssistants];
   const { stale: _stale, ...current } = streamingAssistants[index]!;
-  const toolCallIds = new Set(message.content.flatMap((block) => block.type === "toolCall" ? [block.id] : []));
-  const toolExecutions = Object.fromEntries(
-    Object.entries(current.toolExecutions).filter(([toolCallId]) => toolCallIds.has(toolCallId)),
-  );
   streamingAssistants[index] = {
     ...current,
     ...(entryId ? { durableId: entryId } : {}),
     message,
-    toolExecutions,
   };
   return { ...state, streamingAssistants };
 }
@@ -177,30 +182,34 @@ export function markStreamsStale<T extends Pick<ChatState, "streamingAssistants"
   return { ...state, streamingAssistants: state.streamingAssistants.map((assistant) => assistant.stale ? assistant : { ...assistant, stale: true as const }) };
 }
 
-/** Find the assistant that owns a tool call by the runtime's stable call ID. */
-function assistantIndexForToolCall(state: ChatState, toolCallId: string): number {
-  return state.streamingAssistants.findIndex(({ message }) => (
-    message.content.some((block) => block.type === "toolCall" && block.id === toolCallId)
-  ));
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** Update a tool overlay within its owning assistant snapshot. */
-function updateToolExecution(
-  state: ChatState,
-  toolCallId: string,
-  build: (existing: ToolExecution | undefined) => ToolExecution,
-): ChatState {
-  const index = assistantIndexForToolCall(state, toolCallId);
-  // Without an owning snapshot, placement is unknowable; a later complete
-  // assistant update can recover the tool call without inventing ordering.
-  if (index === -1) return state;
-  const streamingAssistants = [...state.streamingAssistants];
-  const assistant = streamingAssistants[index]!;
-  streamingAssistants[index] = {
-    ...assistant,
-    toolExecutions: { ...assistant.toolExecutions, [toolCallId]: build(assistant.toolExecutions[toolCallId]) },
-  };
-  return { ...state, streamingAssistants };
+/** A partial result as the chat shows it: text and image blocks, the text cut to its tail. */
+function partialToolResult(partial: Record<string, unknown> | undefined): ToolBlockData["result"] | undefined {
+  if (!partial || !Array.isArray(partial.content)) return undefined;
+  const content: NonNullable<ToolBlockData["result"]>["content"] = [];
+  let budget = MAX_PARTIAL_TOOL_TEXT;
+  // From the end, so a long output keeps what was written last.
+  for (let index = partial.content.length - 1; index >= 0; index--) {
+    const block: unknown = partial.content[index];
+    if (typeof block !== "object" || block === null || !("type" in block)) continue;
+    if (block.type === "text" && "text" in block && typeof block.text === "string") {
+      if (budget === 0) continue;
+      const text = block.text.length > budget ? block.text.slice(block.text.length - budget) : block.text;
+      budget -= text.length;
+      content.unshift({ type: "text", text });
+    } else if (isInlineImageBlock(block) || isImageAttachmentBlock(block)) {
+      content.unshift(block);
+    }
+  }
+  const { details } = partial;
+  return { content, ...(isRecord(details) ? { details } : {}) };
+}
+
+function setToolExecution(state: ChatState, toolCallId: string, execution: ToolExecution): ChatState {
+  return { ...state, toolExecutions: { ...state.toolExecutions, [toolCallId]: execution } };
 }
 
 /**
@@ -235,34 +244,23 @@ export function applyChatEvent(state: ChatState, event: ChatEvent): ChatState {
         ? upsertAssistantSnapshot(state, event.streamId, event.message, undefined)
         : applyAssistantDelta(state, event.streamId, event.assistantMessageEvent);
 
+    // Keyed by call ID alone: the call may be streaming, saved, or not shown
+    // yet; whichever has this ID shows it.
     case "tool_execution_start":
-      return updateToolExecution(state, event.toolCallId, (existing) => ({
-        ...existing,
-        id: event.toolCallId,
-        name: event.toolName,
-        args: event.args,
-        status: existing?.status ?? "running",
-      }));
+      return state.toolExecutions[event.toolCallId] ? state : setToolExecution(state, event.toolCallId, { status: "running" });
 
-    case "tool_execution_update":
-      return updateToolExecution(state, event.toolCallId, (existing) => ({
-        id: event.toolCallId,
-        name: event.toolName || existing?.name || "tool",
-        args: { ...existing?.args, ...event.args },
-        status: existing?.status ?? "running",
-        ...(existing?.result ? { result: existing.result } : {}),
-        ...(existing?.isError !== undefined ? { isError: existing.isError } : {}),
-      }));
+    case "tool_execution_update": {
+      if (state.toolExecutions[event.toolCallId]?.status === "done") return state;
+      const result = partialToolResult(event.partialResult);
+      return setToolExecution(state, event.toolCallId, { status: "running", ...(result ? { result } : {}) });
+    }
 
     case "tool_execution_end":
-      return updateToolExecution(state, event.toolCallId, (existing) => ({
-        id: event.toolCallId,
-        name: event.toolName || existing?.name || "tool",
-        args: existing?.args ?? {},
+      return setToolExecution(state, event.toolCallId, {
         status: "done",
         ...(event.result ? { result: event.result } : {}),
         ...(event.isError !== undefined ? { isError: event.isError } : {}),
-      }));
+      });
 
     case "agent_end": {
       // agent_end clears all streaming assistants for the completed run and
@@ -283,6 +281,7 @@ export function applyChatEvent(state: ChatState, event: ChatEvent): ChatState {
       return {
         ...state,
         streamingAssistants: [],
+        toolExecutions: {},
         errorMessage,
       };
     }

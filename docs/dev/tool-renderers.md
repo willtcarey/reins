@@ -41,6 +41,8 @@ interface ToolRenderer {
 }
 ```
 
+While a tool runs, `result` is its latest partial result (`tool_execution_update`'s `partialResult`, its text cut to its last 50 KiB; frontend-architecture.md, `ConversationsStore`), and may be absent. bash and execute show that output below the call while it runs (bash: only once the command has run for 400 ms, so a quick command flashes nothing open; in a box of fixed height, so it does not grow line by line; its tail in view until the user scrolls up in it; its rows animate open, and closed when the command ends), and the generic renderer shows its text under the running line (its last 5000 characters); the others, such as delegate, keep their own running display and ignore it. A saved call with no result in a running session is `running` with no result.
+
 The renderer receives the full `ToolBlockData` (including `status`) plus a narrow, extensible workspace context. `source` (the viewed session's checkout, a `Source` from `@reins/sdk`: its node and path) lets file-oriented renderers normalize and validate paths against `source.path` without ambient state, and names the source when they open the file browser (`open-in-browser`). Renderers do not depend on `WorkspaceStore`. The renderer decides how to present running vs done states internally — typically by computing a `showSpinner` flag and conditionally extracting result data. This ensures the same Lit component instance persists across the running→done transition, preserving local state like expand/collapse.
 
 Renderers own the **entire visual surface** for a tool block — layout, chrome, expand/collapse behavior (including expansion state), syntax highlighting. The chat panel is not involved in tool expansion state. This avoids locking all tools into one interaction pattern.
@@ -153,12 +155,12 @@ Each tool chooses its own expand/collapse UX:
 | Tool | Collapsed | Expanded | Toggle target |
 |------|-----------|----------|---------------|
 | **read** | File path + first 4 lines preview; image results also show a compact preview | Full content (scrollable) plus larger image preview | Card-click to expand, header-click to collapse |
-| **bash** | Command with `$` prompt | Command + output below divider | Whole block click |
+| **bash** | Command with `$` prompt; while running (after 400 ms), the output so far in a fixed-height box, following its tail, animating closed at the end | Command + output below divider | Whole block click (once done) |
 | **edit** | File path + `+N −M` stats badge | Inline diff with context lines | Header click (small diffs auto-expand) |
 | **write** | File path + first 4 lines preview | Full content, all lines as additions | Card-click to expand, header-click to collapse |
 | **create_task** | Task title + branch name | Description + result | Whole block click |
 | **delegate** | Truncated prompt (2 lines) | Full prompt + result | Whole block click |
-| **execute** | Script code; the images the script gave (`image()`) below it | Code + output below divider | Whole block click (an image click opens it full screen) |
+| **execute** | Script code; the images the script gave (`image()`) below it; while running, any output so far | Code + output below divider | Whole block click (an image click opens it full screen) |
 
 ## Lazy Syntax Highlighting
 

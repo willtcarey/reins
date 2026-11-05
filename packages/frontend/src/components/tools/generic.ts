@@ -76,6 +76,9 @@ export class GenericToolBlock extends LitElement {
             <span class="font-mono font-semibold flex-shrink-0">${this.name}</span>
             ${this.summary ? html`<span class="font-mono text-zinc-500 truncate">${this.summary}</span>` : nothing}
           </div>
+          ${this.resultText ? html`
+            <pre class="mt-1 bg-zinc-900 rounded p-2 overflow-x-auto max-h-48 overflow-y-auto text-xs text-zinc-300">${this.resultText}</pre>
+          ` : nothing}
         </div>
       `;
     }
@@ -129,14 +132,15 @@ declare global {
 // Extraction helpers
 // ---------------------------------------------------------------------------
 
+const MAX_RESULT_TEXT = 5000;
+
+/** A result's text, cut to its start; a running tool's partial text to its end, where its newest output is. */
 function extractResultText(block: ToolBlockData): string {
-  return (
-    block.result?.content
-      ?.filter((c): c is { type: "text"; text: string } => c.type === "text")
-      .map((c) => c.text)
-      .join("\n")
-      .slice(0, 5000) ?? ""
-  );
+  const text = block.result?.content
+    ?.filter((c): c is { type: "text"; text: string } => c.type === "text")
+    .map((c) => c.text)
+    .join("\n") ?? "";
+  return block.status === "running" ? text.slice(-MAX_RESULT_TEXT) : text.slice(0, MAX_RESULT_TEXT);
 }
 
 // ---------------------------------------------------------------------------
@@ -148,7 +152,7 @@ export const genericRenderer: ToolRenderer = {
     const isRunning = block.status === "running";
     const summary = getToolSummary(block.name, block.args);
     const images = isRunning ? [] : toolResultImages(block);
-    const resultText = isRunning ? "" : extractResultText(block);
+    const resultText = extractResultText(block);
     return html`<generic-tool-block
       .name=${block.name}
       .summary=${summary}

@@ -68,10 +68,10 @@ describe("assistant streams", () => {
       step("s", { type: "text_delta", contentIndex: 0, delta: "tial" }),
       keyframe("s", assistant(100, [{ type: "text", text: "partial and more" }]), { type: "text_delta", contentIndex: 0, delta: "more" }),
     ]);
-    expect(state.streamingAssistants).toEqual([{ streamId: "s", message: assistant(100, [{ type: "text", text: "partial and more" }]), toolExecutions: {} }]);
+    expect(state.streamingAssistants).toEqual([{ streamId: "s", message: assistant(100, [{ type: "text", text: "partial and more" }]) }]);
 
     const ended = applyChatEvent(state, { type: "message_end", streamId: "s", entryId: "e-1", message: assistant(100, [{ type: "text", text: "final" }]) });
-    expect(ended.streamingAssistants).toEqual([{ streamId: "s", durableId: "e-1", message: assistant(100, [{ type: "text", text: "final" }]), toolExecutions: {} }]);
+    expect(ended.streamingAssistants).toEqual([{ streamId: "s", durableId: "e-1", message: assistant(100, [{ type: "text", text: "final" }]) }]);
   });
 
   test("a delta for an unknown stream is ignored until a keyframe shows the message", () => {
@@ -101,10 +101,10 @@ describe("assistant streams", () => {
       keyframe("s", assistant(100, [{ type: "text", text: "before gap and after" }]), { type: "text_delta", contentIndex: 0, delta: "after" }),
       step("s", { type: "text_delta", contentIndex: 0, delta: "!" }),
     ], stale);
-    expect(recovered.streamingAssistants).toEqual([{ streamId: "s", message: assistant(100, [{ type: "text", text: "before gap and after!" }]), toolExecutions: {} }]);
+    expect(recovered.streamingAssistants).toEqual([{ streamId: "s", message: assistant(100, [{ type: "text", text: "before gap and after!" }]) }]);
 
     const ended = applyChatEvent(stale, { type: "message_end", streamId: "s", message: assistant(100, [{ type: "text", text: "done" }]) });
-    expect(ended.streamingAssistants[0]).toEqual({ streamId: "s", message: assistant(100, [{ type: "text", text: "done" }]), toolExecutions: {} });
+    expect(ended.streamingAssistants[0]).toEqual({ streamId: "s", message: assistant(100, [{ type: "text", text: "done" }]) });
   });
 
   test("a delta that does not fit the overlay's content marks it stale instead of guessing", () => {
@@ -158,62 +158,11 @@ describe("assistant streams", () => {
 
     expect(state.streamingAssistants).toEqual([]);
   });
-
-  test("tool execution state overlays the matching snapshot tool call", () => {
-    const message = assistant(100, [
-      { type: "toolCall", id: "tc-1", name: "bash", arguments: {} },
-    ]);
-    const state = applyEvents([
-      keyframe("stream-1", message, { type: "toolcall_start", contentIndex: 0 }),
-      { type: "tool_execution_start", toolCallId: "tc-1", toolName: "bash", args: { command: "ls" } },
-      { type: "tool_execution_update", toolCallId: "tc-1", toolName: "bash", args: { timeout: 10 }, partialResult: {} },
-      {
-        type: "tool_execution_end",
-        toolCallId: "tc-1",
-        toolName: "bash",
-        result: { content: [{ type: "text", text: "done" }] },
-        isError: false,
-      },
-    ]);
-
-    expect(state.streamingAssistants[0]?.toolExecutions["tc-1"]).toMatchObject({
-      id: "tc-1",
-      args: { command: "ls", timeout: 10 },
-      status: "done",
-      result: { content: [{ type: "text", text: "done" }] },
-      isError: false,
-    });
-  });
-
-  test("snapshot replacement drops overlays for tool calls no longer present", () => {
-    const withTool = assistant(100, [
-      { type: "toolCall", id: "tc-1", name: "bash", arguments: {} },
-    ]);
-    const state = applyEvents([
-      keyframe("stream-1", withTool, { type: "toolcall_start", contentIndex: 0 }),
-      { type: "tool_execution_start", toolCallId: "tc-1", toolName: "bash", args: { command: "ls" } },
-      keyframe("stream-1", assistant(100, [{ type: "text", text: "replacement" }])),
-    ]);
-
-    expect(state.streamingAssistants[0]?.toolExecutions).toEqual({});
-  });
-
-  test("unknown tool events do not create or modify streaming assistants", () => {
-    const initial = applyEvents([keyframe("stream-1", assistant(100, [{ type: "text", text: "safe" }]))]);
-    const next = applyChatEvent(initial, {
-      type: "tool_execution_end",
-      toolCallId: "unknown",
-      toolName: "bash",
-      isError: true,
-    });
-
-    expect(next).toBe(initial);
-  });
 });
 
 describe("other chat events", () => {
   test("ChatState contains presentation state only", () => {
-    expect(initialChatState()).toEqual({ streamingAssistants: [], isCompacting: false, errorMessage: "" });
+    expect(initialChatState()).toEqual({ streamingAssistants: [], toolExecutions: {}, isCompacting: false, errorMessage: "" });
   });
 
   test("agent_start is a presentation no-op", () => {
@@ -226,9 +175,12 @@ describe("other chat events", () => {
     expect(applyChatEvent(before, { type: "agent_start" })).toBe(before);
   });
 
-  test("agent_end clears streaming overlays without promoting a second transcript", () => {
+  test("agent_end clears streaming overlays and live tool state without promoting a second transcript", () => {
     const snapshot = assistant(100, [{ type: "text", text: "answer" }]);
-    let state = applyEvents([{ type: "message_end", streamId: "stream-1", message: snapshot }]);
+    let state = applyEvents([
+      { type: "message_end", streamId: "stream-1", message: snapshot },
+      { type: "tool_execution_start", toolCallId: "tc-1", toolName: "bash", args: {} },
+    ]);
     state = applyChatEvent(state, { type: "agent_end", messages: [snapshot] });
 
     expect(state).toEqual(initialChatState());

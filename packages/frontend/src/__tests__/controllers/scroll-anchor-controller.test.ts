@@ -28,12 +28,15 @@ class Viewport {
   clientWidth = 800;
   clientHeight = 600;
   children: Box[] = [];
+  get scrollHeight() {
+    return Math.max(this.clientHeight, ...this.children.map((child) => child.top + child.height));
+  }
   getBoundingClientRect() {
     return { top: 0, bottom: this.clientHeight, width: this.clientWidth, height: this.clientHeight };
   }
 }
 
-function anchored(layout: (view: Viewport) => Box[], scrollTop: number, options: { locked?: () => boolean } = {}) {
+function anchored(layout: (view: Viewport) => Box[], scrollTop: number, options: { locked?: () => boolean; followEnd?: () => boolean } = {}) {
   const resized: Array<() => void> = [];
   Object.defineProperty(globalThis, "ResizeObserver", {
     configurable: true,
@@ -52,7 +55,7 @@ function anchored(layout: (view: Viewport) => Box[], scrollTop: number, options:
     requestUpdate: mock(() => undefined),
     updateComplete: Promise.resolve(true),
   };
-  const controller = new ScrollAnchorController(host, { container: () => view, locked: options.locked });
+  const controller = new ScrollAnchorController(host, { container: () => view, locked: options.locked, followEnd: options.followEnd });
   const resize = () => { for (const callback of resized) callback(); };
   controller.hostUpdated();
   // An observer reports its targets' sizes when it starts observing them.
@@ -134,6 +137,25 @@ describe("ScrollAnchorController", () => {
     read.top = 900;
     resize();
     expect(view.scrollTop).toBe(900);
+  });
+
+  test("follows the end as the content grows or shrinks there, while asked to", () => {
+    let following = true;
+    let last!: Box;
+    const { view, resize } = anchored((on) => [new Box(on, 0, 1000), last = new Box(on, 1000, 200)], 600, { followEnd: () => following });
+
+    last.height = 260;
+    resize();
+    expect(view.scrollTop).toBe(660);
+
+    last.height = 220;
+    resize();
+    expect(view.scrollTop).toBe(620);
+
+    following = false;
+    last.height = 400;
+    resize();
+    expect(view.scrollTop).toBe(620);
   });
 
   test("keeps its anchor while hidden and while locked", () => {

@@ -2,7 +2,8 @@
  * ExecuteToolBlock — Lit component for rendering Execute tool calls.
  *
  * Terminal-style block: JS code is always visible with a `>` prompt,
- * syntax-highlighted via Shiki. Clicking expands to reveal the output below. Images the script gave
+ * syntax-highlighted via Shiki. Output so far shows below while it runs; once
+ * it is done, clicking expands to reveal the output. Images the script gave
  * (`image()`) are shown below the code without expanding, as read's are; clicking one opens it.
  *
  * This is a pure presentational component — all data is passed in as
@@ -135,8 +136,8 @@ export class ExecuteToolBlock extends LitElement {
           </div>
         ` : nothing}
 
-        <!-- Output area (only when expanded) -->
-        ${this.expanded && hasOutput ? html`
+        <!-- Output area (while running, or when expanded) -->
+        ${(showSpinner || this.expanded) && hasOutput ? html`
           <div class="border-t border-zinc-800">
             <pre class="px-3 py-2 text-xs font-mono ${isError ? "text-red-400" : "text-zinc-400"} whitespace-pre-wrap break-words m-0 max-h-64 overflow-y-auto">${output}</pre>
           </div>
@@ -161,7 +162,7 @@ export const executeRenderer: ToolRenderer = {
     const isRunning = block.status === "running";
     const code = getExecuteCode(block);
     const { isError } = getExecuteExitInfo(block);
-    const output = isRunning ? "" : getExecuteOutput(block);
+    const output = getExecuteOutput(block);
     const images = isRunning ? [] : toolResultImages(block);
     return html`<execute-tool-block
       .code=${code}
