@@ -6,7 +6,7 @@ import {
   formatApiInterfaces,
   formatTypeDeclaration,
   type SchemaNameMap,
-} from "../../scripting/api-schema-formatter.js";
+} from "../../sdk-host/schema-formatter.js";
 
 describe("formatSchema", () => {
   test("formats a simple object", () => {
@@ -151,7 +151,7 @@ describe("formatApiInterfaces", () => {
         parameters: Type.Object({ status: Type.Optional(Type.Union([Type.Literal("open"), Type.Literal("closed")])) }),
         returns: Type.Array(TaskDocSchema),
         tags: ["tasks"],
-        call: () => [],
+        call: async () => [],
       },
     ], { names });
 
@@ -159,11 +159,11 @@ describe("formatApiInterfaces", () => {
     expect(result).toContain("tasks: TasksApi;");
     expect(result).toContain("interface TasksApi {");
     expect(result).toContain("/** List tasks. */");
-    expect(result).toContain("list(status?: \"open\" | \"closed\"): Task[];");
+    expect(result).toContain("list(status?: \"open\" | \"closed\"): Promise<Task[]>;");
     expect(result).not.toContain("tasks.list(");
   });
 
-  test("renders positional method params and async returns", () => {
+  test("renders positional method params, each returning a promise", () => {
     const result = formatApiInterfaces([
       {
         name: "tasks.update",
@@ -174,20 +174,19 @@ describe("formatApiInterfaces", () => {
         }),
         returns: TaskDocSchema,
         tags: ["tasks"],
-        call: () => ({ id: 1, title: "Updated" }),
+        call: async () => ({ id: 1, title: "Updated" }),
       },
       {
         name: "tasks.reopen",
         description: "Reopen a task.",
         parameters: Type.Object({ taskId: Type.Number() }),
         returns: TaskDocSchema,
-        async: true,
         tags: ["tasks"],
         call: async () => ({ id: 1, title: "Updated" }),
       },
     ], { names });
 
-    expect(result).toContain("update(taskId: number, updates: { title?: string }): Task;");
+    expect(result).toContain("update(taskId: number, updates: { title?: string }): Promise<Task>;");
     expect(result).toContain("reopen(taskId: number): Promise<Task>;");
   });
 
@@ -205,7 +204,7 @@ describe("formatApiInterfaces", () => {
         }),
         returns: TaskDocSchema,
         tags: ["tasks"],
-        call: () => ({ id: 1, title: "Updated" }),
+        call: async () => ({ id: 1, title: "Updated" }),
       },
     ], { names });
 
@@ -229,7 +228,7 @@ describe("formatApiInterfaces", () => {
         parameters: Type.Object({ task: DescribedSchema }),
         returns: Type.Void(),
         tags: ["tasks"],
-        call: () => undefined,
+        call: async () => undefined,
       },
     ], { names: new Map([[DescribedSchema, "Task"]]) });
 

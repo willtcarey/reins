@@ -6,16 +6,16 @@
  * `/api/extensions/…` and `/extensions/…` (`handle`), and Settings' Extensions section (`list`).
  */
 
-import { KindGuard, type TObject, type TProperties, type TSchema } from "@sinclair/typebox";
+import { KindGuard, type TSchema } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 import type {
-  Database, Disposer, HttpApi, HttpCall, ImagesProvider, Logger, Migration, PageHandler, PromptContext, PromptContribution, ScriptFunction, ScriptType, SecretStorage, ServerExtension, ServerSdk,
+  Database, Disposer, HttpApi, HttpCall, ImagesProvider, Logger, Migration, PageHandler, PromptContext, PromptContribution, ScriptContext, ScriptNamespace, SecretStorage, ServerExtension, ServerSdk,
   Service, SessionSettlement, ToolFilters, ToolResult, ToolProvider, ToolSearchGroup,
 } from "@reins/sdk/server";
 import { statSync } from "fs";
 import type { ExtensionStorage } from "../database.js";
-import { namedArgs, type ApiFunctionDef } from "../scripting/define-function.js";
-import type { NamedType } from "../scripting/api-registry.js";
+import { scriptFunctions, scriptTypes, type ApiContext, type ScriptFunction } from "../sdk-host/projection.js";
+import type { NamedType } from "../sdk-host/scripts.js";
 import type { AppState, SessionSettledNotice } from "../state.js";
 import { createBroadcast } from "../models/broadcast.js";
 import { requestOrigin } from "../nodes/node-link.js";
@@ -66,7 +66,7 @@ interface Method {
   // Its input type is the method's schema's, which the host checks each input against before the call.
   handler: (call: HttpCall<any>) => unknown;
 }
-interface Script { extension: string; namespace: string; functions: ApiFunctionDef[]; types: NamedType[] }
+interface Script { extension: string; namespace: string; functions: ScriptFunction[]; types: NamedType[] }
 interface RegisteredService { extension: string; runner: ServiceRunner }
 interface SettlementListener { extension: string; listener: (settlement: SessionSettlement) => void | Promise<void> }
 
@@ -118,21 +118,6 @@ export interface ExtensionView {
     /** How many secrets it keeps: not their keys, which can name the user's things (a server's ID), nor values. */
     secrets: number;
   } | null;
-}
-
-// The core's registry and renderer are typed with TypeBox but read only JSON Schema fields, so any JSON
-// Schema object works there. The check is at runtime because an extension without TypeScript can give anything.
-function isSchema(schema: unknown): schema is TSchema {
-  return typeof schema === "object" && schema !== null && !Array.isArray(schema);
-}
-
-function isObjectSchema(schema: unknown): schema is TObject<TProperties> {
-  return isSchema(schema) && "type" in schema && schema.type === "object";
-}
-
-function schemaOf(name: string, schema: unknown): TSchema {
-  if (!isSchema(schema)) throw new Error(`${name}: not a JSON Schema object`);
-  return schema;
 }
 
 export class ExtensionHost {
@@ -291,7 +276,7 @@ export class ExtensionHost {
   }
 
   /** The extensions' `api` functions, as the core's registry holds functions. */
-  scriptFunctions(): ApiFunctionDef[] {
+  scriptFunctions(): ScriptFunction[] {
     return this.scripts.flatMap(script => script.functions);
   }
 
@@ -458,8 +443,7 @@ export class ExtensionHost {
         register: (contribution: PromptContribution) => add(this.contributions, { extension: name, contribution }),
       }),
       scripting: Object.freeze({
-        register: ({ functions, types = [] }: { functions: readonly ScriptFunction[]; types?: readonly ScriptType[] }) =>
-          add(this.scripts, this.script(name, functions, types)),
+        register: (namespace: ScriptNamespace) => add(this.scripts, this.script(name, namespace)),
       }),
       http: Object.freeze({
         handle: handleApi,
@@ -472,29 +456,21 @@ export class ExtensionHost {
     });
   }
 
-  /** An extension's functions in the core's form; throws when their namespace is taken. */
-  private script(extension: string, functions: readonly ScriptFunction[], types: readonly ScriptType[]): Script {
-    const namespaces = new Set(functions.map(fn => fn.name.split(".")[0]!));
-    if (namespaces.size !== 1) throw new Error("A registration's functions must share one api namespace");
-    const namespace = [...namespaces][0]!;
-    if (this.reservedNamespaces.has(namespace) || this.scripts.some(script => script.namespace === namespace)) {
-      throw new Error(`The api namespace ${namespace} is taken`);
+  /** An extension's namespace as `api`'s functions (`scriptFunctions`), each called for the script's session;
+   * throws when its namespace is taken, or the projection cannot use it. */
+  private script(extension: string, namespace: ScriptNamespace): Script {
+    if (typeof namespace?.namespace !== "string") throw new Error("A script namespace needs its name (namespace)");
+    if (this.reservedNamespaces.has(namespace.namespace) || this.scripts.some(script => script.namespace === namespace.namespace)) {
+      throw new Error(`The api namespace ${namespace.namespace} is taken`);
     }
-    return {
-      extension,
-      namespace,
-      functions: functions.map((fn): ApiFunctionDef => {
-        if (!/^[a-z][A-Za-z0-9]*\.[a-z][A-Za-z0-9]*$/.test(fn.name)) throw new Error(`Not an api function name: ${fn.name}`);
-        const { parameters } = fn;
-        if (!isObjectSchema(parameters)) throw new Error(`${fn.name}: its parameters must be an object schema`);
-        return {
-          name: fn.name, description: fn.description, parameters, returns: schemaOf(fn.name, fn.returns), async: fn.async, tags: fn.tags,
-          call: (args, ctx) => fn.execute(namedArgs(parameters, args), { sessionId: ctx.session.id, projectId: ctx.session.projectId, taskId: ctx.session.taskId, signal: ctx.signal }),
-        };
-      }),
-      types: types.map(type => ({ name: type.name, schema: schemaOf(type.name, type.schema) })),
-    };
+    if (typeof namespace.methods !== "object" || namespace.methods === null) throw new Error(`${namespace.namespace}: no methods`);
+    return { extension, namespace: namespace.namespace, functions: scriptFunctions(namespace, scriptContextOf), types: scriptTypes(namespace) };
   }
+}
+
+/** What an extension's script method is told of the script's call: its session, and its signal. */
+function scriptContextOf(ctx: ApiContext): ScriptContext {
+  return { sessionId: ctx.session.id, projectId: ctx.session.projectId, taskId: ctx.session.taskId, ...(ctx.signal ? { signal: ctx.signal } : {}) };
 }
 
 /** What the extension keeps: its directory, its database's size and migrations, and its secrets' keys. */

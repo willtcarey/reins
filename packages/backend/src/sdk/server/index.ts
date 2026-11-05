@@ -846,7 +846,7 @@ export interface ScriptMethod<C, P extends readonly ScriptParam[], R extends Jso
   toScript?(result: T, ...args: ScriptArgs<P>): SchemaType<R>;
 }
 
-/** What a scripting function runs for: the agent's session, and its script's signal. */
+/** What an extension's script method runs for: the agent's session (its script's caller), and its script's signal. */
 export interface ScriptContext {
   sessionId: string;
   /** Null when the agent's session has no project. */
@@ -855,32 +855,35 @@ export interface ScriptContext {
   signal?: AbortSignal;
 }
 
-/**
- * A function of `api` in `execute`, which `search` documents. A script calls it with positional
- * arguments, in the order of the parameters' properties: `api.mcp.get(server)` for
- * `{ server: … }`. Its result reaches the script as it is; a throw reaches it as an error.
- */
-export interface ScriptFunction {
-  /** `<namespace>.<method>`, e.g. `mcp.list`. */
-  name: string;
-  description: string;
-  /** An object schema: its properties are the arguments, in order. */
-  parameters: JsonSchema;
-  returns: JsonSchema;
-  /** It returns a promise. */
-  async?: boolean;
-  /** Lowercase words `search` also matches. */
-  tags: string[];
-  execute(params: Record<string, unknown>, context: ScriptContext): unknown;
+/** A `ScriptMethod` of any arguments, as a namespace holds them. */
+export interface AnyScriptMethod<C> {
+  readonly description: string;
+  readonly params: readonly ScriptParam[];
+  readonly returns: JsonSchema;
+  readonly tags: readonly string[];
+  run(context: C, ...args: any[]): Promise<unknown>;
+  toScript?(result: any, ...args: any[]): unknown;
 }
 
-/** A schema that `search` shows by its name where a function's parameters or result use it (by identity). */
-export interface ScriptType { name: string; schema: JsonSchema }
+/**
+ * A namespace of `api` in `execute`, which `search` documents: the core's (`api.sessions`, the SDK's own methods)
+ * and an extension's (`api.mcp`). A script calls `api.<namespace>.<method>(…)` with positional arguments, in the
+ * order of the method's `params`, checked against their schemas before `run`. Its result reaches the script as it
+ * is; a throw reaches it as an error.
+ */
+export interface ScriptNamespace<C = ScriptContext> {
+  /** Lowercase letters and digits, starting with a letter: `mcp` for `api.mcp`. */
+  readonly namespace: string;
+  /** By name (`[a-z][A-Za-z0-9]*`): `list` for `api.mcp.list(…)`. */
+  readonly methods: Readonly<Record<string, AnyScriptMethod<C>>>;
+  /** Schemas that `search` shows by their name where a method's params or result use them (by identity). */
+  readonly types?: Readonly<Record<string, JsonSchema>>;
+}
 
 export interface Scripting {
-  /** Adds functions to `api`. Their namespaces must not be the core's or another registration's: that
-   * throws. */
-  register(functions: { functions: readonly ScriptFunction[]; types?: readonly ScriptType[] }): Disposer;
+  /** Adds a namespace to `api`. It must not be the core's or another registration's, and its params' schemas must be
+   * TypeBox schemas (the host checks a script's arguments with them): else it throws. */
+  register(namespace: ScriptNamespace): Disposer;
 }
 
 // ---------------------------------------------------------------------------

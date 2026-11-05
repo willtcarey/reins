@@ -1,6 +1,6 @@
 import { describe, test, expect } from "bun:test";
 import * as ts from "typescript";
-import { searchFunctions, API_FUNCTIONS, referencedTypes } from "../../scripting/api-registry.js";
+import { searchFunctions, API_FUNCTIONS, referencedTypes } from "../../sdk-host/scripts.js";
 import { executeTool, reinsTool } from "../helpers/execute-tool.js";
 
 

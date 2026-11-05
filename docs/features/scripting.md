@@ -12,7 +12,9 @@ search({ query: "tasks.create" })   → Api interface containing the create meth
 search({ query: "" })               → full API surface
 ```
 
-Results include related data shapes (`Task`, `Session`, `Project`, etc.) as TypeScript interfaces. The returned interfaces are documentation only: `execute` scripts should call methods on the existing `api` object with positional arguments, e.g. `api.tasks.update(taskId, updates)`.
+Results include related data shapes (`Task`, `Session`, `Project`, etc.) as TypeScript interfaces. The returned interfaces are documentation only: `execute` scripts should call methods on the existing `api` object with positional arguments, e.g. `api.tasks.update(taskId, updates)`. Every method returns a promise: `await` it.
+
+`api` is the server SDK that extensions use ([server-sdk.md](../dev/server-sdk.md) *One layer*), bound to the calling session: the same methods, fields and errors, with the session's defaults. Fields are camelCase (`projectId`, `taskId`, `createdAt`), as in the SDK.
 
 ## `execute` — Run scripts against Reins
 
@@ -21,9 +23,9 @@ The `execute` tool runs async JavaScript against a curated `api` object for Rein
 ```javascript
 execute({
   code: `
-    const tasks = api.tasks.list();
+    const tasks = await api.tasks.list();
     const open = tasks.filter(t => t.status === 'open');
-    return open.map(t => ({ title: t.title, sessions: t.session_count }));
+    return open.map(t => ({ title: t.title, branch: t.branchName }));
   `
 })
 ```
@@ -33,13 +35,13 @@ execute({
 | Namespace | Functions |
 |---|---|
 | `api.tasks` | `list(status?, projectId?)`, `get(taskId)`, `current()`, `create(title, description, branchName?, projectId?)`, `update(taskId, updates)`, `close(taskId)`, `reopen(taskId)` |
-| `api.sessions` | `list(options?)`, `get(sessionId)`, `current()`, `entries(sessionId, options?)`, `setModel(sessionId, provider, modelId, thinkingLevel?)`, `compact(sessionId, instructions?)`, `setName(sessionId, name)`, `setPinned(sessionId, pinned)`, `setArchived(sessionId, archived)`, `start(prompt, options)`, `send(sessionId, message)`, `wait(sessionId, timeoutMs?)` |
-| `api.projects` | `list()`, `get(projectId)`, `current()` |
+| `api.sessions` | `list(options?)`, `get(sessionId)`, `current()`, `entries(sessionId, options?)`, `setModel(sessionId, provider, modelId, thinkingLevel?)`, `compact(sessionId, { instructions? }?)`, `contextUsage(sessionId)`, `setName(sessionId, name)`, `setPinned(sessionId, pinned)`, `setArchived(sessionId, archived)`, `start(prompt, options)`, `send(sessionId, message)`, `wait(sessionId, timeoutMs?)` |
+| `api.projects` | `list()`, `get(projectId)`, `current()`, `create(name, path, baseBranch?, nodeId?)` |
 | `api.models` | `list()`, `listProviders()` |
 | `api.reviews` | `current()`, `addComment(path, line, body, options?)` |
 | `api.ui` | `openFile(path, options?)` (options `{ node?, startLine?, endLine? }`) |
 | `api.nodes` | `list()`, `get(node?)`, `reload(node?, force?)`, `readFile(node, path, options?)`, `writeFile(node, path, content)`, `copy(fromNode, fromPath, toNode, toPath)`, `run(node, command, options?)` |
-| `api.tools` | `search(query, filters?)`, `call(id, args?, timeoutMs?)` |
+| `api.tools` | `search(query, { filters? }?)`, `call(id, args?, { timeoutMs? }?)` |
 | `api.images` | `list()`, `generate(prompt, { model?, images?, size?, count?, parameters? }?)` ([images.md](images.md)) |
 | `api.mcp` | `list()`, `get(server)`, `add(server)`, `update(server, changes)`, `remove(server)`, `test(server)`, `signIn(server, callbackOrigin?)`, `finishSignIn(callbackUrl)`, `signOut(server)` |
 | `api.automations` | `create({ trigger, message?, target?, once?, name?, source?, model?, compactAboveTokens?, background?, project? })` (target `"this"`, `"own"` or `"new"`) (a `{ schedule, timezone? }` or `{ command, every, node?, cwd?, timeoutMs? }` trigger), `cancel(id)`, `list({ all?, includeCancelled? }?)`, `runs(id, limit?)`, `replaceSession(id)` ([automations.md](automations.md)) |
@@ -62,14 +64,16 @@ A script that returns nothing and adds blocks gives only its blocks; one that gi
 
 ### Behavior
 
+- **Async** — every function returns a promise, reads included (`await api.tasks.list()`).
+- **Arguments are checked** — before a call, each argument is checked against its documented type, and an object takes only the fields `search` documents. A wrong type, a missing argument, an extra one or an unknown field throws and names it (`api.sessions.list: options has no field "project_id" (its fields: projectId, …)`), so a misspelt or renamed option is never silently ignored.
 - **Opening a file for the user** — `ui.openFile(path, options?)` opens the file browser of whoever views the calling session at the file, highlighting `startLine`–`endLine` when given. `path` is absolute or relative to the caller's checkout; `node` (an ID, a name or `"current"`, as in `api.nodes`; the caller's by default) is the node the file is on. A file in the caller's checkout opens in it; any other file opens in its own directory on that node, and the browser names that node when it is not the viewed session's. It throws `File not found on <node>: <path>` when the file is not there, and opens nothing.
 - **Read-heavy** — most operations are reads. Writes go through the app's normal task/session/review flows.
 - **Code review comments** — `reviews.addComment()` anchors a comment to the current branch diff and atomically creates the pending project/task review when needed. It defaults to one new-side line and author `Agent`; `options` can set `endLine`, `side`, or `author`. Reins derives the structured anchor and retains the exact Git-native per-file patch server-side rather than requiring scripts to construct either value.
 - **Scoped by default, across projects when asked** — `tasks.list()`, `tasks.create()`, `sessions.list()`, `sessions.start()` and `projects.current()` default to the session's project. `tasks.list(status, projectId)`, `tasks.create(title, description, branchName, projectId)`, `sessions.list({ projectId })` and `sessions.start(prompt, { projectId })` target another project (`projectId: "current"` is the caller's). `tasks.get`, `update`, `close` and `reopen` take the ID of a task of any project, and the session functions that take a `sessionId` reach a session of any project. Code reviews (`reviews.*`) stay in the caller's project and task.
 - **Sessions of no project** — Reins features (extensions) can start a session that has a source (a node and a path) but no project, and so no task. Its `sessions.list()` lists **the sessions of no project on its source**, and `start` starts another of them (on its source unless `options.source` names another; a `taskId` is refused). `projects.current()` returns `null`; `tasks.list()` and `tasks.create()` without a `projectId`, `tasks.current()`, `reviews.*` and the `create_task` tool throw ("This session has no project, and tasks belong to projects"). With a `projectId` it lists and creates tasks of that project, and `tasks.get/update/close/reopen` work by task ID; `sessions.start(prompt, { projectId })` starts a session in a project. The other session functions work as for any session. Its system prompt has no project section (neither a task nor the project assistant's role): its work comes from its prompt, and its context from its source (AGENTS.md, skills, the environment).
 - **Incremental session queries** — `sessions.list()` returns all sessions for the current project; `sessions.list(options?)` supports `projectId`, `taskId`, `since`, `limit`, `search`, `minMessages`, and `background` (`"exclude"` by default, `"only"`, or `"include"`). Use `taskId: "current"` from a task session to list that task's sessions; `projectId: "current"` refers to the script's project.
-- **Unread session activity** — session results expose `unread: true/false`. Find unread sessions with `api.sessions.list().filter(s => s.unread)`. This is derived from `activity_state`: `"finished"` (stored until read) means unread; `"running"` (the session's run is in progress now) and `null` mean not unread. The activity field remains available for distinguishing active work from no pending activity. API reads do not mark sessions read. Child sessions participate in activity tracking independently of their parents.
-- **Where a session comes from** — session results expose `source_id` (where it works), `project_id` (null for a session of no project) and `source_extension`, the backend extension that started it (null otherwise).
+- **Unread session activity** — session results expose `unread` and `running`. Find unread sessions with `(await api.sessions.list()).filter(s => s.unread)`. A session is unread when its last run ended with something the user has not opened, and is not running now; `running` is true while its run is in progress. API reads do not mark sessions read. Child sessions participate in activity tracking independently of their parents.
+- **Where a session comes from** — session results expose `source` (where it works: `{ id, nodeId, path }`), `projectId` (null for a session of no project), `taskId`, `parentSessionId`, `model` (`{ provider, modelId, thinkingLevel }`) and `startedBy`, the backend extension that started it (null otherwise).
 - **Session metadata** — session results expose the explicit `name` plus `pinned` and `archived` booleans rather than persistence timestamps. `sessions.setName(sessionId, name)` renames a session of any project, trimming surrounding whitespace; pass `null` to clear the explicit name and restore its fallback label. Names must contain non-whitespace text. `sessions.setPinned(sessionId, pinned)` and `sessions.setArchived(sessionId, archived)` update the same metadata. Pin and archive state remain independent and do not cascade through parent/child relationships; archived sessions are omitted from normal `sessions.list()` results.
 - **Session entry extraction** — `sessions.entries(sessionId, options?)` returns a mixed timeline of persisted message entries (`user`, `assistant`, `compactionSummary`) and derived `toolCall` entries. Tool call entries include joined result previews when available. It supports `types`, `toolName`, `isError`, `search`, sequence cursors, `since`, `limit`, and `order`; raw joined result `content` is only included when `includeContent: true` is passed.
 - **30-second synchronous execution limit** — the VM limits synchronous computation, not arbitrary async promises. Session waits have their own bounded timeout.
@@ -87,7 +91,7 @@ const child = await api.sessions.start("Investigate the failing tests. Report fi
 return child; // { sessionId }; does not wait for the response
 ```
 
-`options.parentSessionId` is required: `"current"` creates a child of the caller; `null` creates an independent session. Both start with a fresh conversation in the caller's project unless `options.projectId` names another, in the caller's task unless `options.taskId` names another task of that project (`null` starts a scratch session), and in the caller's checkout unless `options.source` names another location (`{ nodeId, path }`: any directory on a node, checked there when no session used it yet). In another project, a session without `taskId` is a scratch session there, a `taskId` must be a task of that project (else it is refused), and without `source` it works where that project's sessions work: its task's latest session's source, else the project's home (default) source, not the caller's checkout. A child may be in another project and reports back as any child does. A session started in another task or project reports back only when `parentSessionId` is `"current"`. Child nesting is limited to three levels. Optional `title` reuses the existing session name; omitting it preserves normal first-message naming. `modelProvider` and `modelId` can override the inherited model together; `thinkingLevel` can override inherited thinking.
+`options.parentSessionId` is required: `"current"` creates a child of the caller; `null` creates an independent session. Both start with a fresh conversation in the caller's project unless `options.projectId` names another, in the caller's task unless `options.taskId` names another task of that project (`null` starts a scratch session), and in the caller's checkout unless `options.source` names another location (`{ nodeId, path }`: any directory on a node, checked there when no session used it yet). In another project, a session without `taskId` is a scratch session there, a `taskId` must be a task of that project (else it is refused), and without `source` it works where that project's sessions work: its task's latest session's source, else the project's home (default) source, not the caller's checkout. A child may be in another project and reports back as any child does. A session started in another task or project reports back only when `parentSessionId` is `"current"`. Child nesting is limited to three levels. Optional `title` reuses the existing session name; omitting it preserves normal first-message naming. `model: { provider, modelId, thinkingLevel? }` overrides the inherited model.
 
 ```javascript
 // Start work in task 42 without reporting back to this session.
@@ -135,7 +139,7 @@ The path and line range must exist in the current Git diff. Additional calls add
 
 ### List the nodes
 
-`api.nodes.list()` lists the nodes, the machines that run sessions' tools: each one's ID, name and hostname, whether it is connected or revoked, whether the calling session runs on it (`current`), and how many sources (directories sessions work in) are in use on it. Removed nodes are not listed. `api.nodes.get(node?)` (by default the calling session's node; named as in *Files and commands on any node*) adds those sources: each one's path on the node and the projects whose sessions work there or whose default source it is. `api.projects.create(name, path, base_branch?, nodeId?)` creates a project with its default source in `path` on a node (by default the calling session's), a directory there; two projects may share one.
+`api.nodes.list()` lists the nodes, the machines that run sessions' tools: each one's ID, name and hostname, whether it is connected or revoked, whether the calling session runs on it (`current`), and how many sources (directories sessions work in) are in use on it. Removed nodes are not listed. `api.nodes.get(node?)` (by default the calling session's node; named as in *Files and commands on any node*) adds those sources: each one's path on the node and the projects whose sessions work there or whose default source it is. `api.projects.create(name, path, baseBranch?, nodeId?)` creates a project with its default source in `path` on a node (by default the calling session's), a directory there; two projects may share one.
 
 ### Reload the node
 
@@ -143,16 +147,16 @@ After changing node code (`packages/node`), `api.nodes.reload()` restarts the ca
 
 ### Tools from extensions
 
-Extensions give agents tools (today: the tools of MCP servers). `api.tools.search(query, filters?)` returns the documentation of those whose ID, name, title, argument names or description match the query's words, best first (a query that is a tool's ID or name finds it first), as a TypeScript interface keyed by the tools' IDs (each starts with its extension's name and `__`, such as `mcp__`), grouped by where they come from (as `search` documents the API). In each group it documents 10 and names the other matches; without a query, a group with more than 10 tools only names them. `filters` is given to each extension as it is; the system prompt says which filters an extension takes. `api.tools.call(id, args?, timeoutMs?)` calls a tool by its ID and returns its result (`content` blocks, `structuredContent`, and `isError` when the tool reports a failure). `search` does not list these tools.
+Extensions give agents tools (today: the tools of MCP servers). `api.tools.search(query, { filters? })` returns the documentation of those whose ID, name, title, argument names or description match the query's words, best first (a query that is a tool's ID or name finds it first), as a TypeScript interface keyed by the tools' IDs (each starts with its extension's name and `__`, such as `mcp__`), grouped by where they come from (as `search` documents the API). In each group it documents 10 and names the other matches; without a query, a group with more than 10 tools only names them. `options.filters` is given to each extension as it is; the system prompt says which filters an extension takes. `api.tools.call(id, args?, { timeoutMs? })` calls a tool by its ID and returns its result (`content` blocks, `structuredContent`, and `isError` when the tool reports a failure). `search` does not list these tools.
 
 ### Manage MCP servers
 
 `api.mcp` manages the remote MCP servers of **Settings → MCP** ([mcp-servers.md](mcp-servers.md)), named by their name or ID: `list()` and `get(server)` give each one's settings, and its `status`: whether agents can use it (`{ state }`, one of `ready`, `needs_sign_in`, `disabled`, or `{ state: "error", message }`, as Settings shows it); `add({ name, url, authKind, … })` adds one, with its header value or OAuth client secret when it has one, and `transport: "sse"` for a legacy HTTP+SSE server (the default is `"http"`, streamable HTTP); `update(server, changes)` changes it (what is left out is kept, a secret given as `null` is removed, `enabled: false` disables it); `remove(server)` removes it; `test(server)` connects afresh and lists its tools: `{ server, toolCount }` (`toolCount` is null when it failed, and `server.status` says why); `signOut(server)` forgets its OAuth tokens. Secrets are stored encrypted and never returned, but a script's code, secrets included, stays in the session's transcript.
 
-The system prompt names the enabled servers, each with its `instructions` (set by `add` and `update` as any other field). Their tools are found and called with `api.tools` (*Tools from extensions*): a tool's ID is `mcp__<server>__<tool>`, and the filter `{ server: "<name>" }` limits a search to one server. A search with that filter, and a call, connect first if needed, and throw when the server is disabled, needs sign-in or is down. A search of all servers leaves out those that fail, and says which when it finds nothing.
+The system prompt names the enabled servers, each with its `instructions` (set by `add` and `update` as any other field). Their tools are found and called with `api.tools` (*Tools from extensions*): a tool's ID is `mcp__<server>__<tool>`, and the option `{ filters: { server: "<name>" } }` limits a search to one server. A search with that filter, and a call, connect first if needed, and throw when the server is disabled, needs sign-in or is down. A search of all servers leaves out those that fail, and says which when it finds nothing.
 
 ```js
-return await api.tools.search("list deployments", { server: "vercel" });
+return await api.tools.search("list deployments", { filters: { server: "vercel" } });
 ```
 
 ```js

@@ -5,10 +5,10 @@
  */
 
 import { Type } from "@sinclair/typebox";
-import type { ProjectInfo, TaskInfo } from "@reins/sdk/server";
+import type { ProjectInfo, ScriptNamespace, TaskInfo } from "@reins/sdk/server";
 import { getProject, listProjects, type Project } from "../project-store.js";
 import { getTask, type TaskRow } from "../task-store.js";
-import { sdkMethod, type CallContext, type SdkNamespace } from "./declaration.js";
+import { sdkMethod, type CallContext } from "./declaration.js";
 
 // ---------------------------------------------------------------------------
 // Schemas
@@ -149,10 +149,10 @@ const projectsCreate = sdkMethod({
 });
 
 export const PROJECTS = {
-  name: "projects",
+  namespace: "projects",
   methods: { list: projectsList, get: projectsGet, create: projectsCreate, current: projectsCurrent },
   types: { Project: ProjectSchema },
-} satisfies SdkNamespace;
+} satisfies ScriptNamespace<CallContext>;
 
 // ---------------------------------------------------------------------------
 // tasks
@@ -248,7 +248,7 @@ const tasksReopen = sdkMethod({
 });
 
 export const TASKS = {
-  name: "tasks",
+  namespace: "tasks",
   methods: { list: tasksList, current: tasksCurrent, get: tasksGet, create: tasksCreate, update: tasksUpdate, close: tasksClose, reopen: tasksReopen },
   types: { Task: TaskSchema },
-} satisfies SdkNamespace;
+} satisfies ScriptNamespace<CallContext>;

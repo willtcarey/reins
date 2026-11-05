@@ -3,7 +3,7 @@ import { Type } from "@sinclair/typebox";
 import type { Database } from "bun:sqlite";
 import { statSync } from "fs";
 import { join } from "path";
-import type { HttpApi, ServerSdk, ToolResult } from "@reins/sdk/server";
+import type { HttpApi, ScriptNamespace, ServerSdk, ToolResult } from "@reins/sdk/server";
 import { runScript } from "../../tools/execute.js";
 import { searchScriptApi } from "../../tools/search.js";
 import { buildRouter } from "../../routes/index.js";
@@ -22,7 +22,8 @@ const router = buildRouter();
 const firstId = (text: string) => /^ {2}(\w+)\(/m.exec(text)?.[1];
 /** A value of any type, as an extension without TypeScript can give one. */
 const untyped = (value: unknown) => JSON.parse(JSON.stringify({ value })).value;
-const fn = (name: string) => ({ name, description: "", parameters: { type: "object", properties: {} }, returns: {}, tags: [], execute: () => null });
+/** A namespace of one method, `one`, that takes nothing and gives null. */
+const namespace = (name: string): ScriptNamespace => ({ namespace: name, methods: { one: { description: "", params: [], returns: {}, tags: [], run: async () => null } } });
 
 function script(state: TestAppState, signal?: AbortSignal, caller: ScriptCaller = {}) {
   return async (code: string) => {
@@ -193,35 +194,38 @@ describe("the server SDK's host", () => {
   });
 
   describe("scripting", () => {
-    test("an extension's functions join api, get the session, and search documents them with their types", async () => {
+    test("an extension's namespace joins api: its methods get the script's checked arguments and session, and search documents them with their types", async () => {
       const seen: unknown[] = [];
-      const itemSchema = { type: "object", properties: { label: { type: "string" } }, required: ["label"] };
+      const NoteSchema = Type.Object({ label: Type.String() });
       const state = createAppState(undefined, {
         extensions: [{
           name: "notes",
           register: reins => reins.scripting.register({
-            functions: [{
-              name: "notes.find",
-              description: "Find a note by its label.",
-              parameters: { type: "object", properties: { label: { type: "string" }, limit: { type: "number" } }, required: ["label"] },
-              returns: itemSchema,
-              async: true,
-              tags: ["note", "find"],
-              execute: async (params, context) => {
-                seen.push({ params, context: { ...context, signal: context.signal instanceof AbortSignal } });
-                return { label: `found ${String(params.label)}` };
+            namespace: "notes",
+            methods: {
+              find: {
+                description: "Find a note by its label.",
+                params: [{ name: "label", schema: Type.String() }, { name: "limit", schema: Type.Number(), optional: true }],
+                returns: NoteSchema,
+                tags: ["note", "find"],
+                run: async (context, label, limit) => {
+                  seen.push({ args: [label, limit], context: { ...context, signal: context.signal instanceof AbortSignal } });
+                  return { label: `found ${String(label)}` };
+                },
               },
-            }],
-            types: [{ name: "Note", schema: itemSchema }],
+            },
+            types: { Note: NoteSchema },
           }),
         }],
       });
       const signal = new AbortController().signal;
       const project = createProject("Notes", "/tmp/notes");
       const task = createTask(project.id, "Notes", null, "task/notes");
+      const run = script(state, signal, { projectId: project.id, taskId: task.id });
 
-      expect(JSON.parse(await script(state, signal, { projectId: project.id, taskId: task.id })(`return await api.notes.find("x", 2)`))).toEqual({ label: "found x" });
-      expect(seen).toEqual([{ params: { label: "x", limit: 2 }, context: { sessionId: "caller", projectId: project.id, taskId: task.id, signal: true } }]);
+      expect(JSON.parse(await run(`return await api.notes.find("x", 2)`))).toEqual({ label: "found x" });
+      await expect(run(`return await api.notes.find(7)`)).rejects.toThrow("api.notes.find: label: Expected string");
+      expect(seen).toEqual([{ args: ["x", 2], context: { sessionId: "caller", projectId: project.id, taskId: task.id, signal: true } }]);
       const docs = searchScriptApi("notes find", state.extensions).text;
       expect(docs).toContain("find(label: string, limit?: number): Promise<Note>;");
       expect(docs).toContain("interface Note {");
@@ -231,9 +235,9 @@ describe("the server SDK's host", () => {
       const errors: unknown[] = [];
       createAppState(undefined, {
         extensions: [
-          { name: "a", register: reins => reins.scripting.register({ functions: [fn("tasks.mine")] }) },
-          { name: "b", register: reins => reins.scripting.register({ functions: [fn("shared.one")] }) },
-          { name: "c", register: reins => { try { return reins.scripting.register({ functions: [fn("shared.two")] }); } catch (error) { errors.push(error); return () => {}; } } },
+          { name: "a", register: reins => reins.scripting.register(namespace("tasks")) },
+          { name: "b", register: reins => reins.scripting.register(namespace("shared")) },
+          { name: "c", register: reins => { try { return reins.scripting.register(namespace("shared")); } catch (error) { errors.push(error); return () => {}; } } },
         ],
         onExtensionError: (name, error) => errors.push(`${name}: ${error instanceof Error ? error.message : String(error)}`),
       });
@@ -244,21 +248,24 @@ describe("the server SDK's host", () => {
       ]);
     });
 
-    test("a function whose parameters are not an object schema, or a result or type that is not a schema, refuses the registration", () => {
+    test("a method whose param is not a TypeBox schema, or whose result or type is not a schema, or a name that is not one, refuses the registration", () => {
       const errors: string[] = [];
+      const method = namespace("x").methods.one!;
       createAppState(undefined, {
         extensions: [
-          { name: "a", register: reins => reins.scripting.register({ functions: [{ ...fn("a.one"), parameters: { type: "string" } }] }) },
-          { name: "b", register: reins => reins.scripting.register({ functions: [{ ...fn("b.one"), returns: untyped("string") }] }) },
-          { name: "c", register: reins => reins.scripting.register({ functions: [fn("c.one")], types: [{ name: "Bad", schema: untyped(null) }] }) },
+          { name: "a", register: reins => reins.scripting.register({ namespace: "a", methods: { one: { ...method, params: [{ name: "text", schema: { type: "string" } }] } } }) },
+          { name: "b", register: reins => reins.scripting.register({ namespace: "b", methods: { one: { ...method, returns: untyped("string") } } }) },
+          { name: "c", register: reins => reins.scripting.register({ ...namespace("c"), types: { Bad: untyped(null) } }) },
+          { name: "d", register: reins => reins.scripting.register({ namespace: "d", methods: { "two words": method } }) },
         ],
         onExtensionError: (name, error) => errors.push(`${name}: ${error instanceof Error ? error.message : String(error)}`),
       });
 
       expect(errors).toEqual([
-        "a: a.one: its parameters must be an object schema",
+        "a: a.one: text must be a TypeBox schema, which the host checks",
         "b: b.one: not a JSON Schema object",
         "c: Bad: not a JSON Schema object",
+        "d: Not an api method name: d.two words",
       ]);
     });
   });
@@ -531,7 +538,7 @@ describe("the server SDK's host", () => {
         setup: reins => {
           reins.prompt.register(() => "Notes");
           reins.prompt.register(() => null);
-          reins.scripting.register({ functions: [fn("notes.list"), fn("notes.add")] });
+          reins.scripting.register({ namespace: "notes", methods: { list: namespace("x").methods.one!, add: namespace("x").methods.one! } });
           reins.http.handle({ list: {}, add: {} }, { list: () => {}, add: () => {} });
           reins.http.page("/callback", () => new Response("ok"));
           return () => {};

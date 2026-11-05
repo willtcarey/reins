@@ -9,7 +9,7 @@ import { type Project } from "../../project-store.js";
 import { createProject } from "../project-fixture.js";
 import { createSession, getSession } from "../session-fixture.js";
 import { Value } from "@sinclair/typebox/value";
-import { buildApiObject } from "../../scripting/api-registry.js";
+import { buildApiObject } from "../../sdk-host/scripts.js";
 import { SessionSchema } from "../../sdk-host/sessions.js";
 import type { ServerMessage } from "../../models/broadcast.js";
 import { Models } from "../../models/models.js";

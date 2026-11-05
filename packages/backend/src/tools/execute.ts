@@ -14,8 +14,8 @@
  */
 
 import { createContext, runInContext } from "node:vm";
-import { buildApiObject, scriptingApi } from "../scripting/api-registry.js";
-import type { ApiContext } from "../scripting/define-function.js";
+import { buildApiObject, scriptingApi } from "../sdk-host/scripts.js";
+import type { ApiContext } from "../sdk-host/projection.js";
 import { formatValue, scriptOutput, type ScriptContentBlock } from "./script-output.js";
 
 /** Bounds synchronous script execution only; awaited API calls (e.g. `sessions.wait`) are bounded by their own limits and `signal`. */

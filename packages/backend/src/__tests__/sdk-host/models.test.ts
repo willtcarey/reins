@@ -8,7 +8,7 @@ import { createAppState } from "../helpers/app-state.js";
 import { setApiKeyCredential } from "../../auth-credentials-store.js";
 import { Type } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
-import { buildApiObject } from "../../scripting/api-registry.js";
+import { buildApiObject } from "../../sdk-host/scripts.js";
 import { ProviderInfoSchema } from "../../sdk-host/models.js";
 import { scriptContext } from "../helpers/script-context.js";
 

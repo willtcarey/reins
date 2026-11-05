@@ -8,9 +8,10 @@
 
 import { types } from "node:util";
 import { Type } from "@sinclair/typebox";
+import type { ScriptNamespace } from "@reins/sdk/server";
 import type { NodeModel, NodeView } from "../models/node.js";
 import { FileTooLargeError } from "../models/node-host.js";
-import { SignalSchema, sdkMethod, signalOf, type CallContext, type SdkNamespace } from "./declaration.js";
+import { SignalSchema, sdkMethod, signalOf, type CallContext } from "./declaration.js";
 
 /** A script's own bound: an agent waits for it. */
 export const MAX_SCRIPT_RUN_TIMEOUT_MS = 30_000;
@@ -256,7 +257,7 @@ const run = sdkMethod({
 });
 
 export const NODES = {
-  name: "nodes",
+  namespace: "nodes",
   methods: { list, get, reload, readFile, writeFile, copy, run },
   types: {
     Node: NodeSchema,
@@ -268,4 +269,4 @@ export const NODES = {
     NodeRunResult: NodeRunResultSchema,
     NodeCopyResult: NodeCopyResultSchema,
   },
-} satisfies SdkNamespace;
+} satisfies ScriptNamespace<CallContext>;

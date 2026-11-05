@@ -8,6 +8,7 @@ import { REVIEWS } from "./reviews.js";
 import { SESSIONS } from "./sessions.js";
 import { TOOLS } from "./tools.js";
 import { UI } from "./ui.js";
-import type { SdkNamespace } from "./declaration.js";
+import type { ScriptNamespace } from "@reins/sdk/server";
+import type { CallContext } from "./declaration.js";
 
-export const CORE_NAMESPACES: readonly SdkNamespace[] = [TASKS, SESSIONS, PROJECTS, UI, MODELS, REVIEWS, NODES, TOOLS, IMAGES];
+export const CORE_NAMESPACES: readonly ScriptNamespace<CallContext>[] = [TASKS, SESSIONS, PROJECTS, UI, MODELS, REVIEWS, NODES, TOOLS, IMAGES];

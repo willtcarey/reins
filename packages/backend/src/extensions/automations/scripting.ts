@@ -4,21 +4,12 @@
  * (docs/features/automations.md).
  */
 
-import { Type, type Static, type TObject, type TProperties, type TSchema } from "@sinclair/typebox";
-import type { ScriptContext, ScriptFunction, ScriptType, Sessions } from "@reins/sdk/server";
+import { Type, type Static, type TSchema } from "@sinclair/typebox";
+import type { ScriptContext, ScriptMethod, ScriptNamespace, ScriptParam, Sessions } from "@reins/sdk/server";
 import { InvalidAutomationError, MAX_CHECK_TIMEOUT_MS, type Automations, type TriggerRequest } from "./automations.js";
 
-function scriptFunction<P extends TObject<TProperties>, R extends TSchema>(def: {
-  name: string;
-  description: string;
-  parameters: P;
-  returns: R;
-  async?: boolean;
-  tags: string[];
-  execute: (params: Static<P>, context: ScriptContext) => Static<R> | Promise<Static<R>>;
-}): ScriptFunction {
-  return def;
-}
+/** A method whose `run` is typed by its schemas. */
+const scriptMethod = <const P extends readonly ScriptParam[], R extends TSchema>(method: ScriptMethod<ScriptContext, P, R, Static<R>>) => method;
 
 const nullable = <T extends TSchema>(schema: T, description?: string) => Type.Union([schema, Type.Null()], description ? { description } : {});
 
@@ -98,12 +89,11 @@ export const AutomationSchema = Type.Object({
   consecutiveFailures: Type.Integer({ description: "How many of its latest runs failed in a row." }),
 });
 
-const idParam = Type.Integer({ description: "The automation's ID." });
+const idParam = { name: "id", schema: Type.Integer({ description: "The automation's ID." }) } as const;
 
 /** The functions over `automations`; `sessions` reads the calling session's source and node. */
-export function automationsScripting(automations: Automations, sessions: Pick<Sessions, "get">): { functions: ScriptFunction[]; types: ScriptType[] } {
-  const create = scriptFunction({
-    name: "automations.create",
+export function automationsScripting(automations: Automations, sessions: Pick<Sessions, "get">): ScriptNamespace {
+  const create = scriptMethod({
     description:
       "Wake a session up when a trigger fires, until it is cancelled (or once, with once: true). The message is sent as a message from the automations extension.\n" +
       "- trigger { schedule }: each time it is due (a reminder, a periodic check). Skipped only while the run its previous message started still runs.\n" +
@@ -119,8 +109,9 @@ export function automationsScripting(automations: Automations, sessions: Pick<Se
       "    message: \"PR 42 has merged: tell the user, then go on with the release notes.\" });\n" +
       "  return await api.automations.create({ trigger: { schedule: \"daily 09:00\", timezone: \"Europe/London\" }, target: \"own\", name: \"GitHub\",\n" +
       "    message: \"List my new GitHub notifications since the last run, most important first.\" });",
-    parameters: Type.Object({
-      automation: Type.Object({
+    params: [{
+      name: "automation",
+      schema: Type.Object({
         trigger: Type.Union([ScheduleTriggerSchema, CommandTriggerSchema]),
         message: Type.Optional(Type.String({
           description: "What it sends when it fires. A command trigger may leave it out: then the command's output is the message, so make the command print what the session should know.",
@@ -139,12 +130,11 @@ export function automationsScripting(automations: Automations, sessions: Pick<Se
         compactAboveTokens: Type.Optional(Type.Integer({ minimum: 1, description: "target \"own\": compact its session after a run that leaves the context above this many tokens." })),
         background: Type.Optional(Type.Boolean({ description: "target \"new\": hide its sessions from the session list." })),
       }),
-    }),
+    }],
     returns: AutomationSchema,
-    async: true,
     tags: ["automations", "automation", "trigger", "wake", "wake up", "schedule", "monitor", "poll", "watch", "until", "when", "remind", "timer", "interval",
       "daily", "cron", "recurring", "heartbeat", "command", "background", "later"],
-    execute: async ({ automation }, context) => {
+    run: async (context, automation) => {
       const { trigger, target = "this", source, project, model, compactAboveTokens, background, ...rest } = automation;
       if (target === "this" && (source !== undefined || project !== undefined || model !== undefined)) {
         throw new InvalidAutomationError("source, project and model are for target \"own\" or \"new\"");
@@ -171,57 +161,45 @@ export function automationsScripting(automations: Automations, sessions: Pick<Se
     },
   });
 
-  const cancel = scriptFunction({
-    name: "automations.cancel",
+  const cancel = scriptMethod({
     description: "Cancel an automation for good: it does not fire again. Its runs stay readable. Cancelling one already cancelled changes nothing.",
-    parameters: Type.Object({ id: idParam }),
+    params: [idParam],
     returns: AutomationSchema,
-    async: true,
     tags: ["automations", "cancel", "stop", "unschedule", "remove"],
-    execute: ({ id }, context) => automations.cancel(id, `Cancelled by session ${context.sessionId}`),
+    run: async (context, id) => automations.cancel(id, `Cancelled by session ${context.sessionId}`),
   });
 
-  const list = scriptFunction({
-    name: "automations.list",
+  const list = scriptMethod({
     description: "The automations that message this session or that it made, newest first; all of them with `all: true`. Cancelled ones only with `includeCancelled: true`.",
-    parameters: Type.Object({
-      filter: Type.Optional(Type.Object({ all: Type.Optional(Type.Boolean()), includeCancelled: Type.Optional(Type.Boolean()) })),
-    }),
+    params: [{ name: "filter", schema: Type.Object({ all: Type.Optional(Type.Boolean()), includeCancelled: Type.Optional(Type.Boolean()) }), optional: true }],
     returns: Type.Array(AutomationSchema),
-    async: true,
     tags: ["automations", "list", "scheduled", "triggers", "read"],
-    execute: ({ filter = {} }, context) => automations.list({
+    run: async (context, filter = {}) => automations.list({
       ...(filter.all ? {} : { sessionId: context.sessionId }),
       ...(filter.includeCancelled === undefined ? {} : { includeCancelled: filter.includeCancelled }),
     }),
   });
 
-  const runs = scriptFunction({
-    name: "automations.runs",
+  const runs = scriptMethod({
     description: "An automation's runs, the latest first (20 by default, at most 100): each delivery (when, its outcome, the command's output when a command fired it, " +
       "and for its own session the run's final reply or error), skip, and check that could not run. Checks that did not fire are only counted (Automation.checks).",
-    parameters: Type.Object({ id: idParam, limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })) }),
+    params: [idParam, { name: "limit", schema: Type.Integer({ minimum: 1, maximum: 100 }), optional: true }],
     returns: Type.Array(AutomationRunSchema),
-    async: true,
     tags: ["automations", "runs", "history", "output", "result", "failures", "read"],
-    execute: ({ id, limit }) => automations.runs(id, limit),
+    run: async (_context, id, limit) => automations.runs(id, limit),
   });
 
-  const replaceSession = scriptFunction({
-    name: "automations.replaceSession",
+  const replaceSession = scriptMethod({
     description: "Give an automation of target \"own\" a new session: its next delivery starts a new hidden session (the old one is kept, hidden). For a session that is broken or whose context went wrong.",
-    parameters: Type.Object({ id: idParam }),
+    params: [idParam],
     returns: AutomationSchema,
-    async: true,
     tags: ["automations", "replace", "reset", "new session", "broken", "fix"],
-    execute: ({ id }) => automations.replaceSession(id),
+    run: async (_context, id) => automations.replaceSession(id),
   });
 
   return {
-    functions: [create, cancel, list, runs, replaceSession],
-    types: [
-      { name: "Automation", schema: AutomationSchema },
-      { name: "AutomationRun", schema: AutomationRunSchema },
-    ],
+    namespace: "automations",
+    methods: { create, cancel, list, runs, replaceSession },
+    types: { Automation: AutomationSchema, AutomationRun: AutomationRunSchema },
   };
 }

@@ -6,8 +6,8 @@
 
 import { Type } from "@sinclair/typebox";
 import type { Tool, ToolSearchGroup } from "@reins/sdk/server";
-import { formatTypeDeclaration } from "../scripting/api-schema-formatter.js";
-import { rankByTerms } from "../scripting/term-search.js";
+import { formatTypeDeclaration } from "../sdk-host/schema-formatter.js";
+import { rankByTerms } from "../sdk-host/term-search.js";
 
 /** Documented whole, in each provider; the matches past it are only named. */
 const DOCUMENTED_LIMIT = 10;

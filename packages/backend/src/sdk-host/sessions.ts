@@ -8,7 +8,7 @@
  */
 
 import { Type } from "@sinclair/typebox";
-import type { MessageContent, MessageMetadata, SessionInfo, SessionStartOptions } from "@reins/sdk/server";
+import type { MessageContent, MessageMetadata, ScriptNamespace, SessionInfo, SessionStartOptions } from "@reins/sdk/server";
 import { getDb } from "../app-globals.js";
 import { countMessages, listSessionEntries } from "../messages-store.js";
 import { ThinkingLevelSchema } from "../models/model-settings.js";
@@ -19,7 +19,7 @@ import { firstMessage, getSession, listSessions, type SessionRow } from "../sess
 import { assertPlace, inheritedSource } from "../sessions/create-session.js";
 import { latestSettlement } from "../sessions/session-runs.js";
 import { LocationSchema } from "./nodes.js";
-import { notForScripts, sdkMethod, signalOf, type CallContext, type SdkNamespace } from "./declaration.js";
+import { notForScripts, sdkMethod, signalOf, type CallContext } from "./declaration.js";
 
 const MAX_LABEL = 80;
 const MAX_METADATA_BYTES = 64 * 1024;
@@ -561,7 +561,7 @@ const setArchived = sdkMethod({
 });
 
 export const SESSIONS = {
-  name: "sessions",
+  namespace: "sessions",
   methods: { start, send, wait, list, current, get, entries, setModel, compact, contextUsage, setName, setPinned, setArchived },
   types: {
     Session: SessionSchema,
@@ -578,4 +578,4 @@ export const SESSIONS = {
     ToolCallEntry: ToolCallEntrySchema,
     ToolCallResult: ToolCallResultSchema,
   },
-} satisfies SdkNamespace;
+} satisfies ScriptNamespace<CallContext>;

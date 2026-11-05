@@ -1,24 +1,11 @@
 /**
- * API Registry
- *
- * Curated API surface exposed to agents via execute/search tools.
- * Each function definition carries:
- * - TypeBox schemas for parameters and return type (for documentation)
- * - An execute function (for runtime)
- * - Description and tags (for search)
- *
- * The schemas are the single source of truth — search renders them,
- * no hand-maintained signature strings.
- *
- * Function definitions live in per-resource files (tasks.ts, sessions.ts,
- * projects.ts) and are assembled here into a single registry.
- *
- * Core types (ApiContext, ApiFunctionDef, defineFunction) live in
- * define-function.ts to avoid circular imports — import them from there.
+ * `api` as scripts have it, and what `search` finds in it: the core's SDK namespaces (`namespaces.ts`) and the
+ * app's extensions', each method projected from its declaration (`projection.ts`): its schemas are the single
+ * source of truth, which `search` renders, with no hand-kept signatures.
  */
 
 import type { TSchema } from "@sinclair/typebox";
-import type { ApiContext, ApiFunctionDef } from "./define-function.js";
+import { scriptCallContext, scriptFunctions, scriptTypes, type ApiContext, type ScriptFunction } from "./projection.js";
 import {
   schemaItems,
   schemaAnyOf,
@@ -27,8 +14,7 @@ import {
 } from "./schema-utils.js";
 import { rankByTerms } from "./term-search.js";
 import type { ExtensionHost } from "../extensions/host.js";
-import { scriptFunctions, scriptTypes } from "../sdk-host/projection.js";
-import { CORE_NAMESPACES } from "../sdk-host/namespaces.js";
+import { CORE_NAMESPACES } from "./namespaces.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -53,16 +39,16 @@ export interface NamedType {
   schema: TSchema;
 }
 
-export const DOMAIN_TYPES: NamedType[] = CORE_NAMESPACES.flatMap(scriptTypes);
+export const DOMAIN_TYPES: NamedType[] = CORE_NAMESPACES.flatMap(namespace => scriptTypes(namespace));
 
 // ---------------------------------------------------------------------------
 // Function registry: the SDK's namespaces, projected for scripts
 // ---------------------------------------------------------------------------
 
-export const API_FUNCTIONS: ApiFunctionDef[] = CORE_NAMESPACES.flatMap(scriptFunctions);
+export const API_FUNCTIONS: ScriptFunction[] = CORE_NAMESPACES.flatMap(namespace => scriptFunctions(namespace, scriptCallContext));
 
 /** The `api` an agent's scripts get: the core's functions and types, and those of the app's extensions. */
-export interface ScriptingApi { functions: ApiFunctionDef[]; types: NamedType[] }
+export interface ScriptingApi { functions: ScriptFunction[]; types: NamedType[] }
 
 export function scriptingApi(extensions?: ExtensionHost): ScriptingApi {
   if (!extensions) return { functions: API_FUNCTIONS, types: DOMAIN_TYPES };
@@ -82,7 +68,7 @@ export function scriptingApi(extensions?: ExtensionHost): ScriptingApi {
  *
  * Returns matching function definitions sorted by relevance.
  */
-export function searchFunctions(query: string, functions: readonly ApiFunctionDef[] = API_FUNCTIONS): ApiFunctionDef[] {
+export function searchFunctions(query: string, functions: readonly ScriptFunction[] = API_FUNCTIONS): ScriptFunction[] {
   const terms = query
     .toLowerCase()
     .split(/\s+/)
@@ -110,7 +96,7 @@ function normalizeSearchTerm(term: string): string {
  * A type is "referenced" if its schema appears in any function's
  * parameters or returns.
  */
-export function referencedTypes(fns: ApiFunctionDef[], types: readonly NamedType[] = DOMAIN_TYPES): NamedType[] {
+export function referencedTypes(fns: ScriptFunction[], types: readonly NamedType[] = DOMAIN_TYPES): NamedType[] {
   const seen = new Set<string>();
   const result: NamedType[] = [];
 
@@ -170,7 +156,7 @@ function schemaReferences(schema: TSchema, target: TSchema): boolean {
  */
 type ApiMethod = (...args: unknown[]) => unknown;
 
-export function buildApiObject(ctx: ApiContext, functions: readonly ApiFunctionDef[] = API_FUNCTIONS): Record<string, Record<string, ApiMethod>> {
+export function buildApiObject(ctx: ApiContext, functions: readonly ScriptFunction[] = API_FUNCTIONS): Record<string, Record<string, ApiMethod>> {
   const api: Record<string, Record<string, ApiMethod>> = {};
   for (const fn of functions) {
     const ns = fnNamespace(fn);

@@ -5,8 +5,9 @@
 
 import { posix } from "node:path";
 import { Type } from "@sinclair/typebox";
+import type { ScriptNamespace } from "@reins/sdk/server";
 import { namedNode, optionalNodeParam } from "./nodes.js";
-import { notForScripts, sdkMethod, signalOf, type SdkNamespace } from "./declaration.js";
+import { notForScripts, sdkMethod, signalOf, type CallContext } from "./declaration.js";
 
 const broadcast = sdkMethod({
   description:
@@ -69,4 +70,4 @@ const openFile = sdkMethod({
   },
 });
 
-export const UI = { name: "ui", methods: { broadcast, openFile } } satisfies SdkNamespace;
+export const UI = { namespace: "ui", methods: { broadcast, openFile } } satisfies ScriptNamespace<CallContext>;

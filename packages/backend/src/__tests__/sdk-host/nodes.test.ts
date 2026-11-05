@@ -6,7 +6,7 @@ import { NodeRejection } from "@reins/node-protocol";
 import { runScript } from "../../tools/execute.js";
 import { getDb } from "../../app-globals.js";
 import { upsertSource, defaultSource } from "../../node-store.js";
-import { buildApiObject } from "../../scripting/api-registry.js";
+import { buildApiObject } from "../../sdk-host/scripts.js";
 import { createProject } from "../project-fixture.js";
 import { createSession } from "../session-fixture.js";
 import { createAppState } from "../helpers/app-state.js";

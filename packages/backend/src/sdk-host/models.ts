@@ -2,8 +2,9 @@
  * agent's script (`api.models`). */
 
 import { Type } from "@sinclair/typebox";
+import type { ScriptNamespace } from "@reins/sdk/server";
 import { listRuntimeProviders } from "../pi/model-catalog.js";
-import { sdkMethod, type SdkNamespace } from "./declaration.js";
+import { sdkMethod, type CallContext } from "./declaration.js";
 
 const AvailabilitySourceSchema = Type.Union([
   Type.Literal("db"),
@@ -48,4 +49,4 @@ const listProviders = sdkMethod({
   run: async context => (await listRuntimeProviders(context.models.credentials)).map(provider => provider.provider),
 });
 
-export const MODELS = { name: "models", methods: { list, listProviders }, types: { ProviderInfo: ProviderInfoSchema, ModelInfo: ModelInfoSchema } } satisfies SdkNamespace;
+export const MODELS = { namespace: "models", methods: { list, listProviders }, types: { ProviderInfo: ProviderInfoSchema, ModelInfo: ModelInfoSchema } } satisfies ScriptNamespace<CallContext>;

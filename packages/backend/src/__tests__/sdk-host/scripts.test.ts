@@ -4,13 +4,13 @@
 
 import { describe, test, expect } from "bun:test";
 import type { TSchema } from "@sinclair/typebox";
-import { API_FUNCTIONS, DOMAIN_TYPES, fnNamespace } from "../../scripting/api-registry.js";
+import { API_FUNCTIONS, DOMAIN_TYPES, fnNamespace } from "../../sdk-host/scripts.js";
 import {
   schemaItems,
   schemaAnyOf,
   schemaProperties,
   sameSchema,
-} from "../../scripting/schema-utils.js";
+} from "../../sdk-host/schema-utils.js";
 
 describe("API registry schema constraints", () => {
   /**

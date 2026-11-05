@@ -5,9 +5,10 @@
  */
 
 import { Type } from "@sinclair/typebox";
+import type { ScriptNamespace } from "@reins/sdk/server";
 import type { ExtensionHost } from "../extensions/host.js";
 import { collectImages } from "../tools/script-output.js";
-import { SignalSchema, sdkMethod, signalOf, type SdkNamespace } from "./declaration.js";
+import { SignalSchema, sdkMethod, signalOf, type CallContext } from "./declaration.js";
 
 const SEPARATOR = "__";
 
@@ -74,4 +75,4 @@ const generate = sdkMethod({
   },
 });
 
-export const IMAGES = { name: "images", methods: { list, generate }, types: { ImageGeneration: ImageGenerationSchema, ImageBlock: ImageBlockSchema } } satisfies SdkNamespace;
+export const IMAGES = { namespace: "images", methods: { list, generate }, types: { ImageGeneration: ImageGenerationSchema, ImageBlock: ImageBlockSchema } } satisfies ScriptNamespace<CallContext>;

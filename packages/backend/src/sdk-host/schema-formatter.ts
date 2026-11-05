@@ -13,7 +13,7 @@
  */
 
 import type { TSchema } from "@sinclair/typebox";
-import type { ApiFunctionDef } from "./define-function.js";
+import type { ScriptFunction } from "./projection.js";
 import {
   schemaItems,
   schemaAnyOf,
@@ -75,13 +75,13 @@ export function formatFunctionSignature(
 /**
  * Render matched API functions as partial TypeScript documentation interfaces.
  * Methods are grouped under namespace interfaces and use positional params,
- * matching the runtime `api.namespace.method(...args)` calling convention.
+ * matching the runtime `api.namespace.method(...args)` calling convention. Every method returns a promise.
  */
 export function formatApiInterfaces(
-  fns: ApiFunctionDef[],
+  fns: ScriptFunction[],
   opts?: { names?: SchemaNameMap },
 ): string {
-  const groups = new Map<string, ApiFunctionDef[]>();
+  const groups = new Map<string, ScriptFunction[]>();
 
   for (const fn of fns) {
     const { namespace } = splitApiName(fn.name);
@@ -108,7 +108,7 @@ export function formatApiInterfaces(
       const { method } = splitApiName(fn.name);
       const params = renderParams(fn.parameters, opts?.names);
       const ret = renderType(fn.returns, opts?.names);
-      const retType = fn.async ? `Promise<${ret}>` : ret;
+      const retType = `Promise<${ret}>`;
       const paramTags = paramDescriptions(fn.parameters, opts?.names).map(([path, text]) => `@param ${path} ${text}`);
       const doc = paramTags.length > 0 ? `${fn.description.trim()}\n\n${paramTags.join("\n")}` : fn.description;
       return [

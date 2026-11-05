@@ -13,7 +13,7 @@ import { loadMessages } from "../../messages-store.js";
 import { getDb } from "../../app-globals.js";
 import { createSession as createNewSession } from "../../sessions/create-session.js";
 import { Sessions } from "../../models/sessions.js";
-import { buildApiObject, searchFunctions, referencedTypes } from "../../scripting/api-registry.js";
+import { buildApiObject, searchFunctions, referencedTypes } from "../../sdk-host/scripts.js";
 import { useTestDb } from "../helpers/test-db.js";
 import { createTestRepo, useTestRepo } from "../helpers/test-repo.js";
 import { stubRuntime, useLoopbackState } from "../helpers/app-state.js";

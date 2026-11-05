@@ -1,18 +1,42 @@
 /**
- * The SDK as agents' scripts get it (docs/dev/server-sdk.md *Scripts*): each declared method as a function of
- * `api`, documented by `search` from its declaration and called with a script's positional arguments, which are
- * checked against the declared schemas first. The caller is the script's session.
+ * The SDK as agents' scripts get it (docs/dev/server-sdk.md *Scripts*): each method of a `ScriptNamespace` (the
+ * core's, `namespaces.ts`, and the extensions' `api.<namespace>`) as a function of `api`, documented by `search`
+ * from its declaration and called with a script's positional arguments, which are checked against the declared
+ * schemas first. The caller is the script's session.
  */
 
 import { types } from "node:util";
-import { Type, type TSchema } from "@sinclair/typebox";
+import { KindGuard, Type, type TObject, type TProperties, type TSchema } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
-import type { ScriptParam } from "@reins/sdk/server";
-import type { ApiContext, ApiFunctionDef } from "../scripting/define-function.js";
-import { schemaAnyOf, schemaField, schemaItems, schemaProperties } from "../scripting/schema-utils.js";
-import type { CallContext, SdkMethod, SdkNamespace } from "./declaration.js";
+import type { AnyScriptMethod, ScriptNamespace, ScriptParam } from "@reins/sdk/server";
+import type { Models } from "../models/models.js";
+import type { SessionModel } from "../models/session.js";
+import { schemaAnyOf, schemaField, schemaItems, schemaProperties } from "./schema-utils.js";
+import type { CallContext } from "./declaration.js";
 
-/** The context of a call from a script of the session `ctx` is about. */
+/** A script's call: its session, as its row was when the script began (its project and task, null for none, and
+ * its source, the checkout its git and file operations work in; never the caller's say), the call's models, and
+ * the script's signal. */
+export interface ApiContext {
+  session: SessionModel;
+  models: Models;
+  signal?: AbortSignal;
+}
+
+/** A function of `api`: what `search` documents (`parameters`: an object schema whose properties are the
+ * arguments, in order) and matches (its name, namespace, tags and description), and `call`, which a script's
+ * `api.<namespace>.<method>(…)` runs with its arguments. */
+export interface ScriptFunction {
+  /** `<namespace>.<method>`, e.g. `tasks.list`. */
+  name: string;
+  description: string;
+  parameters: TObject<TProperties>;
+  returns: TSchema;
+  tags: string[];
+  call(args: readonly unknown[], ctx: ApiContext): Promise<unknown>;
+}
+
+/** The context of a call of the core's SDK from a script of the session `ctx` is about. */
 export function scriptCallContext(ctx: ApiContext): CallContext {
   return {
     models: ctx.models,
@@ -20,18 +44,29 @@ export function scriptCallContext(ctx: ApiContext): CallContext {
   };
 }
 
-/** The namespace's methods as `api`'s functions. */
-export function scriptFunctions({ name: namespace, methods }: SdkNamespace): ApiFunctionDef[] {
-  return Object.entries(methods).map(([name, method]) => scriptFunction(`${namespace}.${name}`, method));
+/** The namespace's methods as `api`'s functions; `contextOf` gives each call its method's context. Throws for a
+ * name or schema the projection cannot use. */
+export function scriptFunctions<C>({ namespace, methods }: ScriptNamespace<C>, contextOf: (ctx: ApiContext) => C): ScriptFunction[] {
+  if (!/^[a-z][a-z0-9]*$/.test(namespace)) throw new Error(`Not an api namespace: ${namespace}`);
+  return Object.entries(methods).map(([name, method]) => {
+    if (!/^[a-z][A-Za-z0-9]*$/.test(name)) throw new Error(`Not an api method name: ${namespace}.${name}`);
+    return scriptFunction(`${namespace}.${name}`, method, contextOf);
+  });
 }
 
 /** The namespace's named types, for `search`. */
-export function scriptTypes({ types: named = {} }: SdkNamespace): { name: string; schema: TSchema }[] {
-  return Object.entries(named).map(([name, schema]) => ({ name, schema }));
+export function scriptTypes({ types: named = {} }: ScriptNamespace<unknown>): { name: string; schema: TSchema }[] {
+  return Object.entries(named).map(([name, schema]) => ({ name, schema: schemaOf(name, schema) }));
 }
 
-function scriptFunction(name: string, method: SdkMethod): ApiFunctionDef {
-  const own = method.params.map(param => ({ ...param, schema: forScripts(schemaOf(name, param.schema)) }));
+function scriptFunction<C>(name: string, method: AnyScriptMethod<C>, contextOf: (ctx: ApiContext) => C): ScriptFunction {
+  if (!Array.isArray(method.params)) throw new Error(`${name}: its params must be an array`);
+  const own = method.params.map(param => {
+    if (typeof param?.name !== "string" || !param.name) throw new Error(`${name}: a param needs a name`);
+    // Only a schema the host can check may take a script's arguments.
+    if (!KindGuard.IsSchema(param.schema)) throw new Error(`${name}: ${param.name} must be a TypeBox schema, which the host checks`);
+    return { ...param, schema: forScripts(param.schema) };
+  });
   const kept = own.findLastIndex(param => param.schema !== null) + 1;
   // Only trailing arguments can be an extension's: a script's arguments are positional.
   if (own.slice(0, kept).some(param => param.schema === null)) throw new Error(`${name}: an argument before a script's last is not for scripts`);
@@ -41,11 +76,10 @@ function scriptFunction(name: string, method: SdkMethod): ApiFunctionDef {
     description: method.description,
     parameters: parametersOf(params),
     returns: schemaOf(name, method.returns),
-    async: true,
     tags: [...method.tags],
     async call(args, ctx) {
       const checked = checkedArgs(name, params, args);
-      const result = await method.run(scriptCallContext(ctx), ...checked);
+      const result = await method.run(contextOf(ctx), ...checked);
       return method.toScript ? method.toScript(result, ...checked) : result;
     },
   };
@@ -59,7 +93,7 @@ function parametersOf(params: readonly (ScriptParam & { schema: TSchema })[]) {
   return { ...object, required };
 }
 
-// The registry and the renderer read only JSON Schema fields, so any JSON Schema object works there.
+// The renderer reads only JSON Schema fields, so any JSON Schema object works there.
 function isSchema(schema: unknown): schema is TSchema {
   return typeof schema === "object" && schema !== null && !Array.isArray(schema);
 }

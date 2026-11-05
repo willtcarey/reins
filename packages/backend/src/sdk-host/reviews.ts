@@ -5,6 +5,7 @@
  */
 
 import { Type } from "@sinclair/typebox";
+import type { ScriptNamespace } from "@reins/sdk/server";
 import { asyncIterableToText } from "../async-iterable.js";
 import {
   CodeReviewStateSchema,
@@ -14,7 +15,7 @@ import {
   ReviewEntrySchema,
 } from "../models/code-review.js";
 import type { SessionModel } from "../models/session.js";
-import { sdkMethod, type CallContext, type SdkNamespace } from "./declaration.js";
+import { sdkMethod, type CallContext } from "./declaration.js";
 
 /** The calling session, of a project: code reviews belong to projects. */
 function reviewing(context: CallContext): { session: SessionModel; projectId: number } {
@@ -69,7 +70,7 @@ const addComment = sdkMethod({
 });
 
 export const REVIEWS = {
-  name: "reviews",
+  namespace: "reviews",
   methods: { current, addComment },
   types: {
     CodeReview: CodeReviewStateSchema,
@@ -78,4 +79,4 @@ export const REVIEWS = {
     ReviewDiffLine: ReviewDiffLineSchema,
     ReviewEntry: ReviewEntrySchema,
   },
-} satisfies SdkNamespace;
+} satisfies ScriptNamespace<CallContext>;

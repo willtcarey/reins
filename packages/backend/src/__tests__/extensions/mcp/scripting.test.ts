@@ -102,9 +102,9 @@ describe("api.mcp", () => {
     const wrongType = await script(`return await api.mcp.update("slack", { enabled: "false" })`);
     const unknownField = await script(`return await api.mcp.update("slack", { colour: "red" })`);
 
-    expect(long).toMatchObject({ ok: false, error: expect.stringContaining("/instructions") });
-    expect(wrongType).toMatchObject({ ok: false, error: expect.stringContaining("/enabled") });
-    expect(unknownField).toMatchObject({ ok: false, error: expect.stringContaining("colour") });
+    expect(long).toEqual({ ok: false, error: "api.mcp.add: server.instructions: Expected string length less or equal to 4000" });
+    expect(wrongType).toEqual({ ok: false, error: "api.mcp.update: changes.enabled: Expected boolean" });
+    expect(unknownField).toEqual({ ok: false, error: "api.mcp.update: changes.colour: Unexpected property" });
     const left = await script(`return (await api.mcp.list()).map(server => [server.name, server.enabled])`);
     if (!left.ok) throw new Error(left.error);
     expect(JSON.parse(left.text)).toEqual([["slack", true]]);

@@ -1,12 +1,13 @@
 /**
  * The server SDK's capabilities, declared once (docs/dev/server-sdk.md *One layer*): each method that agents'
  * scripts may call is a `ScriptMethod` of `@reins/sdk/server`, its schemas beside its implementation. `bind`
- * makes a namespace the SDK object of one caller: an extension (`ServerSdk`), or an agent's session, whose
- * script gets it as `api` (`projection.ts`, which documents and checks it from the same declaration).
+ * makes a namespace's methods the SDK object of one caller: an extension (`ServerSdk`), or an agent's session, whose
+ * script gets them as `api` (`projection.ts`, which documents and checks them from the same declaration). A namespace
+ * is a `ScriptNamespace` of the SDK, as an extension's own `api.<namespace>` is.
  */
 
 import { Type, type Static, type TSchema } from "@sinclair/typebox";
-import type { JsonSchema, ScriptArgs, ScriptMethod, ScriptParam } from "@reins/sdk/server";
+import type { AnyScriptMethod, ScriptArgs, ScriptMethod, ScriptParam } from "@reins/sdk/server";
 import type { Models } from "../models/models.js";
 import type { SessionModel } from "../models/session.js";
 
@@ -28,27 +29,15 @@ export interface CallContext {
   caller: Caller;
 }
 
-/** A declared method in its stored form (method syntax: a namespace holds methods of different arguments). */
-export interface SdkMethod {
-  readonly description: string;
-  readonly params: readonly ScriptParam[];
-  readonly returns: JsonSchema;
-  readonly tags: readonly string[];
-  run(context: CallContext, ...args: any[]): Promise<unknown>;
-  toScript?(result: any, ...args: any[]): unknown;
-}
-
-/** A namespace of the SDK: its methods that scripts may call, and the named types `search` shows by name. */
-export interface SdkNamespace<M extends Record<string, SdkMethod> = Record<string, SdkMethod>> {
-  readonly name: string;
-  readonly methods: M;
-  readonly types?: Readonly<Record<string, TSchema>>;
-}
-
-/** Declares a method: `run`'s arguments are typed by `params`, its result by `returns` (or `toScript`'s). */
-export function sdkMethod<const P extends readonly ScriptParam[], R extends TSchema, T = Static<R>>(
-  method: ScriptMethod<CallContext, P, R, T>,
-): ScriptMethod<CallContext, P, R, T> {
+/** Declares a method: `run`'s arguments are typed by `params`, and its result by `returns`, or by `toScript`'s
+ * when a script gets another form of it. */
+export function sdkMethod<const P extends readonly ScriptParam[], R extends TSchema>(
+  method: ScriptMethod<CallContext, P, R, Static<R>> & { toScript?: undefined },
+): ScriptMethod<CallContext, P, R, Static<R>>;
+export function sdkMethod<const P extends readonly ScriptParam[], R extends TSchema, T>(
+  method: ScriptMethod<CallContext, P, R, T> & { toScript(result: T, ...args: ScriptArgs<P>): Static<R> },
+): ScriptMethod<CallContext, P, R, T>;
+export function sdkMethod(method: AnyScriptMethod<CallContext>): AnyScriptMethod<CallContext> {
   return method;
 }
 
@@ -60,8 +49,8 @@ export type Bound<M> = {
 };
 
 /** `methods` bound to the context `context()` gives at each call (an extension's models are the app's of that call). */
-export function bind<M extends Record<string, SdkMethod>>(methods: M, context: () => CallContext): Bound<M>;
-export function bind(methods: Record<string, SdkMethod>, context: () => CallContext): Record<string, (...args: unknown[]) => Promise<unknown>> {
+export function bind<M extends Record<string, AnyScriptMethod<CallContext>>>(methods: M, context: () => CallContext): Bound<M>;
+export function bind(methods: Record<string, AnyScriptMethod<CallContext>>, context: () => CallContext): Record<string, (...args: unknown[]) => Promise<unknown>> {
   const bound: Record<string, (...args: unknown[]) => Promise<unknown>> = {};
   for (const [name, method] of Object.entries(methods)) bound[name] = (...args) => method.run(context(), ...args);
   return bound;

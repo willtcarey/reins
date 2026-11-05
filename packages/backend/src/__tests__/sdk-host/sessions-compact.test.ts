@@ -8,7 +8,7 @@ import { getDb } from "../../app-globals.js";
 import { type Project } from "../../project-store.js";
 import { createProject } from "../project-fixture.js";
 import { createSession } from "../session-fixture.js";
-import { buildApiObject } from "../../scripting/api-registry.js";
+import { buildApiObject } from "../../sdk-host/scripts.js";
 import { scriptContext } from "../helpers/script-context.js";
 
 const storedRoles = (sessionId: string) => getDb()

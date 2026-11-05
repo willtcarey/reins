@@ -5,8 +5,9 @@
  */
 
 import { Type } from "@sinclair/typebox";
+import type { ScriptNamespace } from "@reins/sdk/server";
 import { ToolResultSchema, toolSearchDocs } from "../extensions/tool-docs.js";
-import { SignalSchema, sdkMethod, signalOf, type SdkNamespace } from "./declaration.js";
+import { SignalSchema, sdkMethod, signalOf, type CallContext } from "./declaration.js";
 
 const FiltersSchema = Type.Record(Type.String(), Type.Unknown(), {
   description: "Given to every provider as they are, e.g. { server: \"vercel\" }; each provider decides what its keys mean (the system prompt says which it takes).",
@@ -55,4 +56,4 @@ const call = sdkMethod({
   },
 });
 
-export const TOOLS = { name: "tools", methods: { search, call }, types: { ToolResult: ToolResultSchema } } satisfies SdkNamespace;
+export const TOOLS = { namespace: "tools", methods: { search, call }, types: { ToolResult: ToolResultSchema } } satisfies ScriptNamespace<CallContext>;

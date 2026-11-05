@@ -30,7 +30,7 @@ import { createNodeLinks, type NodeLinks } from "./nodes/node-link.js";
 import type { NodeBundleDelivery } from "./node-bundle/delivery.js";
 import { ExtensionHost, type ExtensionRegistration } from "./extensions/host.js";
 import { BUILT_IN_EXTENSIONS } from "./extensions/built-in.js";
-import { API_FUNCTIONS, fnNamespace } from "./scripting/api-registry.js";
+import { API_FUNCTIONS, fnNamespace } from "./sdk-host/scripts.js";
 import type { PromptContext } from "@reins/sdk/server";
 import { logger } from "./logger.js";
 

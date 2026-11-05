@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { Type } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
-import { buildApiObject } from "../../scripting/api-registry.js";
+import { buildApiObject } from "../../sdk-host/scripts.js";
 import { TaskSchema } from "../../sdk-host/projects.js";
 import { createProject } from "../project-fixture.js";
 import { createTask, getTask } from "../../task-store.js";

@@ -89,7 +89,7 @@ Not done: refreshing before the access token expires (an expired token costs one
 
 ## Exposing tools to agents
 
-Agents reach MCP tools only through `execute`, in two steps: the system prompt names the servers, and `api.tools.search(query, { server })` finds their tools ([server-sdk.md](server-sdk.md) *Agents and `api.tools`*). No MCP tool becomes a direct tool of the model, because:
+Agents reach MCP tools only through `execute`, in two steps: the system prompt names the servers, and `api.tools.search(query, { filters: { server } })` finds their tools ([server-sdk.md](server-sdk.md) *Agents and `api.tools`*); another extension finds and calls them with `reins.tools.search` and `reins.tools.call` (*Tools on the SDK*). No MCP tool becomes a direct tool of the model, because:
 
 - the model's tool definitions and the system prompt then do not grow with each server (Vercel has 238 tools);
 - a tool a server adds is found at the next lookup; direct tool definitions are fixed for a turn and would need a fresh list before each run;

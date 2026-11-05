@@ -3,24 +3,14 @@
  * Settings → MCP (docs/dev/mcp-servers.md). Their tools are `api.tools`' (`tools.ts`).
  */
 
-import { Type, type Static, type TObject, type TProperties, type TSchema } from "@sinclair/typebox";
-import type { ScriptContext, ScriptFunction, ScriptType } from "@reins/sdk/server";
+import { Type, type Static, type TSchema } from "@sinclair/typebox";
+import type { ScriptContext, ScriptMethod, ScriptNamespace, ScriptParam } from "@reins/sdk/server";
 import type { McpServers, McpServerView } from "./servers.js";
 import { McpServerInputSchema, McpServerUpdateSchema } from "./input.js";
 import { McpAuthKindSchema, McpTransportKindSchema } from "./store.js";
 
-/** A function whose `execute` is typed by its schemas. */
-function scriptFunction<P extends TObject<TProperties>, R extends TSchema>(def: {
-  name: string;
-  description: string;
-  parameters: P;
-  returns: R;
-  async?: boolean;
-  tags: string[];
-  execute: (params: Static<P>, context: ScriptContext) => Static<R> | Promise<Static<R>>;
-}): ScriptFunction {
-  return def;
-}
+/** A method whose `run` is typed by its schemas. */
+const scriptMethod = <const P extends readonly ScriptParam[], R extends TSchema>(method: ScriptMethod<ScriptContext, P, R, Static<R>>) => method;
 
 const SIGN_IN = "An OAuth server is signed in to with mcp.signIn (or by the user, under Settings → MCP).";
 
@@ -56,7 +46,7 @@ export const McpServerTestSchema = Type.Object({
   toolCount: Type.Union([Type.Number(), Type.Null()], { description: "How many tools it listed; null when the attempt failed." }),
 });
 
-const serverParam = Type.Union([Type.String(), Type.Number()], { description: "Its name or ID." });
+const serverParam = { name: "server", schema: Type.Union([Type.String(), Type.Number()], { description: "Its name or ID." }) } as const;
 
 function summary(server: McpServerView) {
   return {
@@ -78,92 +68,77 @@ function summary(server: McpServerView) {
 }
 
 /** The functions over `servers`; `callbackPath` is the OAuth callback page's path from the server's root. */
-export function mcpScripting(servers: McpServers, callbackPath: string): { functions: ScriptFunction[]; types: ScriptType[] } {
+export function mcpScripting(servers: McpServers, callbackPath: string): ScriptNamespace {
 
-  const mcpListFunction = scriptFunction({
-    name: "mcp.list",
+  const list = scriptMethod({
     description: "List the remote MCP servers set up in Reins (Settings → MCP), in name order, with each one's status. Secrets are only said to be set.",
-    parameters: Type.Object({}),
+    params: [],
     returns: Type.Array(McpServerSchema),
-    async: true,
     tags: ["mcp", "servers", "list", "status", "read"],
-    execute: async () => (await servers.list()).map(summary),
+    run: async () => (await servers.list()).map(summary),
   });
 
-  const mcpGetFunction = scriptFunction({
-    name: "mcp.get",
+  const get = scriptMethod({
     description: "Get one MCP server by name or ID. Throws for an unknown one, naming those there are.",
-    parameters: Type.Object({ server: serverParam }),
+    params: [serverParam],
     returns: McpServerSchema,
-    async: true,
     tags: ["mcp", "server", "get", "status", "read"],
-    execute: async (params) => summary(await servers.find(params.server).view()),
+    run: async (_context, server) => summary(await servers.find(server).view()),
   });
 
-  const mcpAddFunction = scriptFunction({
-    name: "mcp.add",
+  const add = scriptMethod({
     description:
       "Add a remote MCP server (HTTP; stdio is not supported). transport is \"http\" (streamable HTTP, the default) or " +
       "\"sse\" for a legacy HTTP+SSE server. Header auth needs headerName and headerValue. " +
       `It is not connected until used: mcp.test connects and reports. ${SIGN_IN}\n\n` +
       "  await api.mcp.add({ name: \"executor\", url: \"https://executor.example.com/mcp\", authKind: \"oauth\" });\n" +
       "  return await api.mcp.test(\"executor\");",
-    parameters: Type.Object({ server: McpServerInputSchema }),
+    params: [{ name: "server", schema: McpServerInputSchema }],
     returns: McpServerSchema,
-    async: true,
     tags: ["mcp", "server", "add", "create", "write", "oauth", "header", "api key"],
-    execute: async (params) => summary(await servers.create(params.server)),
+    run: async (_context, server) => summary(await servers.create(server)),
   });
 
-  const mcpUpdateFunction = scriptFunction({
-    name: "mcp.update",
+  const update = scriptMethod({
     description:
       "Change an MCP server: what is left out is kept; a secret given as null is removed. Changing its url, authKind or " +
       "oauthClientId signs it out; changing its transport only reconnects. `enabled: false` disables it.",
-    parameters: Type.Object({ server: serverParam, changes: McpServerUpdateSchema }),
+    params: [serverParam, { name: "changes", schema: McpServerUpdateSchema }],
     returns: McpServerSchema,
-    async: true,
     tags: ["mcp", "server", "update", "edit", "enable", "disable", "write"],
-    execute: async (params) => summary(await servers.find(params.server).update(params.changes)),
+    run: async (_context, server, changes) => summary(await servers.find(server).update(changes)),
   });
 
-  const mcpRemoveFunction = scriptFunction({
-    name: "mcp.remove",
+  const remove = scriptMethod({
     description: "Remove an MCP server and its credentials for good.",
-    parameters: Type.Object({ server: serverParam }),
+    params: [serverParam],
     returns: Type.Void(),
-    async: true,
     tags: ["mcp", "server", "remove", "delete", "write"],
-    execute: async (params) => { await servers.find(params.server).remove(); },
+    run: async (_context, server) => { await servers.find(server).remove(); },
   });
 
-  const mcpTestFunction = scriptFunction({
-    name: "mcp.test",
+  const test = scriptMethod({
     description:
       "Connect to an MCP server afresh and list its tools: the server after the attempt (status.state ready, or error " +
       "with status.message saying why, or needs_sign_in) and how many tools it listed (null when it failed).",
-    parameters: Type.Object({ server: serverParam }),
+    params: [serverParam],
     returns: McpServerTestSchema,
-    async: true,
     tags: ["mcp", "server", "test", "connect", "status", "check"],
-    execute: async (params, context) => {
-      const { server, toolCount } = await servers.find(params.server).test(context.signal);
+    run: async (context, name) => {
+      const { server, toolCount } = await servers.find(name).test(context.signal);
       return { server: summary(server), toolCount };
     },
   });
 
-  const mcpSignOutFunction = scriptFunction({
-    name: "mcp.signOut",
+  const signOut = scriptMethod({
     description: "Forget an OAuth MCP server's tokens; it then needs sign-in.",
-    parameters: Type.Object({ server: serverParam }),
+    params: [serverParam],
     returns: McpServerSchema,
-    async: true,
     tags: ["mcp", "server", "sign out", "logout", "oauth", "tokens", "write"],
-    execute: async (params) => summary(await servers.find(params.server).signOut()),
+    run: async (_context, server) => summary(await servers.find(server).signOut()),
   });
 
-  const mcpSignInFunction = scriptFunction({
-    name: "mcp.signIn",
+  const signIn = scriptMethod({
     description:
       "Start an OAuth sign-in to an MCP server: give the user `authorizationUrl` to open. Once they approve, their " +
       "browser goes to `callbackUrl`. If it reaches Reins there, the sign-in completes by itself (mcp.get shows " +
@@ -172,40 +147,39 @@ export function mcpScripting(servers: McpServers, callbackPath: string): { funct
       "replaces it.\n\n" +
       "  const { authorizationUrl } = await api.mcp.signIn(\"executor\");\n" +
       "  return authorizationUrl; // for the user to open",
-    parameters: Type.Object({
-      server: serverParam,
-      callbackOrigin: Type.Optional(Type.String({
-        description: `Reins' address as the user's browser opens it, e.g. https://reins.example.com: the callback is its ${callbackPath}. ` +
-          "By default the one of the latest completed sign-in, else http://localhost:<Reins' port>. A server's pre-registered " +
-          "client accepts only the callback registered with it.",
-      })),
-    }),
+    params: [
+      serverParam,
+      {
+        name: "callbackOrigin",
+        schema: Type.String({
+          description: `Reins' address as the user's browser opens it, e.g. https://reins.example.com: the callback is its ${callbackPath}. ` +
+            "By default the one of the latest completed sign-in, else http://localhost:<Reins' port>. A server's pre-registered " +
+            "client accepts only the callback registered with it.",
+        }),
+        optional: true,
+      },
+    ],
     returns: McpSignInSchema,
-    async: true,
     tags: ["mcp", "server", "sign in", "login", "oauth", "authorize", "url"],
-    execute: async (params) => {
-      const server = servers.find(params.server);
-      if (params.callbackOrigin === undefined) return server.startSignIn();
+    run: async (_context, name, callbackOrigin) => {
+      const server = servers.find(name);
+      if (callbackOrigin === undefined) return server.startSignIn();
       let origin: string;
-      try { origin = new URL(params.callbackOrigin).origin; } catch { throw new Error(`Not a URL: ${params.callbackOrigin}`); }
+      try { origin = new URL(callbackOrigin).origin; } catch { throw new Error(`Not a URL: ${callbackOrigin}`); }
       return server.startSignIn(`${origin}${callbackPath}`);
     },
   });
 
-  const mcpFinishSignInFunction = scriptFunction({
-    name: "mcp.finishSignIn",
+  const finishSignIn = scriptMethod({
     description:
       "Complete an mcp.signIn whose callback page did not load: pass the URL the user's browser was sent to (from " +
       "their address bar, with its code and state). Throws when the sign-in is unknown (already completed, replaced " +
       "or never started), expired, refused or the exchange fails. Returns the server, signed in.",
-    parameters: Type.Object({
-      callbackUrl: Type.String({ description: "The whole URL, or just its query (?code=…&state=…)." }),
-    }),
+    params: [{ name: "callbackUrl", schema: Type.String({ description: "The whole URL, or just its query (?code=…&state=…)." }) }],
     returns: McpServerSchema,
-    async: true,
     tags: ["mcp", "server", "sign in", "oauth", "callback", "code", "complete"],
-    execute: async (params) => {
-      const text = params.callbackUrl.trim();
+    run: async (_context, callbackUrl) => {
+      const text = callbackUrl.trim();
       const query = URL.canParse(text) ? new URL(text).searchParams : new URLSearchParams(text.replace(/^[^?]*\?/, ""));
       return summary(await servers.finishSignIn({
         state: query.get("state"),
@@ -216,24 +190,9 @@ export function mcpScripting(servers: McpServers, callbackPath: string): { funct
     },
   });
 
-  const functions: ScriptFunction[] = [
-    mcpListFunction,
-    mcpGetFunction,
-    mcpAddFunction,
-    mcpUpdateFunction,
-    mcpRemoveFunction,
-    mcpTestFunction,
-    mcpSignInFunction,
-    mcpFinishSignInFunction,
-    mcpSignOutFunction,
-  ];
   return {
-    functions,
-    types: [
-      { name: "McpServer", schema: McpServerSchema },
-      { name: "McpServerStatus", schema: McpServerStatusSchema },
-      { name: "McpSignIn", schema: McpSignInSchema },
-      { name: "McpServerTest", schema: McpServerTestSchema },
-    ],
+    namespace: "mcp",
+    methods: { list, get, add, update, remove, test, signIn, finishSignIn, signOut },
+    types: { McpServer: McpServerSchema, McpServerStatus: McpServerStatusSchema, McpSignIn: McpSignInSchema, McpServerTest: McpServerTestSchema },
   };
 }
