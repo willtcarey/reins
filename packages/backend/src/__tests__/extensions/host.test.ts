@@ -498,7 +498,6 @@ describe("the server SDK's host", () => {
       const notes = testExtension({
         title: "Notes tools",
         setup: reins => {
-          reins.images.registerProvider({ title: "Notes images", models: async () => [], generate: async () => ({ images: [] }) });
           reins.prompt.register(() => "Notes");
           reins.prompt.register(() => null);
           reins.scripting.register({ functions: [fn("notes.list"), fn("notes.add")] });
@@ -524,7 +523,6 @@ describe("the server SDK's host", () => {
         errors: [],
         registrations: {
           tools: { title: "Notes tools" },
-          images: { title: "Notes images" },
           promptSections: 2,
           settlementListeners: 0,
           scriptFunctions: ["notes.add", "notes.list"],
@@ -543,7 +541,7 @@ describe("the server SDK's host", () => {
       expect(second).toMatchObject({
         name: "quiet",
         status: "loaded",
-        registrations: { tools: null, images: null, promptSections: 0, settlementListeners: 0, scriptFunctions: [], httpMethods: [], pages: [] },
+        registrations: { tools: null, promptSections: 0, settlementListeners: 0, scriptFunctions: [], httpMethods: [], pages: [] },
       });
     });
 

@@ -22,10 +22,9 @@ import { formatValue, scriptOutput, type ScriptContentBlock } from "./script-out
 const TIMEOUT_MS = 30_000;
 
 /**
- * A script that throws is a completed call: its error message reaches the model unchanged. `content` is what
- * the model gets: the blocks of `text()` and `image()`, then the return value. It crosses from the app to a
- * session runtime (`App.executeScript`), which may run older code that reads only `text`: so `text` stays,
- * the text blocks joined.
+ * A script that throws is a completed call: its error message reaches the model unchanged. `content` is there
+ * when the script called `text()` or `image()`: their blocks, then the return value. `text` stays for a session
+ * runtime of older code (`App.executeScript`).
  */
 export type ScriptExecuteResult = { ok: true; text: string; content?: ScriptContentBlock[] } | { ok: false; error: string };
 
@@ -75,7 +74,8 @@ export async function runScript(ctx: ApiContext, code: string): Promise<ScriptEx
     const wrapped = `(async function(api) { ${code}\n})(api)`;
     const result = await runInContext(wrapped, vmContext, { timeout: TIMEOUT_MS });
     const content = await output.blocks();
-    if (result !== undefined || content.length === 0) content.push({ type: "text", text: formatValue(result) });
+    if (content.length === 0) return { ok: true, text: formatValue(result) };
+    if (result !== undefined) content.push({ type: "text", text: formatValue(result) });
     const text = content.flatMap(block => block.type === "text" ? [block.text] : []).join("\n");
     return { ok: true, text, content };
   } catch (err: any) {

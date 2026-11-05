@@ -49,7 +49,7 @@ execute({
 A script can give the agent more than its return value. Two globals add content blocks to the tool result, in call order; the return value comes last, as text:
 
 - **`text(value)`** adds a text block (a string as it is, another value as JSON).
-- **`image(...items)`** adds images. It takes `{ data, mimeType }` (`data` is base64 or a `Uint8Array`), image blocks (`{ type: "image", data, mimeType }`, as MCP tools return), a result of `api.tools.call` (its image blocks only), a result of `api.images.generate`, and arrays of these. It throws for something that is not an image, for a call that holds no image, and over 10 images in a script.
+- **`image(...items)`** adds images. It takes `{ data, mimeType }` (`data` is base64 or a `Uint8Array`; MCP's image blocks have this shape), a result of `api.tools.call` (its images only), a result of `api.images.generate`, and arrays of these. It throws for something that is not an image, for a call that holds no image, and over 10 images in a script.
 
 ```javascript
 const shot = await api.tools.call("mcp__browser__screenshot", { url: "https://example.com" });

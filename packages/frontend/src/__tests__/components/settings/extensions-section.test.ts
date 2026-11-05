@@ -29,7 +29,7 @@ function backendExtension(name: string, overrides: Partial<ExtensionView> = {}):
     status: "loaded",
     failure: null,
     errors: [],
-    registrations: { tools: null, images: null, promptSections: 0, settlementListeners: 0, scriptFunctions: [], httpMethods: [], pages: [] },
+    registrations: { tools: null, promptSections: 0, settlementListeners: 0, scriptFunctions: [], httpMethods: [], pages: [] },
     services: [],
     storage: null,
     ...overrides,
@@ -80,7 +80,7 @@ describe("SettingsExtensionDetails", () => {
   test("shows what it gives agents, its HTTP methods and pages, and what it keeps: its directory, its database's size and how many secrets", () => {
     const details = new SettingsExtensionDetails();
     details.store = loadedStore([backendExtension("notes", {
-      registrations: { tools: { title: "Notes tools" }, images: { title: "Notes images" }, promptSections: 1, settlementListeners: 0, scriptFunctions: ["notes.list"], httpMethods: ["list"], pages: ["/extensions/notes/oauth/callback"] },
+      registrations: { tools: { title: "Notes tools" }, promptSections: 1, settlementListeners: 0, scriptFunctions: ["notes.list"], httpMethods: ["list"], pages: ["/extensions/notes/oauth/callback"] },
       storage: {
         dataDir: "/data/extensions/notes",
         databaseBytes: 4096,
@@ -92,7 +92,7 @@ describe("SettingsExtensionDetails", () => {
 
     const text = visibleText(details);
 
-    expect(text).toContain("For agents Tool providers Notes tools Image providers Notes images System prompt 1 section API functions api.notes.list");
+    expect(text).toContain("For agents Tool providers Notes tools System prompt 1 section API functions api.notes.list");
     expect(text).toContain("HTTP Methods POST /api/extensions/notes/list Pages GET /extensions/notes/oauth/callback");
     expect(text).toContain("/data/extensions/notes");
     expect(text).toContain("4.0 KB");
@@ -120,7 +120,7 @@ describe("SettingsExtensionDetails", () => {
   test("shows how many listeners of its sessions' run ends it has, when it has any", () => {
     const details = new SettingsExtensionDetails();
     details.store = loadedStore([backendExtension("automation", {
-      registrations: { tools: null, images: null, promptSections: 0, settlementListeners: 1, scriptFunctions: [], httpMethods: [], pages: [] },
+      registrations: { tools: null, promptSections: 0, settlementListeners: 1, scriptFunctions: [], httpMethods: [], pages: [] },
     })]);
     details.name = "automation";
 

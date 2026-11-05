@@ -135,8 +135,7 @@ function executeTool(calls: ReinsToolCalls): AgentHarnessTool<HostToolContext | 
       "Write a function body using the existing `api` object. " +
       "Use the `search` tool to discover functions not already documented in the system prompt. " +
       "Use `return` to produce a result; `text(value)` and `image(...images)` add content blocks before it, in call order. " +
-      "`image()` takes `{ data, mimeType }` (data is base64 or a Uint8Array), image blocks, results of `api.tools.call` " +
-      "and results of `api.images.generate`; at most 10 images in a script.",
+      "`image()` takes `{ data, mimeType }` (data base64 or bytes) and results of `api.tools.call` and `api.images.generate`.",
     parameters: executeParameters,
     replay: "never",
     async execute(_toolCallId, params, _onUpdate, _toolContext, _invocation, context) {

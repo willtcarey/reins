@@ -53,7 +53,7 @@ export interface ServerSdk {
    * is under `/api/extensions/<name>/` and its pages under `/extensions/<name>/`. */
   readonly name: string;
   readonly tools: Tools;
-  /** Image models agents can use (`api.images`): register a provider of them. */
+  /** Image models for agents' `api.images`. */
   readonly images: Images;
   readonly prompt: Prompt;
   readonly scripting: Scripting;
@@ -413,63 +413,31 @@ export interface ImageBlock {
   type: "image";
   /** Base64, without a `data:` prefix. */
   data: string;
-  /** E.g. `image/png`. */
   mimeType: string;
-}
-
-/** An image model a provider gives. */
-export interface ImageModel {
-  /**
-   * Its local ID: unique among the provider's models, and stable, as an agent may keep it. No whitespace, at
-   * most 200 characters (`/` and `.` are allowed). Agents see `<extension>__<local ID>`, and the host gives the
-   * provider back the local ID at a generation. A model whose ID breaks these rules is left out of the list and
-   * reported as the extension's error.
-   */
-  id: string;
-  name?: string;
-  description?: string;
-  /** What a request can give it: `text` (the prompt) and `image` (images to edit or to start from). */
-  input: ("text" | "image")[];
 }
 
 /** What an agent asks a model for. */
 export interface ImageRequest {
   prompt: string;
-  /** Images to edit or start from, for a model whose `input` has `image`. */
+  /** Images to edit. */
   images?: ImageBlock[];
-  /** The provider's own size, e.g. `1024x1024`. */
+  /** E.g. `1024x1024`. */
   size?: string;
-  /** How many images to make; the provider's default (one) when absent. */
   count?: number;
   /** The provider's own parameters, given as they are. */
   parameters?: Readonly<Record<string, unknown>>;
 }
 
-/** What a model made: its images, and any text it gave with them (a revised prompt). */
-export interface ImageResult {
-  images: ImageBlock[];
-  text?: string;
-}
-
-/**
- * Where an extension's image models come from: one for each extension. The host asks it at each list and each
- * generation: the core keeps no list of models. Its models are not chat models: they are not in the model
- * picker.
- */
+/** Where an extension's image models come from. It is asked at each list and each generation. */
 export interface ImagesProvider {
-  /** Shown with its models, e.g. "OpenAI images". */
-  readonly title: string;
-  /** Its models now. Asked at the same time as the other providers'; a throw is shown to the agent in place of
-   * this provider's models, and does not stop the other providers. */
-  models(options: { signal: AbortSignal }): Promise<ImageModel[]>;
-  /** Makes images with the model of local ID `modelId`. A model that is none of its own, and a failure, throw:
-   * the throw reaches the agent's script. `signal` aborts when the agent's script ends. */
-  generate(modelId: string, request: ImageRequest, options: { signal: AbortSignal }): Promise<ImageResult>;
+  /** Its model IDs now, without whitespace. Agents see `<extension>__<id>`. */
+  models(signal: AbortSignal): Promise<string[]>;
+  /** A failure throws, and the throw reaches the agent's script. */
+  generate(model: string, request: ImageRequest, signal: AbortSignal): Promise<ImageBlock[]>;
 }
 
 export interface Images {
-  /** Registers the extension's image provider. An extension has one at a time: registering a second while it
-   * has one throws. */
+  /** One per extension: a second throws while the first is registered. */
   registerProvider(provider: ImagesProvider): Disposer;
 }
 

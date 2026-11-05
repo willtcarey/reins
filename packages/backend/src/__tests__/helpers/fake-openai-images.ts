@@ -71,10 +71,10 @@ export function startFakeOpenAiImages(): FakeImagesServer {
       if (fake.failure) return Response.json(fake.failure.body, { status: fake.failure.status });
       const count = typeof body.n === "number" ? body.n : Number(body.n ?? 1);
       const data = Array.from({ length: count }, () => {
-        if (fake.answer === "b64") return { b64_json: FAKE_IMAGE_BASE64, revised_prompt: `revised ${String(body.prompt)}` };
+        if (fake.answer === "b64") return { b64_json: FAKE_IMAGE_BASE64 };
         const id = crypto.randomUUID();
         stored.set(id, FAKE_IMAGE);
-        return { b64_json: null, url: `/v1/images/${id}/content`, revised_prompt: String(body.prompt) };
+        return { b64_json: null, url: `/v1/images/${id}/content` };
       });
       return Response.json({ created: 0, data });
     },

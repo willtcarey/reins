@@ -62,7 +62,7 @@ describe("api.mcp", () => {
     if (!finished.ok) throw new Error(finished.error);
     expect(JSON.parse(finished.text)).toMatchObject({ name: "executor", signedIn: true });
     expect(fake.tokenRequests).toEqual(["authorization_code"]);
-    expect(again).toMatchObject({ ok: true, text: callbackUrl });
+    expect(again).toEqual({ ok: true, text: callbackUrl });
   });
 
   test("an agent changes, disables and removes a server by name; an OAuth server it adds needs sign-in", async () => {

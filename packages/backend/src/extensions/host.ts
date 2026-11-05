@@ -2,7 +2,7 @@
  * The host of backend extensions (docs/dev/server-sdk.md): what one app's extensions registered through the
  * server SDK (`@reins/sdk/server`), and the SDK object each one gets. `createAppState` builds one and
  * registers the extensions; the app's `stop` disposes it. The core reads it: `api.tools` (`searchTools`,
- * `callTool`), `api.images` (`images`, an `ImageModels`), `api.<namespace>` (`scriptFunctions`), the system prompt (`promptSections`) and
+ * `callTool`), `api.images` (`imageProviders`), `api.<namespace>` (`scriptFunctions`), the system prompt (`promptSections`) and
  * `/api/extensions/…` and `/extensions/…` (`handle`), and Settings' Extensions section (`list`).
  */
 
@@ -26,8 +26,6 @@ import { logger } from "../logger.js";
 import { deleteExtensionSecret, extensionSecretKeys, getExtensionSecret, setExtensionSecret } from "../extension-secrets-store.js";
 import { matchTools, type ToolSearchGroup } from "./tool-docs.js";
 import { ServiceRunner, type ServiceView } from "./services.js";
-import { ImageModels } from "./image-models.js";
-import { ID_SEPARATOR as SEPARATOR } from "./ids.js";
 
 /** A backend extension as the server registers it: its name, its migrations and its register function. */
 export interface ExtensionRegistration extends ServerExtension { name: string }
@@ -37,6 +35,7 @@ export type RouteScope = "api" | "pages";
 
 /** A final tool ID: `<extension>__<local ID>`, as a model's tool names are. */
 export const MAX_TOOL_ID_LENGTH = 64;
+const SEPARATOR = "__";
 const LOCAL_ID = /^[a-zA-Z0-9_-]+$/;
 
 export class UnknownToolError extends Error {
@@ -93,8 +92,6 @@ export interface ExtensionView {
   registrations: {
     /** Its tool provider. No count of tools: that would ask the provider, which may go to the network. */
     tools: { title: string } | null;
-    /** Its image provider, likewise without a count of models. */
-    images: { title: string } | null;
     promptSections: number;
     /** Its `reins.sessions.onSettled` listeners. */
     settlementListeners: number;
@@ -134,8 +131,8 @@ function schemaOf(name: string, schema: unknown): TSchema {
 export class ExtensionHost {
   /** Each extension's tool provider. */
   private readonly providers: { extension: string; provider: ToolProvider }[] = [];
-  /** The image models of the extensions' image providers (`api.images`). */
-  readonly images = new ImageModels((extension, error) => this.report(extension, error));
+  /** Each extension's image provider, by extension name. */
+  readonly imageProviders = new Map<string, ImagesProvider>();
   private readonly contributions: { extension: string; contribution: PromptContribution }[] = [];
   private readonly scripts: Script[] = [];
   private readonly pages: Page[] = [];
@@ -208,7 +205,6 @@ export class ExtensionHost {
     return [...this.records.values()].map(record => {
       const own = <T extends { extension: string }>(entry: T) => entry.extension === record.name;
       const provider = this.providers.find(own)?.provider;
-      const images = this.images.providerOf(record.name);
       return {
         name: record.name,
         status: record.failure ? "failed" : "loaded",
@@ -216,7 +212,6 @@ export class ExtensionHost {
         errors: [...record.errors],
         registrations: {
           tools: provider ? { title: provider.title } : null,
-          images: images ? { title: images.title } : null,
           promptSections: this.contributions.filter(own).length,
           settlementListeners: this.settlementListeners.filter(own).length,
           scriptFunctions: this.scripts.filter(own).flatMap(script => script.functions.map(fn => fn.name)).toSorted(),
@@ -427,7 +422,9 @@ export class ExtensionHost {
       }),
       images: Object.freeze({
         registerProvider: (provider: ImagesProvider) => {
-          const remove = this.images.add(name, provider);
+          if (this.imageProviders.has(name)) throw new Error("An extension registers one image provider at a time");
+          this.imageProviders.set(name, provider);
+          const remove = () => { if (this.imageProviders.get(name) === provider) this.imageProviders.delete(name); };
           owned.push(remove);
           return remove;
         },

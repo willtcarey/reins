@@ -42,7 +42,7 @@ import { MODEL_FUNCTIONS, ProviderInfoSchema, ModelInfoSchema } from "./models.j
 import { REVIEW_FUNCTIONS } from "./reviews.js";
 import { NODE_FUNCTIONS, NodeCopyResultSchema, NodeDetailSchema, NodeReloadSchema, NodeRunResultSchema, NodeSchema, NodeSourceSchema, ProjectRefSchema, LocationSchema } from "./nodes.js";
 import { TOOLS_FUNCTIONS } from "./tools.js";
-import { IMAGES_FUNCTIONS, ImageBlockSchema, ImageGenerationSchema, ImageModelInfoSchema, ImageModelListSchema, ImageProviderFailureSchema } from "./images.js";
+import { IMAGES_FUNCTIONS, ImageBlockSchema, ImageGenerationSchema } from "./images.js";
 import { ToolResultSchema } from "../extensions/tool-docs.js";
 import { rankByTerms } from "./term-search.js";
 import type { ExtensionHost } from "../extensions/host.js";
@@ -103,9 +103,6 @@ export const DOMAIN_TYPES: NamedType[] = [
   { name: "NodeRunResult", schema: NodeRunResultSchema },
   { name: "NodeCopyResult", schema: NodeCopyResultSchema },
   { name: "ToolResult", schema: ToolResultSchema },
-  { name: "ImageModelList", schema: ImageModelListSchema },
-  { name: "ImageModelInfo", schema: ImageModelInfoSchema },
-  { name: "ImageProviderFailure", schema: ImageProviderFailureSchema },
   { name: "ImageGeneration", schema: ImageGenerationSchema },
   { name: "ImageBlock", schema: ImageBlockSchema },
 ];

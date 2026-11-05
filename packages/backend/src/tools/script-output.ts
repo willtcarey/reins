@@ -5,9 +5,8 @@
 
 import { fitImage, formatMiB } from "../session-runtime/provider-images.js";
 
-export type ScriptTextBlock = { type: "text"; text: string };
 export type ScriptImageBlock = { type: "image"; data: string; mimeType: string };
-export type ScriptContentBlock = ScriptTextBlock | ScriptImageBlock;
+export type ScriptContentBlock = { type: "text"; text: string } | ScriptImageBlock;
 
 /** Each image stays in the session's history and is sent with every later request: a few are enough. */
 export const MAX_SCRIPT_IMAGES = 10;
@@ -21,31 +20,28 @@ export function formatValue(value: unknown): string {
   return JSON.stringify(value, null, 2);
 }
 
-const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null;
-
 /**
- * The images in `value`, as base64 blocks, in order: an image block or `{ data, mimeType }` (`data` base64 or
- * bytes), an object with `images` (`api.images.generate`'s result), one with `content` (a tool's result: its
- * image blocks only), or an array of these. Throws for anything else. Values come from a script's vm, so
- * nothing is checked with `instanceof`.
+ * The images in `value`: `{ data, mimeType }` (data base64 or bytes; an image block is one), an object with
+ * `images` (`api.images.generate`'s result) or `content` (a tool's result), or an array of these. Values come
+ * from the script's vm, so nothing is checked with `instanceof`.
  */
 export function collectImages(value: unknown): ScriptImageBlock[] {
   if (Array.isArray(value)) return value.flatMap(collectImages);
-  if (!isRecord(value)) throw new Error(`not an image: ${formatValue(value).slice(0, 80)}`);
+  if (typeof value !== "object" || value === null) throw new Error(`not an image: ${formatValue(value).slice(0, 80)}`);
   if ("data" in value) {
-    const { data, mimeType } = value;
+    const { data } = value;
+    const mimeType = "mimeType" in value ? value.mimeType : undefined;
     if (typeof mimeType !== "string" || !mimeType.startsWith("image/")) throw new Error("an image needs a mimeType such as \"image/png\"");
     if (typeof data === "string") return [{ type: "image", data, mimeType }];
     if (ArrayBuffer.isView(data)) return [{ type: "image", data: Buffer.from(data.buffer, data.byteOffset, data.byteLength).toString("base64"), mimeType }];
     throw new Error("an image's data is base64 or a Uint8Array");
   }
-  if (Array.isArray(value.images)) return collectImages(value.images);
-  if (Array.isArray(value.content)) return collectImages(value.content.filter(block => isRecord(block) && block.type === "image"));
-  throw new Error("not an image: give { data, mimeType }, an image block, an api.images.generate result or a tool result");
+  if ("images" in value && Array.isArray(value.images)) return collectImages(value.images);
+  if ("content" in value && Array.isArray(value.content)) return collectImages(value.content.filter(block => block?.type === "image"));
+  throw new Error("not an image: give { data, mimeType }, an api.images.generate result or a tool result");
 }
 
-/** The blocks of one image the model can take: scaled down as `read` does, with Pi's note when it was;
- * a note in its place when it cannot be made to fit. */
+/** Scaled down as `read` does, with Pi's note when it was; a note in its place when it cannot fit. */
 async function fitted(image: ScriptImageBlock): Promise<ScriptContentBlock[]> {
   const bytes = Buffer.from(image.data, "base64");
   const fit = await fitImage(bytes, image.mimeType).catch(() => null);
@@ -55,7 +51,7 @@ async function fitted(image: ScriptImageBlock): Promise<ScriptContentBlock[]> {
 
 /** One script's output: the globals it gets, and the blocks they added, once the script ended. */
 export function scriptOutput() {
-  const parts: (ScriptTextBlock | ScriptImageBlock)[] = [];
+  const parts: ScriptContentBlock[] = [];
   let images = 0;
   return {
     globals: {
@@ -75,8 +71,7 @@ export function scriptOutput() {
         parts.push(...found);
       },
     },
-    /** Fitting starts a resizer worker per image: only for a script that ended well, and one at a time, as
-     * Bun has crashed when many were cut off at once. */
+    /** One at a time, as Bun has crashed when many resizer workers were cut off at once. */
     async blocks(): Promise<ScriptContentBlock[]> {
       const blocks: ScriptContentBlock[] = [];
       for (const part of parts) blocks.push(...part.type === "text" ? [part] : await fitted(part));
