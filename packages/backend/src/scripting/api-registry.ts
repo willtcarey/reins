@@ -23,7 +23,6 @@ import {
   schemaItems,
   schemaAnyOf,
   schemaProperties,
-  schemaPropertyKeys,
 } from "./schema-utils.js";
 import { TASK_FUNCTIONS, TaskSchema } from "./tasks.js";
 import {
@@ -41,9 +40,9 @@ import { UI_FUNCTIONS } from "./ui.js";
 import { MODEL_FUNCTIONS, ProviderInfoSchema, ModelInfoSchema } from "./models.js";
 import { REVIEW_FUNCTIONS } from "./reviews.js";
 import { NODE_FUNCTIONS, NodeCopyResultSchema, NodeDetailSchema, NodeReloadSchema, NodeRunResultSchema, NodeSchema, NodeSourceSchema, ProjectRefSchema, LocationSchema } from "./nodes.js";
-import { TOOLS_FUNCTIONS } from "./tools.js";
+import { TOOLS } from "../sdk-host/tools.js";
+import { scriptFunctions, scriptTypes } from "../sdk-host/projection.js";
 import { IMAGES_FUNCTIONS, ImageBlockSchema, ImageGenerationSchema } from "./images.js";
-import { ToolResultSchema } from "../extensions/tool-docs.js";
 import { rankByTerms } from "./term-search.js";
 import type { ExtensionHost } from "../extensions/host.js";
 import {
@@ -77,6 +76,9 @@ export interface NamedType {
   schema: TSchema;
 }
 
+/** The SDK's namespaces that scripts call (`sdk-host/`), projected as `api`'s. */
+const SDK_NAMESPACES = [TOOLS];
+
 export const DOMAIN_TYPES: NamedType[] = [
   { name: "Task", schema: TaskSchema },
   { name: "Session", schema: SessionSchema },
@@ -102,9 +104,9 @@ export const DOMAIN_TYPES: NamedType[] = [
   { name: "NodeReload", schema: NodeReloadSchema },
   { name: "NodeRunResult", schema: NodeRunResultSchema },
   { name: "NodeCopyResult", schema: NodeCopyResultSchema },
-  { name: "ToolResult", schema: ToolResultSchema },
   { name: "ImageGeneration", schema: ImageGenerationSchema },
   { name: "ImageBlock", schema: ImageBlockSchema },
+  ...SDK_NAMESPACES.flatMap(scriptTypes),
 ];
 
 // ---------------------------------------------------------------------------
@@ -119,7 +121,7 @@ export const API_FUNCTIONS: ApiFunctionDef[] = [
   ...MODEL_FUNCTIONS,
   ...REVIEW_FUNCTIONS,
   ...NODE_FUNCTIONS,
-  ...TOOLS_FUNCTIONS,
+  ...SDK_NAMESPACES.flatMap(scriptFunctions),
   ...IMAGES_FUNCTIONS,
 ];
 
@@ -227,36 +229,17 @@ function schemaReferences(schema: TSchema, target: TSchema): boolean {
 
 /**
  * Build the `api` object for agent scripts. Namespaces are derived
- * from the registry — each function becomes a method on its namespace.
- *
- * Parameters are mapped positionally from schema key order:
- *   tasks.get(taskId)  — schema has { taskId: number }
- *   tasks.update(taskId, updates) — schema has { taskId, updates }
+ * from the registry — each function becomes a method on its namespace,
+ * called with the script's positional arguments (`tasks.update(taskId, updates)`).
  */
 type ApiMethod = (...args: unknown[]) => unknown;
 
 export function buildApiObject(ctx: ApiContext, functions: readonly ApiFunctionDef[] = API_FUNCTIONS): Record<string, Record<string, ApiMethod>> {
   const api: Record<string, Record<string, ApiMethod>> = {};
-
   for (const fn of functions) {
     const ns = fnNamespace(fn);
-    if (!api[ns]) api[ns] = {};
-
-    const props = schemaPropertyKeys(fn.parameters);
-    const methodName = fnMethod(fn);
-
-    if (props.length === 0) {
-      api[ns][methodName] = () => fn.execute({}, ctx);
-    } else {
-      api[ns][methodName] = (...args: unknown[]) => {
-        const params: Record<string, unknown> = {};
-        for (let i = 0; i < props.length; i++) {
-          params[props[i]] = args[i];
-        }
-        return fn.execute(params, ctx);
-      };
-    }
+    api[ns] ??= {};
+    api[ns][fnMethod(fn)] = (...args: unknown[]) => fn.call(args, ctx);
   }
-
   return api;
 }

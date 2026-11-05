@@ -46,15 +46,21 @@ export interface ApiFunctionDef {
   async?: boolean;
   /** Searchable tags (lowercase) */
   tags: string[];
-  /** The actual implementation, called at runtime. Method syntax for bivariant checking. */
-  execute(params: Record<string, unknown>, ctx: ApiContext): unknown;
+  /** Runs it with a script's positional arguments. */
+  call(args: readonly unknown[], ctx: ApiContext): unknown;
 }
 
 export interface TypedApiFunctionDef<P extends TObject<TProperties>, R extends TSchema>
   extends ApiFunctionDef {
   parameters: P;
   returns: R;
+  /** The implementation, with the arguments by parameter name. Method syntax for bivariant checking. */
   execute(params: Static<P>, ctx: ApiContext): Static<R> | Promise<Static<R>>;
+}
+
+/** Positional arguments by the names of `parameters`' properties, in order. */
+export function namedArgs(parameters: TObject<TProperties>, args: readonly unknown[]): Record<string, unknown> {
+  return Object.fromEntries(Object.keys(parameters.properties).map((key, index) => [key, args[index]]));
 }
 
 /**
@@ -76,5 +82,5 @@ export function defineFunction<P extends TObject<TProperties>, R extends TSchema
   tags: string[];
   execute: (params: Static<P>, ctx: ApiContext) => Static<R> | Promise<Static<R>>;
 }): TypedApiFunctionDef<P, R> {
-  return def;
+  return { ...def, call: (args, ctx) => def.execute(namedArgs(def.parameters, args), ctx) };
 }

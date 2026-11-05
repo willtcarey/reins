@@ -512,7 +512,34 @@ export interface ToolProvider {
   call(localId: string, args: Record<string, unknown>, options: { signal: AbortSignal; timeoutMs?: number }): Promise<ToolResult>;
 }
 
+/** What one provider answered a search: its matching tools (by their final IDs, best first), or why it could not. */
+export type ToolSearchGroup = { readonly title: string; readonly tools: readonly Tool[] } | { readonly title: string; readonly error: string };
+
+export interface ToolSearchOptions {
+  /** Given to every provider as they are (`ToolFilters`). */
+  readonly filters?: ToolFilters;
+  readonly signal?: AbortSignal;
+}
+
+export interface ToolCallOptions {
+  /** How long to wait for it; the provider's default otherwise. */
+  readonly timeoutMs?: number;
+  readonly signal?: AbortSignal;
+}
+
 export interface Tools {
+  /**
+   * The tools of every extension (its own too) that match `query` and `options.filters`, as agents' `api.tools.search`
+   * finds them: each provider asked at the same time, in the order of registration, its tools by their final IDs
+   * (`<extension>__<local ID>`). A provider that throws is a group with its `error`, and the others still answer.
+   */
+  search(query: string, options?: ToolSearchOptions): Promise<ToolSearchGroup[]>;
+  /**
+   * Runs a tool by its final ID, as agents' `api.tools.call` does, on the provider of the extension its prefix names.
+   * A failure the tool reports is a result with `isError`; an unknown ID ("Unknown tool: …") and a tool that cannot
+   * be run reject.
+   */
+  call(id: string, args?: Record<string, unknown>, options?: ToolCallOptions): Promise<ToolResult>;
   /** Registers the extension's tool provider. An extension has one at a time: registering a second while it
    * has one throws. */
   register(provider: ToolProvider): Disposer;
@@ -552,6 +579,41 @@ export interface Prompt {
 // ---------------------------------------------------------------------------
 // Scripting: an extension's own `api.<namespace>` in `execute`
 // ---------------------------------------------------------------------------
+
+/**
+ * A positional argument of a method that agents' scripts call (`api.<namespace>.<method>(…)`): its name, as `search`
+ * documents it, and its schema, which the host checks a script's argument against before the call. Only the last
+ * arguments may be `optional`. A property of an object schema with `scripts: false` (an `AbortSignal`, an option only
+ * an extension may set) is not for scripts: `search` leaves it out, and a script that gives it is refused.
+ */
+export interface ScriptParam {
+  readonly name: string;
+  readonly schema: JsonSchema;
+  readonly optional?: boolean;
+}
+
+/** The arguments that `params` declare, in order: each its schema's type, the optional ones possibly left out. */
+export type ScriptArgs<P extends readonly ScriptParam[]> = P extends readonly [infer Head extends ScriptParam, ...infer Rest extends readonly ScriptParam[]]
+  ? Head extends { readonly optional: true }
+    ? [arg?: SchemaType<Head["schema"]>, ...rest: ScriptArgs<Rest>]
+    : [arg: SchemaType<Head["schema"]>, ...rest: ScriptArgs<Rest>]
+  : [];
+
+/**
+ * A method callable from agents' scripts, declared once: its documentation (`search` shows `description`, the
+ * params and `returns`, and matches `tags`), the schemas a script's arguments are checked against, and `run`,
+ * its implementation, whose arguments are the params' types. `context` says who calls it. A script gets what `run`
+ * resolves to, or `toScript` of it when `returns` documents another form (what an agent reads best).
+ */
+export interface ScriptMethod<C, P extends readonly ScriptParam[], R extends JsonSchema, T = SchemaType<R>> {
+  readonly description: string;
+  readonly params: P;
+  readonly returns: R;
+  /** Lowercase words `search` also matches. */
+  readonly tags: readonly string[];
+  run(context: C, ...args: ScriptArgs<P>): Promise<T>;
+  toScript?(result: T, ...args: ScriptArgs<P>): SchemaType<R>;
+}
 
 /** What a scripting function runs for: the agent's session, and its script's signal. */
 export interface ScriptContext {

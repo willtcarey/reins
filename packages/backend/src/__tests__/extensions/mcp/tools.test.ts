@@ -7,6 +7,7 @@ import { useTestDb } from "../../helpers/test-db.js";
 import { testExtension, testTool } from "../../helpers/test-extension.js";
 import type { McpServers } from "../../../extensions/mcp/servers.js";
 import { scriptContext } from "../../helpers/script-context.js";
+import type { ServerSdk } from "@reins/sdk/server";
 
 const fakes: FakeMcpServer[] = [];
 
@@ -69,8 +70,8 @@ describe("MCP tools through api.tools", () => {
     await servers.create({ name: "tools", url: tools.url, authKind: "none" });
     await servers.create({ name: "other", url: other.url, authKind: "none" });
 
-    const one = await script(`return await api.tools.search("", { server: "tools" })`);
-    const unknown = await script(`return await api.tools.search("", { server: "nope" })`);
+    const one = await script(`return await api.tools.search("", { filters: { server: "tools" } })`);
+    const unknown = await script(`return await api.tools.search("", { filters: { server: "nope" } })`);
 
     expect(one).toContain("MCP servers: 2 tools.");
     expect(one).toContain("mcp__tools__echo(");
@@ -84,7 +85,7 @@ describe("MCP tools through api.tools", () => {
     await servers.create({ name: "tools", url: fake.url, authKind: "none" });
     await servers.create({ name: "vercel", url: "https://mcp.vercel.invalid", authKind: "oauth" });
 
-    const filtered = await script(`return await api.tools.search("projects", { server: "vercel" })`);
+    const filtered = await script(`return await api.tools.search("projects", { filters: { server: "vercel" } })`);
     const nothing = await script(`return await api.tools.search("projects")`);
     const failed = await script(`return await api.tools.call("mcp__tools__deploy", { project: "x" })`);
     const signedOut = script(`return await api.tools.call("mcp__vercel__list_projects")`);
@@ -105,6 +106,20 @@ describe("MCP tools through api.tools", () => {
     expect(script(`return await api.tools.call("mcp__nope__echo", {})`)).rejects.toThrow("Unknown tool mcp__nope__echo: there is no MCP server nope");
     expect(script(`return await api.tools.call("mcp__echo", {})`)).rejects.toThrow("Unknown tool mcp__echo: an MCP tool's ID is mcp__<server>__<tool>");
     expect(script(`return await api.tools.call("mcp__tools__shout", {})`)).rejects.toThrow("Unknown tool mcp__tools__shout: tools has no such tool");
+  });
+
+  test("another extension finds an MCP server's tools and calls one through reins.tools, as agents do", async () => {
+    let reins: ServerSdk | undefined;
+    const { servers } = app({ extensions: [{ name: "caller", register: sdk => { reins = sdk; return () => {}; } }] });
+    const fake = await fakeServer([echoTool, listProjects]);
+    await servers.create({ name: "tools", url: fake.url, authKind: "none" });
+
+    const groups = await reins!.tools.search("echo", { filters: { server: "tools" } });
+    const result = await reins!.tools.call("mcp__tools__echo", { text: "hello" });
+
+    expect(groups).toEqual([{ title: "MCP servers", tools: [expect.objectContaining({ id: "mcp__tools__echo", name: "echo", description: "Answers its text" })] }]);
+    expect(result).toEqual({ content: [{ type: "text", text: "hello" }] });
+    await expect(reins!.tools.call("mcp__tools__shout", {})).rejects.toThrow("Unknown tool mcp__tools__shout: tools has no such tool");
   });
 
   test("a query that is a tool's ID or name finds it first", async () => {
@@ -128,7 +143,7 @@ describe("MCP tools through api.tools", () => {
     ]);
     await servers.create({ name: "gh", url: fake.url, authKind: "none" });
 
-    const ids = [...(await script(`return await api.tools.search("", { server: "gh" })`)).matchAll(/^ {2}"?([\w-]+)"?\(/gm)].map(match => match[1]!);
+    const ids = [...(await script(`return await api.tools.search("", { filters: { server: "gh" } })`)).matchAll(/^ {2}"?([\w-]+)"?\(/gm)].map(match => match[1]!);
 
     expect(ids).toHaveLength(3);
     expect(new Set(ids).size).toBe(3);

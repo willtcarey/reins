@@ -41,7 +41,7 @@ describe("the server SDK's host", () => {
       const second = testExtension({ title: "Issues", tools: [testTool("github__list_issues")] });
       const state = createAppState(undefined, { extensions: [{ name: "first", register: first.register }, { name: "second", register: second.register }] });
 
-      const text = await script(state)(`return await api.tools.search("list deployments", { group: "vercel", other: [1] })`);
+      const text = await script(state)(`return await api.tools.search("list deployments", { filters: { group: "vercel", other: [1] } })`);
 
       expect(first.searches).toEqual([{ query: "list deployments", filters: { group: "vercel", other: [1] } }]);
       expect(second.searches).toEqual([{ query: "list deployments", filters: { group: "vercel", other: [1] } }]);
@@ -88,7 +88,7 @@ describe("the server SDK's host", () => {
       const state = createAppState(undefined, { extensions: [{ name: "first", register: first.register }, { name: "second", register: second.register }] });
       const run = script(state);
 
-      const one: ToolResult = JSON.parse(await run(`return await api.tools.call("second__a__one", { text: "hi" }, 5000)`));
+      const one: ToolResult = JSON.parse(await run(`return await api.tools.call("second__a__one", { text: "hi" }, { timeoutMs: 5000 })`));
       const two: ToolResult = JSON.parse(await run(`return await api.tools.call("second__b__two")`));
 
       expect(one).toEqual({ content: [{ type: "text", text: "Second: a__one {\"text\":\"hi\"}" }] });
@@ -109,6 +109,37 @@ describe("the server SDK's host", () => {
       }
       expect(run(`return await api.tools.call("only__a__two", {})`)).rejects.toThrow("No such tool: a__two");
       expect(only.calls).toEqual([]);
+    });
+
+    test("a script's arguments are checked against the declared schemas before the call: a field a method does not have, a wrong type, a missing or an extra argument", async () => {
+      const only = testExtension({ tools: [testTool("a__one")] });
+      const run = script(createAppState(undefined, { extensions: [{ name: "only", register: only.register }] }));
+
+      await expect(run(`return await api.tools.search("one", { server: "x" })`)).rejects.toThrow(`api.tools.search: options has no field "server" (its fields: filters)`);
+      await expect(run(`return await api.tools.call("only__a__one", {}, 5000)`)).rejects.toThrow("api.tools.call: options: Expected object");
+      await expect(run(`return await api.tools.call()`)).rejects.toThrow("api.tools.call: id is required");
+      await expect(run(`return await api.tools.call("only__a__one", {}, {}, 1)`)).rejects.toThrow("api.tools.call takes at most 3 arguments (id, args, options)");
+      await expect(run(`return await api.tools.call("only__a__one", {}, { signal: null })`)).rejects.toThrow(`api.tools.call: options has no field "signal" (its fields: timeoutMs)`);
+      expect(only.calls).toEqual([]);
+      expect(only.searches).toEqual([]);
+    });
+
+    test("an extension searches and calls every extension's tools, its own too, as scripts do", async () => {
+      let reins: ServerSdk | undefined;
+      const first = testExtension({ title: "First", tools: [testTool("a__one")], setup: sdk => { reins = sdk; } });
+      const second = testExtension({ title: "Second", tools: [testTool("b__two"), testTool("b__three")] });
+      createAppState(undefined, { extensions: [{ name: "first", register: first.register }, { name: "second", register: second.register }] });
+
+      const groups = await reins!.tools.search("two", { filters: { group: "b" } });
+      const result = await reins!.tools.call("second__b__two", { text: "hi" }, { timeoutMs: 100 });
+      const own = await reins!.tools.call("first__a__one");
+
+      expect(groups).toEqual([{ title: "First", tools: [] }, { title: "Second", tools: [{ ...testTool("b__two"), id: "second__b__two" }] }]);
+      expect(second.searches).toEqual([{ query: "two", filters: { group: "b" } }]);
+      expect(result).toEqual({ content: [{ type: "text", text: "Second: b__two {\"text\":\"hi\"}" }] });
+      expect(own).toEqual({ content: [{ type: "text", text: "First: a__one {}" }] });
+      expect(second.calls).toEqual([{ id: "b__two", args: { text: "hi" }, timeoutMs: 100 }]);
+      await expect(reins!.tools.call("nope__x")).rejects.toThrow("Unknown tool: nope__x");
     });
 
     test("an extension has one tool provider at a time, and is told how long its local IDs may be", () => {

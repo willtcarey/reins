@@ -18,7 +18,7 @@ export function mcpPromptSection(store: McpStore, extension: string): PromptCont
       const text = instructions.trim();
       return text ? `- ${name}: ${text.split(/\r?\n/).join("\n  ")}` : `- ${name}`;
     });
-    return "MCP servers (through execute): find their tools with api.tools.search(query), or api.tools.search(query, { server }) for one " +
+    return "MCP servers (through execute): find their tools with api.tools.search(query), or api.tools.search(query, { filters: { server } }) for one " +
       `server's; call one with api.tools.call(id, args). A tool's ID is ${extension}__<server>__<tool>. search does not list them.\n` +
       lines.join("\n");
   };

@@ -223,10 +223,7 @@ describe("sessions.setModel", () => {
 
     const ctx = makeCtx();
     await expect(
-      rawSetModelFunction!.execute(
-        { sessionId: "sess-10", provider: "anthropic", modelId: "claude-sonnet-4-5", thinkingLevel: "invalid-level" },
-        ctx,
-      ),
+      rawSetModelFunction!.call(["sess-10", "anthropic", "claude-sonnet-4-5", "invalid-level"], ctx),
     ).rejects.toThrow(/Invalid thinking level/);
   });
 });

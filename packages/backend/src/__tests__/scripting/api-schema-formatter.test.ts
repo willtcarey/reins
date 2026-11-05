@@ -151,7 +151,7 @@ describe("formatApiInterfaces", () => {
         parameters: Type.Object({ status: Type.Optional(Type.Union([Type.Literal("open"), Type.Literal("closed")])) }),
         returns: Type.Array(TaskDocSchema),
         tags: ["tasks"],
-        execute: () => [],
+        call: () => [],
       },
     ], { names });
 
@@ -174,7 +174,7 @@ describe("formatApiInterfaces", () => {
         }),
         returns: TaskDocSchema,
         tags: ["tasks"],
-        execute: () => ({ id: 1, title: "Updated" }),
+        call: () => ({ id: 1, title: "Updated" }),
       },
       {
         name: "tasks.reopen",
@@ -183,7 +183,7 @@ describe("formatApiInterfaces", () => {
         returns: TaskDocSchema,
         async: true,
         tags: ["tasks"],
-        execute: async () => ({ id: 1, title: "Updated" }),
+        call: async () => ({ id: 1, title: "Updated" }),
       },
     ], { names });
 
@@ -205,7 +205,7 @@ describe("formatApiInterfaces", () => {
         }),
         returns: TaskDocSchema,
         tags: ["tasks"],
-        execute: () => ({ id: 1, title: "Updated" }),
+        call: () => ({ id: 1, title: "Updated" }),
       },
     ], { names });
 
@@ -229,7 +229,7 @@ describe("formatApiInterfaces", () => {
         parameters: Type.Object({ task: DescribedSchema }),
         returns: Type.Void(),
         tags: ["tasks"],
-        execute: () => undefined,
+        call: () => undefined,
       },
     ], { names: new Map([[DescribedSchema, "Task"]]) });
 

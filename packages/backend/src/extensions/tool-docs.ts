@@ -5,7 +5,7 @@
  */
 
 import { Type } from "@sinclair/typebox";
-import type { Tool } from "@reins/sdk/server";
+import type { Tool, ToolSearchGroup } from "@reins/sdk/server";
 import { formatTypeDeclaration } from "../scripting/api-schema-formatter.js";
 import { rankByTerms } from "../scripting/term-search.js";
 
@@ -23,8 +23,6 @@ export const ToolResultSchema = Type.Object({
 });
 
 const RESULT_DECLARATION = formatTypeDeclaration(ToolResultSchema, "ToolResult");
-/** What one provider answered a search: its tools, or why it could not. */
-export type ToolSearchGroup = { title: string; tools: readonly Tool[] } | { title: string; error: string };
 
 function terms(query: string): string[] {
   return query.toLowerCase().split(/\s+/).map(term => singular(term.replace(/^[`'"]+|[`'",;:]+$/g, ""))).filter(Boolean);

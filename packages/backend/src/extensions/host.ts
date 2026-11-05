@@ -10,11 +10,11 @@ import { KindGuard, type TObject, type TProperties, type TSchema } from "@sincla
 import { Value } from "@sinclair/typebox/value";
 import type {
   Database, Disposer, HttpApi, HttpCall, ImagesProvider, Logger, Migration, PageHandler, PromptContext, PromptContribution, ScriptFunction, ScriptType, SecretStorage, ServerExtension, ServerSdk,
-  Service, SessionSettlement, ToolFilters, ToolResult, ToolProvider,
+  Service, SessionSettlement, ToolFilters, ToolResult, ToolProvider, ToolSearchGroup,
 } from "@reins/sdk/server";
 import { statSync } from "fs";
 import type { ExtensionStorage } from "../database.js";
-import type { ApiFunctionDef } from "../scripting/define-function.js";
+import { namedArgs, type ApiFunctionDef } from "../scripting/define-function.js";
 import type { NamedType } from "../scripting/api-registry.js";
 import type { AppState, SessionSettledNotice } from "../state.js";
 import { ExtensionSessions } from "./sessions.js";
@@ -24,8 +24,11 @@ import { createBroadcast } from "../models/broadcast.js";
 import { requestOrigin } from "../nodes/node-link.js";
 import { logger } from "../logger.js";
 import { deleteExtensionSecret, extensionSecretKeys, getExtensionSecret, setExtensionSecret } from "../extension-secrets-store.js";
-import { matchTools, type ToolSearchGroup } from "./tool-docs.js";
+import { matchTools } from "./tool-docs.js";
 import { ServiceRunner, type ServiceView } from "./services.js";
+import { Models } from "../models/models.js";
+import { bind, type CallContext } from "../sdk-host/declaration.js";
+import { TOOLS } from "../sdk-host/tools.js";
 
 /** A backend extension as the server registers it: its name, its migrations and its register function. */
 export interface ExtensionRegistration extends ServerExtension { name: string }
@@ -403,6 +406,8 @@ export class ExtensionHost {
       return () => { for (const remove of removals) void remove(); };
     };
     const broadcast = createBroadcast(this.app().process);
+    // Each call gets the app's models of that moment, as the extension acts as no session.
+    const context = (): CallContext => ({ models: new Models(this.app()), caller: { kind: "extension", name } });
     return Object.freeze({
       name,
       dataDir,
@@ -411,6 +416,7 @@ export class ExtensionHost {
       secrets: secretStorage(name),
       broadcast: (message: object) => broadcast({ type: "extension", extension: name, message }),
       tools: Object.freeze({
+        ...bind(TOOLS.methods, context),
         register: (provider: ToolProvider) => {
           if (this.providers.some(entry => entry.extension === name)) {
             throw new Error("An extension registers one tool provider: remove the one it has first");
@@ -468,10 +474,11 @@ export class ExtensionHost {
       namespace,
       functions: functions.map((fn): ApiFunctionDef => {
         if (!/^[a-z][A-Za-z0-9]*\.[a-z][A-Za-z0-9]*$/.test(fn.name)) throw new Error(`Not an api function name: ${fn.name}`);
-        if (!isObjectSchema(fn.parameters)) throw new Error(`${fn.name}: its parameters must be an object schema`);
+        const { parameters } = fn;
+        if (!isObjectSchema(parameters)) throw new Error(`${fn.name}: its parameters must be an object schema`);
         return {
-          name: fn.name, description: fn.description, parameters: fn.parameters, returns: schemaOf(fn.name, fn.returns), async: fn.async, tags: fn.tags,
-          execute: (params, ctx) => fn.execute(params, { sessionId: ctx.session.id, projectId: ctx.session.projectId, taskId: ctx.session.taskId, signal: ctx.signal }),
+          name: fn.name, description: fn.description, parameters, returns: schemaOf(fn.name, fn.returns), async: fn.async, tags: fn.tags,
+          call: (args, ctx) => fn.execute(namedArgs(parameters, args), { sessionId: ctx.session.id, projectId: ctx.session.projectId, taskId: ctx.session.taskId, signal: ctx.signal }),
         };
       }),
       types: types.map(type => ({ name: type.name, schema: schemaOf(type.name, type.schema) })),
