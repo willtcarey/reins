@@ -38,8 +38,8 @@ function group(title: string, body: TemplateResult) {
   `;
 }
 
-/** Reins' page about one extension: its identity and health, and what it gives agents and users. Its internals
- * (migrations, HTTP methods, callback pages) are not shown. Read-only. */
+/** Reins' page about one extension: its identity and health, what it gives agents and users, and its HTTP
+ * methods and pages (its frontend part's, scripts' and callbacks' way in). Its migrations are not shown. Read-only. */
 @customElement("settings-extension-details")
 export class SettingsExtensionDetails extends LitElement {
   override createRenderRoot() {
@@ -74,10 +74,11 @@ export class SettingsExtensionDetails extends LitElement {
   /** What users get from it in the app: all from its frontend part. */
   private _renderInTheApp(extension: ExtensionSummary) {
     const r = extension.frontend?.registrations;
-    if (!r || (r.views.length + r.commands.length + r.decorators === 0 && !r.settingsPage)) return nothing;
+    if (!r || (r.views.length + r.commands.length + r.decorators + r.sidebarSections.length === 0 && !r.settingsPage)) return nothing;
     return group("In the app", html`
       ${row("Commands", names(r.commands, "/"))}
       ${row("Views", names(r.views))}
+      ${row("Sidebar sections", names(r.sidebarSections))}
       ${row("Message decorators", count(r.decorators))}
       ${row("Settings page", r.settingsPage ? "Yes" : null)}
     `);
@@ -88,6 +89,19 @@ export class SettingsExtensionDetails extends LitElement {
     const listeners = extension.backend?.registrations.settlementListeners ?? 0;
     if (listeners === 0) return nothing;
     return group("Sessions", html`${row("Run ends heard", listeners === 1 ? "1 listener" : `${listeners} listeners`)}`);
+  }
+
+  /** Its backend part's HTTP methods and pages, by the paths a client calls. */
+  private _renderHttp(extension: ExtensionSummary) {
+    const r = extension.backend?.registrations;
+    if (!r || r.httpMethods.length + r.pages.length === 0) return nothing;
+    const paths = (list: readonly string[]) => list.length === 0
+      ? null
+      : html`${list.map((path) => html`<div><code class="font-mono text-[11px]">${path}</code></div>`)}`;
+    return group("HTTP", html`
+      ${row("Methods", paths(r.httpMethods.map((method) => `POST /api/extensions/${extension.name}/${method}`)))}
+      ${row("Pages", paths(r.pages.map((page) => `GET ${page}`)))}
+    `);
   }
 
   /** Its backend part's long-running work, each with its state as the host records it. */
@@ -166,6 +180,7 @@ export class SettingsExtensionDetails extends LitElement {
         : nothing}
       ${this._renderServices(extension)}
       ${this._renderSessions(extension)}
+      ${this._renderHttp(extension)}
       ${this._renderStorage(extension)}
       ${this._renderErrors(extension)}
     `;

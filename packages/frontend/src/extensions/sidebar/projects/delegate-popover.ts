@@ -7,15 +7,15 @@
 
 import { LitElement, html } from "lit";
 import { customElement, property } from "lit/decorators.js";
-import type { SessionListView as SessionListItem } from "@backend/models/sessions.js";
+import type { Sessions, SessionSummary } from "@reins/sdk";
 import "./session-list-item.js";
-import "../ui/popover-menu.js";
+import "../../../ui/popover-menu.js";
 
 /**
  * Build a map of session ID → all delegate descendants from a flat session list.
  */
-export function buildDescendantMap(sessions: SessionListItem[]): Map<string, SessionListItem[]> {
-  const map = new Map<string, SessionListItem[]>();
+export function buildDescendantMap(sessions: readonly SessionSummary[]): Map<string, SessionSummary[]> {
+  const map = new Map<string, SessionSummary[]>();
   const sessionsById = new Map(sessions.map((session) => [session.id, session]));
 
   for (const session of sessions) {
@@ -39,37 +39,34 @@ export class DelegatePopover extends LitElement {
   }
 
   @property({ attribute: false })
-  childSessions: SessionListItem[] = [];
+  childSessions: SessionSummary[] = [];
 
   @property({ type: String })
   activeSessionId = "";
 
   @property({ attribute: false })
-  onSetSessionUnread: ((sessionId: string, unread: boolean) => Promise<unknown>) | null = null;
-
-  @property({ attribute: false })
-  onUpdateMetadata: ((sessionId: string, updates: { name?: string | null; pinned?: boolean; archived?: boolean }) => Promise<unknown>) | null = null;
+  sessions: Sessions | null = null;
 
   private hasRunningChild(): boolean {
-    return this.childSessions.some(c => c.activityState === "running");
+    return this.childSessions.some(c => c.activity === "running");
   }
 
   private hasUnreadChild(): boolean {
-    return this.childSessions.some(c => c.activityState === "finished");
+    return this.childSessions.some(c => c.activity === "unread");
   }
 
   private markAllRead() {
-    const markUnread = this.onSetSessionUnread;
-    if (!markUnread) return;
-    void Promise.all(
+    const sessions = this.sessions;
+    if (!sessions) return;
+    void Promise.allSettled(
       this.childSessions
-        .filter((child) => child.activityState === "finished")
-        .map((child) => markUnread(child.id, false)),
+        .filter((child) => child.activity === "unread")
+        .map((child) => sessions.setUnread(child.id, false)),
     );
   }
 
   private renderPopoverContent() {
-    const canUpdateUnread = this.onSetSessionUnread !== null;
+    const canUpdateUnread = this.sessions !== null;
     return html`
       <div class="px-3 py-1 flex items-center gap-2 text-[10px] uppercase tracking-wide font-semibold">
         <span class="flex-1 text-zinc-500">Delegate sub-sessions</span>
@@ -87,8 +84,7 @@ export class DelegatePopover extends LitElement {
             .session=${child}
             .active=${child.id === this.activeSessionId}
             .activeSessionId=${this.activeSessionId}
-            .onSetSessionUnread=${this.onSetSessionUnread}
-            .onUpdateMetadata=${this.onUpdateMetadata}
+            .sessions=${this.sessions}
           ></session-list-item>
         `)}
       </div>

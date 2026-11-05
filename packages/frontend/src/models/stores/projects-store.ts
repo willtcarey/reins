@@ -17,9 +17,19 @@ import type { SessionCreateRequest } from "@backend/routes/project-sessions.js";
 import type { InboundEventSource } from "../ws-client.js";
 import { ReinsHttpError } from "@reins/client";
 import { api } from "../api.js";
-import { compareSessionListItems, isSessionListItem, ProjectStore } from "./project-store.js";
+import type { SessionMoveTargetView } from "@backend/routes/sessions.js";
+import {
+  compareSessionListItems,
+  isSessionListItem,
+  loadMoveTargets,
+  moveSession,
+  ProjectStore,
+  setSessionUnread,
+  updateSessionMetadata,
+  type SessionMetadataUpdate,
+} from "./project-store.js";
 import type { SessionListView } from "@backend/models/sessions.js";
-import { SessionCache, type ActivityState } from "./session-cache.js";
+import { SessionCache, type ActivityState, type CachedSession } from "./session-cache.js";
 
 type ProjectsStoreListener = () => void;
 
@@ -37,6 +47,7 @@ export class ProjectsStore {
   private _stores = new Map<number, ProjectStore>();
   private _unsubscribes = new Map<number, () => void>();
   private _listeners = new Set<ProjectsStoreListener>();
+  private _taskListeners = new Set<(projectId: number) => void>();
   private _unsubscribers: Array<() => void> = [];
 
   constructor(
@@ -102,14 +113,15 @@ export class ProjectsStore {
   }
 
   /** Delete a project and refresh the list. */
-  async deleteProject(projectId: number): Promise<void> {
+  async deleteProject(projectId: number): Promise<{ ok: true } | { error: string }> {
     try {
       await api.projects.delete(projectId);
-      this.remove(projectId);
-      await this.fetchProjects();
-    } catch {
-      // silent
+    } catch (error) {
+      return { error: error instanceof ReinsHttpError ? error.message : "Network error" };
     }
+    this.remove(projectId);
+    await this.fetchProjects();
+    return { ok: true };
   }
 
   /** The nodes a new project's checkout can be on: every node not revoked. */
@@ -140,7 +152,7 @@ export class ProjectsStore {
   /** Update a project's properties; `defaultSource` changes it (a directory not known yet is checked on its node). */
   async updateProject(
     projectId: number,
-    data: { name: string; base_branch: string; defaultSource?: { nodeId: string; path: string } },
+    data: { name?: string; base_branch?: string; defaultSource?: { nodeId: string; path: string } },
   ): Promise<{ ok: true } | { error: string }> {
     try {
       await api.projects.update(projectId, data);
@@ -183,6 +195,40 @@ export class ProjectsStore {
     } catch (error) {
       return { error: error instanceof ReinsHttpError ? error.message : "Network error" };
     }
+  }
+
+  // ---- Session actions, for a session of any project or none ----------------
+
+  /**
+   * Runs `act` on the session as the cache has it: at once when it has it (so an optimistic change shows at once),
+   * else once its details are loaded (a session no list loaded).
+   */
+  private withSession(sessionId: string, act: (session: CachedSession) => Promise<{ ok: true } | { error: string }>): Promise<{ ok: true } | { error: string }> {
+    const session = this._sessionCache.get(sessionId);
+    if (session?.createdAt) return act(session);
+    return this._sessionCache.loadDetail(sessionId).then(
+      () => {
+        const loaded = this._sessionCache.get(sessionId);
+        return loaded ? act(loaded) : { error: "Session not found" };
+      },
+      (error: unknown) => ({ error: error instanceof ReinsHttpError ? error.message : "Network error" }),
+    );
+  }
+
+  setSessionUnread(sessionId: string, unread: boolean): Promise<{ ok: true } | { error: string }> {
+    return this.withSession(sessionId, (session) => setSessionUnread(this._sessionCache, session, unread));
+  }
+
+  updateSessionMetadata(sessionId: string, updates: SessionMetadataUpdate): Promise<{ ok: true } | { error: string }> {
+    return this.withSession(sessionId, (session) => updateSessionMetadata(this._sessionCache, session, updates));
+  }
+
+  loadMoveTargets(sessionId: string): Promise<SessionMoveTargetView[] | { error: string }> {
+    return loadMoveTargets(sessionId);
+  }
+
+  moveSession(sessionId: string, nodeId: string, path: string): Promise<{ ok: true } | { error: string }> {
+    return moveSession(this._sessionCache, sessionId, nodeId, path);
   }
 
   // ---- Activity mutations ---------------------------------------------------
@@ -252,11 +298,17 @@ export class ProjectsStore {
     ]);
   }
 
+  /** A task changed (or closed): its project's lists load again, and `onTasksUpdated` listeners hear of it even
+   * when its project is not loaded. */
   async handleTaskUpdated(projectId: number): Promise<void> {
-    const projectStore = this.peekStore(projectId);
-    if (!projectStore) return;
+    await this.peekStore(projectId)?.fetchLists();
+    for (const listener of this._taskListeners) listener(projectId);
+  }
 
-    await projectStore.fetchLists();
+  /** Listens for the server saying a project's tasks changed, whether or not the project is loaded. */
+  onTasksUpdated(listener: (projectId: number) => void): () => void {
+    this._taskListeners.add(listener);
+    return () => this._taskListeners.delete(listener);
   }
 
   async handleSessionCreated(event: {

@@ -62,6 +62,10 @@ export interface ServerSdk {
   readonly sessions: Sessions;
   /** Nodes: the machines sessions work on. Run a command on one. Call `run` on it, as for `sessions`. */
   readonly nodes: Nodes;
+  /** Projects, to read. Call `get` on it, as for `sessions`. */
+  readonly projects: Projects;
+  /** Tasks, to read. Call `get` on it, as for `sessions`. */
+  readonly tasks: Tasks;
   /**
    * The extension's own directory, `<data dir>/extensions/<name>/` (absolute), which the host creates before
    * the extension registers and never deletes. The extension writes its files only here.
@@ -190,14 +194,21 @@ export interface SessionInfo {
   readonly taskId: number | null;
   readonly parentSessionId: string | null;
   readonly name: string | null;
+  /** The text of its first message (the user's, or what started it); null before it has one. */
+  readonly firstMessage: string | null;
   /** Never shown in the browser (`SessionStart.background`). */
   readonly background: boolean;
   /** Its run is in progress now (or input it was given is being admitted). */
   readonly running: boolean;
+  /** Its last run ended with something the user has not opened yet (the browser's amber dot). */
+  readonly unread: boolean;
   /** The extension that started it (`SessionStart`), or null. */
   readonly startedBy: string | null;
   /** When it was archived (hidden from the session lists), or null. */
   readonly archivedAt: string | null;
+  /** When its latest run started: the one running now, else the latest that ended; null before its first. A
+   * message sent to a running session joins that run, so it does not change this. */
+  readonly lastRunStartedAt: string | null;
   /** The latest of its runs that ended (completed, failed or cancelled), as an opaque ID to compare; null before
    * its first ends. A message `send` gave a running session is handled before that run ends, so a new
    * `lastRunId` after a send means that the run which took the message has ended. */
@@ -275,9 +286,21 @@ export interface SessionSettlement {
  * session's `startedBy`; its messages' `metadata.sourceExtension`), which the chat shows ("from <name>").
  * Its messages reach the model as they are, like a user's: an extension is trusted code of the server.
  */
+/** Which sessions `Sessions.list` gives: from `offset` on (0 by default), at most `limit` (1 to 200, 50 by default). */
+export interface SessionListQuery {
+  readonly limit?: number;
+  readonly offset?: number;
+}
+
 export interface Sessions {
   /** The session; rejects for one the server does not have. */
   get(sessionId: string): Promise<SessionInfo>;
+  /**
+   * The sessions the browser lists (not archived, not background), of every project and of none, the latest
+   * change first (`updatedAt`: a run ending, a rename). Page through them with `offset`. Rejects a `limit` or
+   * `offset` out of range.
+   */
+  list(query?: SessionListQuery): Promise<SessionInfo[]>;
   /**
    * Creates a session and submits its prompt; resolves with its ID once Pi admitted the prompt, without
    * waiting for the run. Rejects, keeping nothing, with neither a source nor a project, an unknown
@@ -311,6 +334,35 @@ export interface Sessions {
    * read what a listener missed with `get`. A throw or rejection is the extension's error, logged.
    */
   onSettled(listener: (settlement: SessionSettlement) => void | Promise<void>): Disposer;
+}
+
+// ---------------------------------------------------------------------------
+// Projects and tasks
+// ---------------------------------------------------------------------------
+
+export interface ProjectInfo {
+  readonly id: number;
+  readonly name: string;
+}
+
+export interface Projects {
+  /** The project; rejects for one the server does not have ("Project not found: <id>"). */
+  get(projectId: number): Promise<ProjectInfo>;
+}
+
+export interface TaskInfo {
+  readonly id: number;
+  readonly projectId: number;
+  readonly title: string;
+  /** When it was closed; null while it is open. Reopening it clears this. */
+  readonly closedAt: string | null;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface Tasks {
+  /** The task; rejects for one the server does not have ("Task not found: <id>"). */
+  get(taskId: number): Promise<TaskInfo>;
 }
 
 // ---------------------------------------------------------------------------

@@ -6,6 +6,9 @@ import { Loadable } from "../../helpers/loadable.js";
 import { ProjectFiles } from "../../models/stores/project-files.js";
 import type { NodeView } from "@backend/models/node.js";
 import { SessionCache } from "../../models/stores/session-cache.js";
+import { ProjectsStore } from "../../models/stores/projects-store.js";
+import { ConversationsStore } from "../../models/stores/conversations-store.js";
+import { SessionOperations } from "../../models/session-operations.js";
 import { ReinsClient } from "@reins/client";
 import type { ContainerId, CurrentView, ExtensionInfo, HttpApi, SessionCreation, Sessions, Source, Subject, View } from "@reins/sdk";
 import { mainViewHash } from "../../routing/app-router.js";
@@ -14,6 +17,10 @@ import { DecoratorRegistry } from "../../sdk-host/decorators.js";
 import { Extensions } from "../../sdk-host/extensions.js";
 import { createReinsSdk, type SdkHost } from "../../sdk-host/create-sdk.js";
 import { SettingsPages } from "../../sdk-host/settings-pages.js";
+import { SdkSessions } from "../../sdk-host/sessions.js";
+import { SdkUi } from "../../sdk-host/ui.js";
+import { SdkNodes, SdkProjects, SdkTasks } from "../../sdk-host/projects.js";
+import { SidebarSections, type SidebarLayout, type SidebarLayoutStorage } from "../../sdk-host/sidebar-sections.js";
 import { ViewRegistry } from "../../sdk-host/view-registry.js";
 import { StubClient } from "./stub-client.js";
 
@@ -27,17 +34,36 @@ export type SessionCall =
   | { send: string; message: string }
   | { create: SessionCreation };
 
-/** Sessions that record what reaches them: none is known (`get` rejects), and a session created is `new-1`,
- * `new-2`, …; `overrides` replace an operation. */
-function recordingSessions(calls: SessionCall[], overrides: Partial<Sessions>): Sessions {
+/** Sessions whose operations record what reaches them: none is known (`get` rejects), and a session created is
+ * `new-1`, `new-2`, …; their lists and actions are the app's (`live`), over its stores. `overrides` replace any. */
+function recordingSessions(calls: SessionCall[], live: SdkSessions, overrides: Partial<Sessions>): Sessions {
   let created = 0;
   return {
     get: async (sessionId) => { throw new Error(`Session ${sessionId} not found`); },
     send: async (sessionId, message) => { calls.push({ send: sessionId, message }); },
     compact: async (sessionId, instructions) => { calls.push(instructions === undefined ? { compact: sessionId } : { compact: sessionId, instructions }); },
     create: async (options) => { calls.push({ create: options }); return `new-${++created}`; },
+    list: (query) => live.list(query),
+    onDidChange: (listener) => live.onDidChange(listener),
+    setUnread: (sessionId, unread) => live.setUnread(sessionId, unread),
+    setPinned: (sessionId, pinned) => live.setPinned(sessionId, pinned),
+    setArchived: (sessionId, archived) => live.setArchived(sessionId, archived),
+    setName: (sessionId, name) => live.setName(sessionId, name),
+    moveTargets: (sessionId) => live.moveTargets(sessionId),
+    move: (sessionId, to) => live.move(sessionId, to),
     ...overrides,
   };
+}
+
+/** A sidebar layout kept in memory, as the server's setting would keep it; `saved` is each layout saved. */
+export function memoryLayout(initial: SidebarLayout | null = null) {
+  let stored = initial;
+  const saved: SidebarLayout[] = [];
+  const storage: SidebarLayoutStorage = {
+    load: async () => stored,
+    save: async (layout) => { stored = layout; saved.push(layout); },
+  };
+  return { storage, saved };
 }
 
 /** The main area showing session `sessionId`: about it, then its task and project once its details are known. */
@@ -68,15 +94,19 @@ export function testNode(id: string, name: string, connected = true): NodeView {
  * in the main area, and `sessionCalls` what reaches its sessions (`sessions` replaces their operations).
  * The main area shows `current` until another view is shown there, about nothing; it shows the views the app has routes for.
  * Requests go to `fetch` (`mockFetch`); messages and the connection come from `client` (`fireMessage`, `fireConnection`).
+ * Projects, tasks and sessions are the app's over a real `ProjectsStore` (`projectsStore`) and session cache
+ * (`sessions`), which a test fills; `showMain` changes what the main area shows. `sidebar` is the sidebar's
+ * sections, its layout kept in `sidebarLayout` (`memoryLayout`; none by default).
  * `sdkFor` builds another extension's SDK over the same app, and `extensions` activates extensions there.
  */
-export function testSdk<A extends HttpApi = HttpApi>({ source = { nodeId: "node", path: "/work" }, projectId = 1, available = true, sessions: sessionOverrides = {}, current = null, extension = { name: "test", label: "Test" } }: {
+export function testSdk<A extends HttpApi = HttpApi>({ source = { nodeId: "node", path: "/work" }, projectId = 1, available = true, sessions: sessionOverrides = {}, current = null, extension = { name: "test", label: "Test" }, sidebarLayout = null }: {
   source?: Source;
   projectId?: number;
   available?: boolean;
   sessions?: Partial<Sessions>;
   current?: CurrentView | null;
   extension?: ExtensionInfo;
+  sidebarLayout?: SidebarLayoutStorage | null;
 } = {}) {
   const client = new StubClient();
   const sessions = new SessionCache();
@@ -88,21 +118,39 @@ export function testSdk<A extends HttpApi = HttpApi>({ source = { nodeId: "node"
   const decorators = new DecoratorRegistry(views);
   const commands = new CommandRegistry();
   const settingsPages = new SettingsPages();
-  const extensions = new Extensions({ views, decorators, commands, settingsPages });
+  const sidebar = new SidebarSections(sidebarLayout);
+  const extensions = new Extensions({ views, decorators, commands, settingsPages, sidebar });
+  const projectsStore = new ProjectsStore(sessions, client);
+  const live = new SdkSessions({ sessionCache: sessions, projectsStore, sessionOperations: new SessionOperations({ conversations: new ConversationsStore({ sessionCache: sessions }) }) });
   const opened: OpenedView[] = [];
   const shownViews: View[] = [];
   const sessionCalls: SessionCall[] = [];
+  const mainListeners = new Set<() => void>();
   let shown = current;
+  /** Shows `view` in the main area, as navigating there would, and tells `workspace.subscribe` listeners. */
+  const showMain = (view: CurrentView | null) => {
+    shown = view;
+    for (const listener of mainListeners) listener();
+  };
+  const recorded = recordingSessions(sessionCalls, live, sessionOverrides);
   const host: SdkHost = {
-    app: { files, views, decorators, commands, settingsPages, open: (view, container) => opened.push({ view, container }) },
-    sessions: recordingSessions(sessionCalls, sessionOverrides),
+    app: { files, views, decorators, commands, settingsPages, sidebar, open: (view, container) => opened.push({ view, container }) },
+    sessions: recorded,
+    ui: new SdkUi(sessions, recorded),
+    projects: new SdkProjects(projectsStore),
+    tasks: new SdkTasks(projectsStore),
+    nodes: new SdkNodes(projectsStore),
     main: {
       current: () => shown,
       show: (view) => {
         if (!mainViewHash(view)) return false;
         shownViews.push(view);
-        shown = { view, subject: [] };
+        showMain({ view, subject: [] });
         return true;
+      },
+      subscribe: (listener) => {
+        mainListeners.add(listener);
+        return () => mainListeners.delete(listener);
       },
     },
     http: new ReinsClient(),
@@ -110,7 +158,7 @@ export function testSdk<A extends HttpApi = HttpApi>({ source = { nodeId: "node"
   };
   const reins = createReinsSdk<A>(extension, host);
   const sdkFor = (other: ExtensionInfo) => createReinsSdk(other, host);
-  return { client, sessions, files, views, decorators, commands, settingsPages, extensions, reins, sdkFor, source, opened, shownViews, sessionCalls };
+  return { client, sessions, projectsStore, files, views, decorators, commands, settingsPages, sidebar, extensions, reins, sdkFor, source, opened, shownViews, sessionCalls, showMain };
 }
 
 /** An Inspector over views that know the file viewer's `file` view, as the app's do. */

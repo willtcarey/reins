@@ -49,6 +49,21 @@ export class MyComponent extends LitElement {
 
 The `Subscribable` interface is intentionally minimal - it works with `DiffStore`, `AppStore`, `FileTreeState`, or any future store. The controller handles subscribe/unsubscribe on store change, `hostDisconnected`, and `hostConnected` (re-subscribe after move).
 
+## SubscriptionsController - SDK Events While On the Page
+
+A built-in extension's element listens to the Reins SDK's events (`projects.onDidChange`, `sessions.onDidChange`, …; reins-sdk.md *Change events*), each of which returns a disposer. `SubscriptionsController(host, source, subscribe)` (`controllers/subscriptions-controller.ts`) makes the subscriptions when the element connects and its source (usually its `reins` property) is there, makes them again when the source changes, and runs the disposers when it disconnects. The element says what it hears and what it does, so it can ignore changes it does not show:
+
+```typescript
+constructor() {
+  super();
+  new SubscriptionsController(this, () => this.reins, (reins) => [
+    reins.sessions.onDidChange(({ projectIds }) => { if (projectIds.includes(this.projectId)) this.requestUpdate(); }),
+  ]);
+}
+```
+
+It is Lit glue only: the SDK does not need it, and an extension in another framework calls the same disposers in its own cleanup (in React, a `useEffect`'s).
+
 ## LazyHighlightController - Deferred Syntax Highlighting
 
 `controllers/lazy-highlight-controller.ts` combines IntersectionObserver-based lazy activation with `HighlightController` and cache-key deduplication. It's used by the tool components (`components/tools/read.ts`, `edit.ts`, `write.ts`) to defer Shiki web worker highlighting until the element scrolls into view.

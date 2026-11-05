@@ -17,6 +17,15 @@ import {
 import { showToast } from "../ui/toast.js";
 import "../ui/info-card.js";
 
+/** A project's archived sessions, the main area's history page (a route, which `workspace.open` reaches). */
+export type ProjectHistoryView = { view: "project-history"; projectId: number };
+
+declare module "@reins/sdk" {
+  interface ViewTypes {
+    "project-history": ProjectHistoryView;
+  }
+}
+
 type HistoryView = "tasks" | "sessions";
 const SEARCH_DELAY_MS = 250;
 

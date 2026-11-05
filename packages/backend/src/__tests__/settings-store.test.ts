@@ -47,6 +47,12 @@ describe("settings-store", () => {
       expect(getSetting("default_model")).toEqual(model);
     });
 
+    test("round-trips the sidebar's section order and hidden sections, and refuses another shape", () => {
+      setSetting("sidebar_sections", { order: ["projects", "attention"], hidden: ["recent"] });
+      expect(getSetting("sidebar_sections")).toEqual({ order: ["projects", "attention"], hidden: ["recent"] });
+      expect(() => validateSettingValue("sidebar_sections", { order: "projects" })).toThrow();
+    });
+
     test("upserts on second call", () => {
       setSetting("default_model", { provider: "a", modelId: "b", runtimeType: "pi", thinkingLevel: "minimal" });
       setSetting("default_model", { provider: "x", modelId: "y", runtimeType: "pi", thinkingLevel: "high" });

@@ -1,26 +1,28 @@
-import { describe, expect, mock, test } from "bun:test";
-import { SessionListItem } from "../../components/session-list-item.js";
-import type { InfoCardAction } from "../../ui/info-card.js";
-import type { SessionListView as SessionListItemData } from "@backend/models/sessions.js";
-import { collectTemplateEventListeners, isTemplateResult, templateToString } from "../helpers/lit-template.js";
+import { afterEach, describe, expect, test } from "bun:test";
+import type { SessionSummary } from "@reins/sdk";
+import { SessionListItem } from "../../../../extensions/sidebar/projects/session-list-item.js";
+import type { InfoCardAction } from "../../../../ui/info-card.js";
+import { makeSessionListItem, makeSessionSummary } from "../../../helpers/fixtures.js";
+import { collectTemplateEventListeners, isTemplateResult, templateToString } from "../../../helpers/lit-template.js";
+import { mockFetch, restoreFetch } from "../../../helpers/mock-fetch.js";
+import { testSdk } from "../../../helpers/reins-sdk.js";
 
-function session(activityState: SessionListItemData["activityState"]): SessionListItemData {
-  return {
-    id: "session-1",
-    projectId: 1,
-    taskId: 2,
-    parentSessionId: null,
-    name: "Investigation",
-    createdAt: "2026-01-01T00:00:00Z",
-    updatedAt: "2026-01-01T00:00:00Z",
-    messageCount: 2,
-    firstMessage: "Investigate",
-    activityState,
-    pinnedAt: null,
-    archivedAt: null,
-    sourceExtension: null,
-    placement: { available: true, removed: false, nodeId: "laptop", nodeName: "Laptop", path: "" },
-  };
+afterEach(restoreFetch);
+
+function session(activity: SessionSummary["activity"]): SessionSummary {
+  return makeSessionSummary("session-1", { taskId: 2, name: "Investigation", messageCount: 2, firstMessage: "Investigate", activity, nodeName: "Laptop" });
+}
+
+/** The SDK's sessions over a cache that has `session-1` with `activityState`, recording what reaches the server. */
+function recordingSessions(activityState: "running" | "finished" | null = null) {
+  const sdk = testSdk();
+  sdk.sessions.setMany([makeSessionListItem("session-1", { taskId: 2, activityState })]);
+  const writes: string[] = [];
+  mockFetch((url, init) => {
+    writes.push(`${init?.method} ${url} ${init?.body}`);
+    return new Response(JSON.stringify(makeSessionListItem("session-1")), { headers: { "Content-Type": "application/json" } });
+  });
+  return { sessions: sdk.reins.sessions, writes };
 }
 
 function infoCardBinding(item: SessionListItem, binding: "actions" | "titlePrefix" | "trailing" | "subtitle"): unknown {
@@ -56,7 +58,7 @@ describe("SessionListItem", () => {
 
   test("binds the accessible pin to the title line and keeps activity and delegates trailing", () => {
     const item = new SessionListItem();
-    item.session = { ...session("running"), pinnedAt: "2026-01-02T00:00:00Z" };
+    item.session = { ...session("running"), pinned: true };
     item.childSessions = [{ ...session(null), id: "child-session", parentSessionId: "session-1" }];
 
     const titlePrefix = templateToString(infoCardBinding(item, "titlePrefix"));
@@ -69,44 +71,40 @@ describe("SessionListItem", () => {
     expect(trailing).toContain("delegate-popover");
   });
 
-  test("provides read and unread info-card actions", async () => {
+  test("without sessions to act through, offers only copying its ID and moving it", () => {
     const item = new SessionListItem();
-    const setSessionUnread = mock(async () => ({ ok: true }));
-    item.onSetSessionUnread = setSessionUnread;
-    item.session = session("finished");
+    item.session = session("unread");
 
-    const finishedActions = infoCardActions(item);
-    expect(finishedActions.map((action) => action.label)).toEqual([
-      "Copy session ID",
-      "Mark as read",
-      "Move session…",
-    ]);
-    const markRead = finishedActions.find((action) => action.label === "Mark as read");
-    await markRead?.run();
-    expect(setSessionUnread).toHaveBeenCalledWith("session-1", false);
+    expect(infoCardActions(item).map((action) => action.label)).toEqual(["Copy session ID", "Move session…"]);
+  });
 
+  test("marks an unread session read, and a read one unread", async () => {
+    const { sessions, writes } = recordingSessions("finished");
+    const item = new SessionListItem();
+    item.sessions = sessions;
+    item.session = session("unread");
+
+    await infoCardActions(item).find((action) => action.label === "Mark as read")?.run();
     item.session = session(null);
-    const idleActions = infoCardActions(item);
-    expect(idleActions.map((action) => action.label)).toEqual([
-      "Copy session ID",
-      "Mark as unread",
-      "Move session…",
+    await infoCardActions(item).find((action) => action.label === "Mark as unread")?.run();
+
+    expect(writes).toEqual([
+      'PATCH /api/sessions/session-1/activity {"unread":false}',
+      'PATCH /api/sessions/session-1/activity {"unread":true}',
     ]);
-    const markUnread = idleActions.find((action) => action.label === "Mark as unread");
-    await markUnread?.run();
-    expect(setSessionUnread).toHaveBeenCalledWith("session-1", true);
   });
 
   test("provides rename, pin, and archive actions through the shared desktop/mobile action list", async () => {
+    const { sessions, writes } = recordingSessions();
     const item = new SessionListItem();
-    const updateMetadata = mock(async () => ({ ok: true }));
     const renameRequests: string[] = [];
     item.addEventListener("rename-session", (event) => renameRequests.push(event.detail.sessionId));
-    item.onUpdateMetadata = updateMetadata;
+    item.sessions = sessions;
     item.session = session(null);
 
     expect(infoCardActions(item).map((action) => action.label)).toEqual([
       "Copy session ID",
+      "Mark as unread",
       "Move session…",
       "Rename",
       "Pin",
@@ -116,12 +114,15 @@ describe("SessionListItem", () => {
     await infoCardActions(item).find((action) => action.label === "Pin")?.run();
     await infoCardActions(item).find((action) => action.label === "Archive")?.run();
     expect(renameRequests).toEqual(["session-1"]);
-    expect(updateMetadata).toHaveBeenNthCalledWith(1, "session-1", { pinned: true });
-    expect(updateMetadata).toHaveBeenNthCalledWith(2, "session-1", { archived: true });
+    expect(writes).toEqual([
+      'PATCH /api/sessions/session-1/metadata {"pinned":true}',
+      'PATCH /api/sessions/session-1/metadata {"archived":true}',
+    ]);
 
-    item.session = { ...session(null), pinnedAt: "2026-01-02T00:00:00Z", archivedAt: "2026-01-03T00:00:00Z" };
+    item.session = { ...session(null), pinned: true, archived: true };
     expect(infoCardActions(item).map((action) => action.label)).toEqual([
       "Copy session ID",
+      "Mark as unread",
       "Move session…",
       "Rename",
       "Unpin",
@@ -133,7 +134,7 @@ describe("SessionListItem", () => {
     const item = new SessionListItem();
     const moveRequests: string[] = [];
     item.addEventListener("move-session", (event) => moveRequests.push(event.detail.sessionId));
-    item.session = { ...session(null), placement: { available: true, removed: false, nodeId: "internal", nodeName: "Internal", path: "" } };
+    item.session = { ...session(null), nodeName: "Internal" };
 
     const move = infoCardActions(item).find((action) => action.label === "Move session…");
     expect(move).toMatchObject({ detail: "Node: Internal", disabled: false });
@@ -144,7 +145,7 @@ describe("SessionListItem", () => {
 
   test("marks a node that was removed, from which the session can still move", () => {
     const item = new SessionListItem();
-    item.session = { ...session(null), placement: { available: false, removed: true, nodeId: "laptop", nodeName: "Laptop", path: "" } };
+    item.session = { ...session(null), nodeRemoved: true };
 
     expect(infoCardActions(item).find((action) => action.label === "Move session…")).toMatchObject({ detail: "Node: Laptop (removed)", disabled: false });
   });
@@ -156,14 +157,13 @@ describe("SessionListItem", () => {
     item.session = session("running");
     expect(moveAction()).toMatchObject({ disabled: true, detail: "Unavailable while the session is running" });
 
-    item.session = { ...session("finished"), placement: { available: true, removed: false, nodeId: "internal", nodeName: "Internal", path: "" } };
+    item.session = { ...session("unread"), nodeName: "Internal" };
     expect(moveAction()).toMatchObject({ disabled: false, detail: "Node: Internal" });
   });
 
   test("omits the read toggle while a session is running", () => {
     const item = new SessionListItem();
-    item.onSetSessionUnread = mock(async () => ({ ok: true }));
-    item.onUpdateMetadata = mock(async () => ({ ok: true }));
+    item.sessions = recordingSessions("running").sessions;
     item.session = session("running");
 
     expect(infoCardActions(item).map((action) => action.label)).toEqual([

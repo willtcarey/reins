@@ -14,6 +14,7 @@ import { ModelRegistryStore } from "./model-registry-store.js";
 import type { NodesStore } from "./nodes-store.js";
 import { ExtensionsStore } from "./extensions-store.js";
 import type { Extensions } from "../../sdk-host/extensions.js";
+import { SidebarSections } from "../../sdk-host/sidebar-sections.js";
 
 export type SettingsStoreResult = { ok: true } | { error: string };
 export type SettingsStoreListener = () => void;
@@ -60,6 +61,8 @@ export class SettingsStore {
   readonly registryStore = new ModelRegistryStore();
   readonly nodesStore: NodesStore;
   readonly extensionsStore: ExtensionsStore;
+  /** The sidebar's sections, which the Sidebar section orders and turns on or off. */
+  readonly sidebarSections: SidebarSections;
 
   private _modelSettings: Record<ModelSettingKey, ModelSettingState> = {
     default_model: {
@@ -76,10 +79,11 @@ export class SettingsStore {
   private _settingChangeListeners = new Set<SettingsChangeListener>();
 
   /** `nodesStore`: the app's nodes, which the Nodes section lists. `extensions`: the app's frontend extensions,
-   * which the Extensions section lists with the backend's. */
-  constructor(nodesStore: NodesStore, extensions?: Extensions) {
+   * which the Extensions section lists with the backend's. `sidebarSections`: the app's sidebar sections. */
+  constructor(nodesStore: NodesStore, extensions?: Extensions, sidebarSections: SidebarSections = new SidebarSections()) {
     this.nodesStore = nodesStore;
     this.extensionsStore = new ExtensionsStore(extensions);
+    this.sidebarSections = sidebarSections;
     this.registryStore.subscribe(() => this.notify());
   }
 
@@ -137,7 +141,7 @@ export class SettingsStore {
         api.oauth.providers(),
       ]);
 
-      this._applyLoadedSettings(settings, settingKeys);
+      this._applyLoadedSettings(settings.filter((entry): entry is LoadedSettingEntry => entry.key !== "sidebar_sections"), settingKeys);
       this.oauthProviders = oauthProviders;
 
       this._resetOAuthLoginState();

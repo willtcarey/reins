@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { SessionSidebar } from "../../components/session-sidebar.js";
-import { templateToString } from "../helpers/lit-template.js";
+import { AppStore } from "../../models/stores/app-store.js";
+import { collectTemplateProperties, templateToString } from "../helpers/lit-template.js";
+import { StubClient } from "../helpers/stub-client.js";
 
 const originalWindow = globalThis.window;
 const originalNavigator = globalThis.navigator;
@@ -22,6 +24,12 @@ afterEach(() => {
   Reflect.set(globalThis, "navigator", originalNavigator);
 });
 
+function sidebar(app: AppStore) {
+  const el = new SessionSidebar();
+  el.app = app;
+  return el;
+}
+
 describe("SessionSidebar viewport behavior", () => {
   test("uses the viewport controller mobile state instead of reading window width", () => {
     installViewportGlobals({ mobile: true, innerWidth: 1024 });
@@ -38,17 +46,37 @@ describe("SessionSidebar viewport behavior", () => {
   });
 });
 
-describe("SessionSidebar: other sessions", () => {
-  test("lists the sessions of no project under Other sessions, only when there is one", () => {
+describe("SessionSidebar: its sections", () => {
+  test("mounts the sections the user has on, in their order, each under its title", () => {
     installViewportGlobals({ mobile: false, innerWidth: 1024 });
-    const el = new SessionSidebar();
-    const unowned = { id: "loose", projectId: null, name: "Heartbeat", firstMessage: null };
-    const store = { projects: [], sessionId: "", projectsStore: { unownedSessions: [unowned] } };
-    Reflect.set(el, "store", store);
+    const app = new AppStore(new StubClient(), null);
+    const inbox = { id: "inbox", title: "Inbox", mount: () => {} };
+    const projects = { id: "projects", title: "Projects", mount: () => {} };
+    app.sidebar.register(inbox);
+    app.sidebar.register({ id: "recent", title: "Recent", mount: () => {} });
+    app.sidebar.register(projects);
+    void app.sidebar.setVisible("recent", false);
+    void app.sidebar.move("projects", -2);
 
-    expect(templateToString(el.render())).toContain("Other sessions");
+    const rendered = sidebar(app).render();
 
-    store.projectsStore.unownedSessions = [];
-    expect(templateToString(el.render())).not.toContain("Other sessions");
+    expect(collectTemplateProperties(rendered, "presentation")).toEqual([projects, inbox]);
+    expect(templateToString(rendered)).toMatch(/Projects[\s\S]*Inbox/);
+  });
+
+  test("shows no section while collapsed, and badges the rail while a session runs", () => {
+    installViewportGlobals({ mobile: false, innerWidth: 1024 });
+    const app = new AppStore(new StubClient(), null);
+    app.sidebar.register({ id: "projects", title: "Projects", mount: () => {} });
+    const el = sidebar(app);
+    el.collapsed = true;
+
+    const quiet = templateToString(el.render());
+    app.sessionCache.set("busy", { projectId: 1, activityState: "running" });
+    const busy = templateToString(el.render());
+
+    expect(collectTemplateProperties(el.render(), "presentation")).toEqual([]);
+    expect(quiet).not.toContain("rail-badge");
+    expect(busy).toContain("rail-badge");
   });
 });

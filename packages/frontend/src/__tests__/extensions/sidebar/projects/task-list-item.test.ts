@@ -1,10 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { PartType, type PartInfo } from "lit/directive.js";
-import { TaskListItemElement } from "../../components/task-list-item.js";
-import { SpringCollapseDirective } from "../../directives/spring-collapse.js";
-import type { SessionListView as SessionListItem } from "@backend/models/sessions.js";
-import { makeTask } from "../helpers/fixtures.js";
-import { collectTemplateValues, templateToString } from "../helpers/lit-template.js";
+import { TaskListItemElement } from "../../../../extensions/sidebar/projects/task-list-item.js";
+import { SpringCollapseDirective } from "../../../../directives/spring-collapse.js";
+import { makeSessionSummary, makeTaskSummary } from "../../../helpers/fixtures.js";
+import { collectTemplateValues, templateToString } from "../../../helpers/lit-template.js";
 
 interface DirectiveResult {
   _$litDirective$: typeof SpringCollapseDirective;
@@ -27,7 +26,7 @@ function renderCollapse(item: TaskListItemElement): string {
 describe("TaskListItemElement", () => {
   test("lazily renders its session body only while expanded", () => {
     const item = new TaskListItemElement();
-    item.task = makeTask({ session_count: 1 });
+    item.task = makeTaskSummary({ sessionCount: 1 });
     item.expanded = false;
 
     expect(renderCollapse(item)).not.toContain("Loading…");
@@ -38,24 +37,9 @@ describe("TaskListItemElement", () => {
   });
 
   test("keeps a child visible when its archived parent is absent from the active list", () => {
-    const child: SessionListItem = {
-      id: "child",
-      projectId: 1,
-      taskId: 1,
-      parentSessionId: "archived-parent",
-      name: "Independent child",
-      createdAt: "2026-01-01T00:00:00Z",
-      updatedAt: "2026-01-01T00:00:00Z",
-      pinnedAt: null,
-      archivedAt: null,
-      sourceExtension: null,
-      placement: { available: true, removed: false, nodeId: "internal", nodeName: "Internal", path: "" },
-      messageCount: 1,
-      firstMessage: "Continue independently",
-      activityState: null,
-    };
+    const child = makeSessionSummary("child", { taskId: 1, parentSessionId: "archived-parent", name: "Independent child" });
     const item = new TaskListItemElement();
-    item.task = makeTask({ id: 1, session_count: 2 });
+    item.task = makeTaskSummary({ id: 1, sessionCount: 2 });
     item.sessions = [child];
     item.expanded = true;
 

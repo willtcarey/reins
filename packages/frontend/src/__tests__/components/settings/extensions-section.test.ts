@@ -77,10 +77,10 @@ describe("SettingsExtensionsSection", () => {
 });
 
 describe("SettingsExtensionDetails", () => {
-  test("shows what it gives agents, and what it keeps: its directory, its database's size and how many secrets", () => {
+  test("shows what it gives agents, its HTTP methods and pages, and what it keeps: its directory, its database's size and how many secrets", () => {
     const details = new SettingsExtensionDetails();
     details.store = loadedStore([backendExtension("notes", {
-      registrations: { tools: { title: "Notes tools" }, promptSections: 1, settlementListeners: 0, scriptFunctions: ["notes.list"], httpMethods: ["list"], pages: [] },
+      registrations: { tools: { title: "Notes tools" }, promptSections: 1, settlementListeners: 0, scriptFunctions: ["notes.list"], httpMethods: ["list"], pages: ["/extensions/notes/oauth/callback"] },
       storage: {
         dataDir: "/data/extensions/notes",
         databaseBytes: 4096,
@@ -93,6 +93,7 @@ describe("SettingsExtensionDetails", () => {
     const text = visibleText(details);
 
     expect(text).toContain("For agents Tool providers Notes tools System prompt 1 section API functions api.notes.list");
+    expect(text).toContain("HTTP Methods POST /api/extensions/notes/list Pages GET /extensions/notes/oauth/callback");
     expect(text).toContain("/data/extensions/notes");
     expect(text).toContain("4.0 KB");
     expect(text).toContain("Secrets 3");

@@ -25,6 +25,7 @@ import "./api-keys-section.js";
 import "./model-setting-section.js";
 import "./nodes-section.js";
 import "./extensions-section.js";
+import "./sidebar-section.js";
 import "./extension-details.js";
 import "../view-mount.js";
 
@@ -96,6 +97,21 @@ const NODES_SECTION: SectionDefinition = {
   render: (store) => html`<settings-nodes-section .store=${store.nodesStore}></settings-nodes-section>`,
 };
 
+/** The sidebar's sections: their order, and which are on. */
+const SIDEBAR_SECTION: SectionDefinition = {
+  id: "sidebar",
+  label: "Sidebar",
+  description: "The sections of the sidebar: their order, and which are shown.",
+  load: async (store) => {
+    try {
+      await store.sidebarSections.load();
+    } catch (error) {
+      showToast(`Failed to load the sidebar's sections: ${error instanceof Error ? error.message : String(error)}`, "error");
+    }
+  },
+  render: (store) => html`<settings-sidebar-section .sections=${store.sidebarSections}></settings-sidebar-section>`,
+};
+
 /** Reins' own list of every extension, apart from the pages extensions draw themselves. */
 const EXTENSIONS_SECTION: SectionDefinition = {
   id: "extensions",
@@ -108,7 +124,7 @@ const EXTENSIONS_SECTION: SectionDefinition = {
   render: (store) => html`<settings-extensions-section .store=${store.extensionsStore}></settings-extensions-section>`,
 };
 
-const SECTIONS: readonly SectionDefinition[] = [MODELS_SECTION, NODES_SECTION, EXTENSIONS_SECTION];
+const SECTIONS: readonly SectionDefinition[] = [MODELS_SECTION, NODES_SECTION, SIDEBAR_SECTION, EXTENSIONS_SECTION];
 
 /** What the route shows: one of the page's own sections, Reins' page about an extension (part of the Extensions
  * section), or an extension's own page (null while it has none). */

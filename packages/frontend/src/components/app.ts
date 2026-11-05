@@ -10,6 +10,8 @@ import { FileBrowserStore } from "../models/stores/file-browser-store.js";
 import { QuickOpenStore } from "../models/stores/quick-open-store.js";
 import { createReinsSdk, type SdkHost } from "../sdk-host/create-sdk.js";
 import { SdkSessions } from "../sdk-host/sessions.js";
+import { SdkUi } from "../sdk-host/ui.js";
+import { SdkNodes, SdkProjects, SdkTasks } from "../sdk-host/projects.js";
 import { AppClient } from "../models/ws-client.js";
 import { mainViewHash, navigate, openSettings, renderRoutePage } from "../routing/app-router.js";
 import type { Route } from "../routing/router.js";
@@ -29,16 +31,30 @@ export class AppShell extends LitElement {
   }
 
   private appStore = new AppStore(new AppClient());
+  private mainListeners = new Set<() => void>();
+  /** What the main area showed when its listeners were last told, to tell them only of a change. */
+  private mainShown = "null";
   /** What each extension's SDK is built over. */
+  private sdkSessions = new SdkSessions(this.appStore);
   private sdkHost: SdkHost = {
     app: this.appStore,
-    sessions: new SdkSessions(this.appStore),
+    sessions: this.sdkSessions,
+    ui: new SdkUi(this.appStore.sessionCache, this.sdkSessions),
+    projects: new SdkProjects(this.appStore.projectsStore),
+    tasks: new SdkTasks(this.appStore.projectsStore),
+    nodes: new SdkNodes(this.appStore.projectsStore),
     main: {
       current: () => this.workspace?.current() ?? null,
       show: (view) => {
         const hash = mainViewHash(view);
         if (hash) navigate(hash);
+        // On a phone, opening what the workspace already shows still brings its page forward.
+        if (hash) this.workspace?.revealMain();
         return hash !== null;
+      },
+      subscribe: (listener) => {
+        this.mainListeners.add(listener);
+        return () => this.mainListeners.delete(listener);
       },
     },
     http: api,
@@ -103,6 +119,18 @@ export class AppShell extends LitElement {
     }
   }
 
+  protected override updated(): void {
+    this.mainViewChanged();
+  }
+
+  /** Tells the SDK's `workspace.subscribe` listeners when the main area's view or subject changed. */
+  private mainViewChanged = () => {
+    const shown = JSON.stringify(this.workspace?.current() ?? null);
+    if (shown === this.mainShown) return;
+    this.mainShown = shown;
+    for (const listener of this.mainListeners) listener();
+  };
+
   private handleOpenInBrowser = (event: CustomEvent<OpenInBrowserDetail>) => {
     const { source, path, startLine, endLine, mode } = event.detail;
     this.fileBrowserStore?.open(source, { path, startLine, endLine, mode });
@@ -125,6 +153,7 @@ export class AppShell extends LitElement {
         @open-file-browser=${(event: CustomEvent<SourceDetail>) => this.fileBrowserStore?.open(event.detail.source)}
         @open-image-viewer=${this.handleOpenImageViewer}
         @open-settings=${() => openSettings()}
+        @main-view-change=${this.mainViewChanged}
       >
         ${!store.connected ? html`
           <div class="bg-yellow-800 text-yellow-200 text-xs text-center py-1">

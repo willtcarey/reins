@@ -4,15 +4,11 @@ import { SettingsNodesSection } from "../../../components/settings/nodes-section
 import { Loadable } from "../../../helpers/loadable.js";
 import { NodesStore } from "../../../models/stores/nodes-store.js";
 import { mockFetch, restoreFetch } from "../../helpers/mock-fetch.js";
-import { clickButton, collectTemplateEventListeners, collectTemplateProperties, submitDialog, templateToString } from "../../helpers/lit-template.js";
+import { clickButton, templateToString } from "../../helpers/lit-template.js";
 import { setConfirmHostForTesting, type ConfirmOptions } from "../../../ui/confirm-dialog.js";
+import { setInputHostForTesting, type InputRequest } from "../../../ui/input-dialog.js";
 
 const originalLocation = globalThis.location;
-const originalHtmlInputElement = globalThis.HTMLInputElement;
-
-class TestInputElement extends EventTarget {
-  value = "";
-}
 
 const localNode: NodeView = { id: "internal", name: "Internal", connected: true, paired: false, hostname: null, pairedAt: null, revokedAt: null, sources: [], build: null, failure: null };
 const laptop: NodeView = { id: "laptop", name: "Laptop", connected: true, paired: true, hostname: "laptop.local", pairedAt: "2026-10-01T09:00:00.000Z", revokedAt: null, sources: [], build: null, failure: null };
@@ -23,23 +19,13 @@ const pairingCode = { id: 7, code: "single-use-code", expiresAt: "2026-10-08T12:
 afterEach(() => {
   restoreFetch();
   setConfirmHostForTesting(null);
+  setInputHostForTesting(null);
   Reflect.set(globalThis, "location", originalLocation);
-  Reflect.set(globalThis, "HTMLInputElement", originalHtmlInputElement);
 });
 
 /** The section's text as a user reads it: markup stripped, whitespace collapsed. */
 function visibleText(section: SettingsNodesSection): string {
   return templateToString(section.render()).replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
-}
-
-/** Types `value` into the section's one text field, as its input event delivers it. */
-function typeInto(section: SettingsNodesSection, value: string) {
-  const input = new TestInputElement();
-  input.value = value;
-  const event = new Event("input");
-  Object.defineProperty(event, "target", { value: input });
-  const [listener] = collectTemplateEventListeners(section.render(), "input");
-  listener!(event);
 }
 
 function sectionListing(nodes: NodeView[]): SettingsNodesSection {
@@ -186,28 +172,29 @@ describe("SettingsNodesSection", () => {
     expect(visibleText(sectionListing([localNode]))).toContain(" No sources ");
   });
 
-  test("Rename opens a dialog with the node's name, and saving renames it", async () => {
-    Reflect.set(globalThis, "HTMLInputElement", TestInputElement);
-    const requests: Array<{ request: string; body: unknown }> = [];
-    mockFetch((url, init) => {
-      requests.push({ request: `${init?.method ?? "GET"} ${url}`, body: init?.body });
-      return Response.json({ ...localNode, name: "beepboop" });
+  test("Rename asks for a new name, not blank, and saving renames the node; a refused one stays asked", async () => {
+    mockFetch((_url, init) => String(init?.body).includes("x".repeat(101))
+      ? Response.json({ error: "A node name must have 1 to 100 characters" }, { status: 400 })
+      : Response.json({ ...localNode, name: "beepboop" }));
+    const asked: Omit<InputRequest, "save">[] = [];
+    const refusals: string[] = [];
+    setInputHostForTesting({
+      open: async ({ save, ...question }) => {
+        asked.push(question);
+        await save("x".repeat(101)).catch((error: unknown) => refusals.push(String(error)));
+        await save("beepboop");
+        return true;
+      },
     });
     const section = sectionListing([localNode]);
-    const dialogOpen = () => collectTemplateProperties(section.render(), "open");
-    expect(dialogOpen()).toEqual([false]);
 
     clickButton(section.render(), "Rename");
-
-    expect(dialogOpen()).toEqual([true]);
-    expect(collectTemplateProperties(section.render(), "value")).toContain("Internal");
-    typeInto(section, "beepboop");
-    submitDialog(section.render());
-
     for (let i = 0; i < 20 && section.store!.nodes.data![0]!.name !== "beepboop"; i++) await Bun.sleep(1);
-    expect(requests).toEqual([{ request: "PATCH /api/nodes/internal", body: JSON.stringify({ name: "beepboop" }) }]);
+
+    expect(asked).toEqual([{ heading: "Rename Internal", label: "Name", value: "Internal", required: true, maxLength: 100 }]);
+    expect(refusals).toEqual(["Error: A node name must have 1 to 100 characters"]);
     expect(section.store!.nodes.data).toEqual([{ ...localNode, name: "beepboop" }]);
-    expect(dialogOpen()).toEqual([false]);
   });
+
 
 });

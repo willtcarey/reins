@@ -230,6 +230,8 @@ export interface Workspace {
   current(): CurrentView | null;
   /** The ID of the main area's most specific subject of `type` now, or null when it is about none. */
   currentSubject<K extends keyof SubjectTypes>(type: K): SubjectTypes[K] | null;
+  /** Listens for the main area's view, or what it is about, changing: read `current()` again on hearing it. */
+  onDidChange(listener: () => void): Disposer;
 }
 
 // ---------------------------------------------------------------------------
@@ -262,6 +264,121 @@ export interface MessageDecorator {
 export interface Messages {
   /** Registers a decorator. A piece has one view: where decorators overlap, the earlier registered wins. */
   registerDecorator(decorator: MessageDecorator): Disposer;
+}
+
+// ---------------------------------------------------------------------------
+// Projects, tasks and sessions
+// ---------------------------------------------------------------------------
+
+/**
+ * What a session, a task or a project has that the user may want to see: `running` (work in progress), or
+ * `unread` (its work finished with something the user has not opened yet); null when neither. A task or project
+ * has its sessions': running when any of them runs, else unread when any of them is.
+ */
+export type Activity = "running" | "unread" | null;
+
+export interface ProjectsChange {
+  readonly projectIds: readonly number[];
+}
+
+export interface TasksChange {
+  readonly projectIds: readonly number[];
+}
+
+export interface SessionsChange {
+  readonly sessionIds: readonly string[];
+  /** The projects the changed sessions were or are in; null for no project. */
+  readonly projectIds: readonly (number | null)[];
+}
+
+/**
+ * The host's projects, tasks and sessions are live: each read is synchronous, from what the host has loaded,
+ * so it can be read while drawing. Each has an `onDidChange` event that says what changed, only when something
+ * its reads give changed (not, say, a session's model), once for the changes of a moment. The event carries no
+ * data: a listener that cares reads again. A listener may ignore what it does not show, or read again on any.
+ */
+export interface Project {
+  readonly id: number;
+  readonly name: string;
+  readonly activity: Activity;
+  /** The branch its tasks start from. */
+  readonly baseBranch: string;
+  /** Where its sessions work unless they inherit better; null when it has none. */
+  readonly defaultSource: Source | null;
+}
+
+export interface ProjectCreation {
+  readonly name: string;
+  /** Its default source: a directory on a node, which must exist there. */
+  readonly source: Source;
+  /** Its base branch; found in the source when left out. */
+  readonly baseBranch?: string;
+}
+
+export interface ProjectChanges {
+  readonly name?: string;
+  readonly baseBranch?: string;
+  /** A new default source; its sessions stay where they are. */
+  readonly defaultSource?: Source;
+}
+
+/** The projects. Operations that reach the server reject with an Error whose message can be shown. */
+export interface Projects {
+  /** Every project, by name. */
+  list(): readonly Project[];
+  /** Tells which projects were added, removed or changed (their name, activity, …), as `list()` gives them. */
+  onDidChange(listener: (change: ProjectsChange) => void): Disposer;
+  /** Creates a project and resolves with it. Rejects an unknown node or a path that is not a directory there. */
+  create(project: ProjectCreation): Promise<Project>;
+  update(projectId: number, changes: ProjectChanges): Promise<void>;
+  /** Removes the project from Reins with its tasks and sessions (never files on disk). */
+  remove(projectId: number): Promise<void>;
+}
+
+export interface Task {
+  readonly id: number;
+  readonly projectId: number;
+  readonly title: string;
+  readonly description: string | null;
+  /** The branch its sessions work on. */
+  readonly branchName: string;
+  readonly closed: boolean;
+  readonly updatedAt: string;
+  readonly sessionCount: number;
+  /** Lines its branch adds and removes against the project's base branch; null when not known. */
+  readonly diffStats: { readonly additions: number; readonly removals: number } | null;
+  readonly activity: Activity;
+}
+
+/** A project's tasks, loaded the first time they are asked for. */
+export interface Tasks {
+  /** The project's tasks, the latest changed first; empty until they load (asking loads them). */
+  list(projectId: number): readonly Task[];
+  /** Whether the project's tasks (and its assistant's conversations) loaded once. */
+  loaded(projectId: number): boolean;
+  /**
+   * Tells which projects' tasks changed: a task added, removed or changed (its title, activity, diff, …), or the
+   * tasks loaded. For a project the host has not loaded, it tells that its tasks may have changed (a task
+   * closed elsewhere), with nothing to read until they are asked for.
+   */
+  onDidChange(listener: (change: TasksChange) => void): Disposer;
+  /** Creates a task from what the user wants done: Reins writes its title, description and branch. */
+  create(projectId: number, request: string): Promise<void>;
+  update(projectId: number, taskId: number, changes: { readonly title?: string; readonly description?: string | null }): Promise<void>;
+  /** Deletes the task, with its sessions. */
+  remove(projectId: number, taskId: number): Promise<void>;
+}
+
+/** A node, where sessions run. */
+export interface NodeSummary {
+  readonly id: string;
+  readonly name: string;
+  readonly connected: boolean;
+}
+
+export interface Nodes {
+  /** Every node that is not revoked, from the server. */
+  list(): Promise<readonly NodeSummary[]>;
 }
 
 // ---------------------------------------------------------------------------
@@ -300,8 +417,83 @@ export interface SessionCreation {
   readonly prompt?: string;
 }
 
-/** Sessions by ID. Operations that reach the server reject with an Error whose message can be shown. */
+/** A session as the host's session lists show it. */
+export interface SessionSummary {
+  readonly id: string;
+  /** Its project; null for a session of no project (which has no task). */
+  readonly projectId: number | null;
+  /** Its task; null for a conversation of its project's assistant. */
+  readonly taskId: number | null;
+  /** The session that started it as its child; null for one that is not a child. */
+  readonly parentSessionId: string | null;
+  /** Its explicit name; null when it has none. */
+  readonly name: string | null;
+  /** The text of its first message; null before it has one, or when the host has not loaded it. */
+  readonly firstMessage: string | null;
+  readonly createdAt: string;
+  /** When it last changed (a message, a run, a rename). */
+  readonly updatedAt: string;
+  readonly messageCount: number;
+  readonly activity: Activity;
+  /** Pinned sessions are listed before the others. */
+  readonly pinned: boolean;
+  /** Archived sessions are left out of lists unless asked for. */
+  readonly archived: boolean;
+  /** The backend extension that started it, or null. */
+  readonly startedBy: string | null;
+  /** Where it runs, and its node's name; a removed node takes no work until the session moves. */
+  readonly source: Source;
+  readonly nodeName: string;
+  readonly nodeRemoved: boolean;
+}
+
+/** Which sessions `Sessions.list` gives; every session the host shows when empty. */
+export interface SessionQuery {
+  /** A project's sessions, or (null) those of no project. */
+  readonly projectId?: number | null;
+  /** With a project: one task's sessions, or (null) its assistant's conversations. */
+  readonly taskId?: number | null;
+  /** Archived sessions too; left out otherwise. */
+  readonly archived?: boolean;
+}
+
+/** A node a session can move to, with the paths its project's sessions used there. */
+export interface SessionMoveTarget {
+  readonly nodeId: string;
+  readonly name: string;
+  readonly connected: boolean;
+  /** Whether the session is on it now. */
+  readonly current: boolean;
+  readonly paths: readonly string[];
+}
+
+/**
+ * Sessions: by ID from the server, and live lists of the ones the host has (*Projects, tasks and sessions*).
+ * Operations that reach the server reject with an Error whose message can be shown.
+ */
 export interface Sessions {
+  /**
+   * The sessions the host has that `query` asks for, pinned first, then the latest changed first. The host always
+   * has every session with activity and those of no project; a project's assistant conversations
+   * and a task's sessions load the first time a query names them (`{ projectId }`, `{ projectId, taskId }`).
+   * Background sessions are never listed.
+   */
+  list(query?: SessionQuery): readonly SessionSummary[];
+  /**
+   * Tells which sessions appeared, went or changed as `list()` gives them (name, activity, time, …), and the
+   * projects they were or are in (null: no project), so a list of one project can ignore the others.
+   */
+  onDidChange(listener: (change: SessionsChange) => void): Disposer;
+  /** Marks an idle session read or unread; lists show it at once. A running session cannot be marked unread. */
+  setUnread(sessionId: string, unread: boolean): Promise<void>;
+  setPinned(sessionId: string, pinned: boolean): Promise<void>;
+  setArchived(sessionId: string, archived: boolean): Promise<void>;
+  /** Names the session; null or blank gives it no name. */
+  setName(sessionId: string, name: string | null): Promise<void>;
+  /** Every node it could move to, with why some cannot take it. */
+  moveTargets(sessionId: string): Promise<readonly SessionMoveTarget[]>;
+  /** Moves an idle session to a directory on a node; its tools run there from then on. */
+  move(sessionId: string, to: Source): Promise<void>;
   /** The session, from the server. Rejects for a session it does not have. */
   get(sessionId: string): Promise<Session>;
   /**
@@ -389,6 +581,49 @@ export interface Settings {
 }
 
 // ---------------------------------------------------------------------------
+// The sidebar
+// ---------------------------------------------------------------------------
+
+/**
+ * A part of the sidebar's body. The host owns the sidebar around it (its header, collapsing it, the collapsed
+ * rail and its activity badge, the phone's sessions page) and where its sections are: the user orders them and
+ * turns them on or off in Settings → Sidebar. A section draws only itself.
+ */
+export interface SidebarSection {
+  /** What the user's order and switches remember it by: lowercase letters, digits and hyphens. One section has an ID. */
+  readonly id: string;
+  /** Its heading, which the host draws above it and Settings → Sidebar names it by; the ID when left out. */
+  readonly title?: string;
+  /**
+   * Draws into `target`, an element the host made, while the section is shown; disposed when it is turned off,
+   * the sidebar collapses or leaves the page, or the registration is disposed. A throw is shown in its place.
+   */
+  mount(target: HTMLElement): Mounted | void;
+}
+
+export interface Sidebar {
+  /**
+   * Adds a section. A new one is shown, after the sections the user has ordered, in registration order. A
+   * second section of an ID, or an ID that is not lowercase letters, digits and hyphens, throws.
+   */
+  registerSection(section: SidebarSection): Disposer;
+}
+
+// ---------------------------------------------------------------------------
+// UI
+// ---------------------------------------------------------------------------
+
+/** The host's own dialogs for its things, so every extension acting on one asks the user the same way. */
+export interface Ui {
+  /**
+   * Asks for the session's new name, its first message shown for a blank one, and saves it (a blank name:
+   * none). Resolves true once saved, false when cancelled. A failed save is shown and the dialog stays open.
+   * Rejects for a session the server does not have.
+   */
+  renameSession(sessionId: string): Promise<boolean>;
+}
+
+// ---------------------------------------------------------------------------
 // The SDK
 // ---------------------------------------------------------------------------
 
@@ -462,7 +697,12 @@ export interface ReinsSdk<A extends HttpApi = HttpApi> {
   readonly views: Views;
   readonly messages: Messages;
   readonly commands: Commands;
+  readonly projects: Projects;
+  readonly tasks: Tasks;
   readonly sessions: Sessions;
+  readonly nodes: Nodes;
+  readonly sidebar: Sidebar;
+  readonly ui: Ui;
   readonly settings: Settings;
   readonly http: Http<A>;
   /**

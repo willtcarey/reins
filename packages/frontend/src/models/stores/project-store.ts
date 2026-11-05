@@ -19,7 +19,7 @@ import type { ActivityState, CachedSession, SessionCache, SessionPatch } from ".
 
 export type ProjectStoreListener = () => void;
 
-type CachedSessionListItem = CachedSession & SessionListItem;
+export type CachedSessionListItem = CachedSession & SessionListItem;
 
 /** Whether the cached session is loaded enough to list. */
 export function isSessionListItem(session: CachedSession): session is CachedSessionListItem {
@@ -41,6 +41,104 @@ export interface SessionMetadataUpdate {
   name?: string | null;
   pinned?: boolean;
   archived?: boolean;
+}
+
+/** Optimistically marks an idle session read or unread, in `cache` and then on the server. */
+export async function setSessionUnread(
+  cache: SessionCache,
+  session: CachedSession,
+  unread: boolean,
+): Promise<{ ok: true } | { error: string }> {
+  const sessionId = session.id;
+  if (session.activityState === "running") {
+    return unread ? { error: "Running sessions cannot be marked unread" } : { ok: true };
+  }
+
+  const previousState = session.activityState;
+  const nextState = unread ? "finished" : null;
+  if (previousState === nextState) return { ok: true };
+  cache.set(sessionId, { activityState: nextState });
+
+  try {
+    await api.sessions.setActivity(sessionId, { unread });
+    return { ok: true };
+  } catch (error) {
+    if (cache.get(sessionId)?.activityState === nextState) cache.set(sessionId, { activityState: previousState });
+    return { error: error instanceof ReinsHttpError ? `HTTP ${error.status}` : "Network error" };
+  }
+}
+
+/** Optimistically renames, pins/unpins or archives/unarchives a session, in `cache` and then on the server. */
+export async function updateSessionMetadata(
+  cache: SessionCache,
+  session: CachedSession,
+  updates: SessionMetadataUpdate,
+): Promise<{ ok: true } | { error: string }> {
+  const sessionId = session.id;
+  const optimisticAt = new Date().toISOString();
+  const previous: SessionPatch = {};
+  const optimistic: SessionPatch = {};
+  if (updates.name !== undefined) {
+    previous.name = session.name;
+    optimistic.name = updates.name?.trim() || null;
+  }
+  if (updates.pinned !== undefined) {
+    previous.pinnedAt = session.pinnedAt;
+    optimistic.pinnedAt = updates.pinned ? optimisticAt : null;
+  }
+  if (updates.archived !== undefined) {
+    previous.archivedAt = session.archivedAt;
+    optimistic.archivedAt = updates.archived ? optimisticAt : null;
+  }
+  cache.set(sessionId, optimistic);
+
+  const rollback = () => {
+    const current = cache.get(sessionId);
+    const patch: SessionPatch = {};
+    if (updates.name !== undefined && current?.name === optimistic.name) {
+      patch.name = previous.name;
+    }
+    if (updates.pinned !== undefined && current?.pinnedAt === optimistic.pinnedAt) {
+      patch.pinnedAt = previous.pinnedAt;
+    }
+    if (updates.archived !== undefined && current?.archivedAt === optimistic.archivedAt) {
+      patch.archivedAt = previous.archivedAt;
+    }
+    cache.set(sessionId, patch);
+  };
+
+  try {
+    const data = await api.sessions.update(sessionId, updates);
+    const confirmed: SessionPatch = {};
+    if (updates.name !== undefined) confirmed.name = data.name;
+    if (updates.pinned !== undefined) confirmed.pinnedAt = data.pinnedAt;
+    if (updates.archived !== undefined) confirmed.archivedAt = data.archivedAt;
+    cache.set(sessionId, confirmed);
+    return { ok: true };
+  } catch (error) {
+    rollback();
+    return { error: error instanceof ReinsHttpError ? `HTTP ${error.status}` : "Network error" };
+  }
+}
+
+/** Every node the session can move to, eligible ones first, with why the others are not. */
+export async function loadMoveTargets(sessionId: string): Promise<SessionMoveTargetView[] | { error: string }> {
+  try {
+    return await api.sessions.moveTargets(sessionId);
+  } catch (error) {
+    return { error: error instanceof ReinsHttpError ? error.message : "Network error" };
+  }
+}
+
+/** Moves a session to `path` on node `nodeId`, caching the placement the server answers with. */
+export async function moveSession(cache: SessionCache | null, sessionId: string, nodeId: string, path: string): Promise<{ ok: true } | { error: string }> {
+  try {
+    const placement = await api.sessions.move(sessionId, { nodeId, path });
+    cache?.set(sessionId, { placement });
+  } catch (error) {
+    return { error: error instanceof ReinsHttpError ? error.message : "Network error" };
+  }
+  return { ok: true };
 }
 
 export class ProjectStore {
@@ -163,99 +261,22 @@ export class ProjectStore {
   // ---- Actions --------------------------------------------------------------
 
   /** Optimistically mark an idle session read or unread. */
-  async setSessionUnread(
-    sessionId: string,
-    unread: boolean,
-  ): Promise<{ ok: true } | { error: string }> {
+  async setSessionUnread(sessionId: string, unread: boolean): Promise<{ ok: true } | { error: string }> {
     const session = this.getSession(sessionId);
-    if (!session) return { error: "Session not found" };
-    if (session.activityState === "running") {
-      return unread ? { error: "Running sessions cannot be marked unread" } : { ok: true };
-    }
-
-    const previousState = session.activityState;
-    const nextState = unread ? "finished" : null;
-    if (previousState === nextState) return { ok: true };
-    this._sessionCache?.set(sessionId, { activityState: nextState });
-
-    try {
-      await api.sessions.setActivity(sessionId, { unread });
-      return { ok: true };
-    } catch (error) {
-      if (error instanceof ReinsHttpError) {
-        if (this.activityForSession(sessionId) === nextState) {
-          this._sessionCache?.set(sessionId, { activityState: previousState });
-        }
-        return { error: `HTTP ${error.status}` };
-      }
-      if (this.activityForSession(sessionId) === nextState) {
-        this._sessionCache?.set(sessionId, { activityState: previousState });
-      }
-      return { error: "Network error" };
-    }
+    if (!session || !this._sessionCache) return { error: "Session not found" };
+    return setSessionUnread(this._sessionCache, session, unread);
   }
 
   /** Optimistically rename, pin/unpin, or archive/unarchive a session. */
-  async updateSessionMetadata(
-    sessionId: string,
-    updates: SessionMetadataUpdate,
-  ): Promise<{ ok: true } | { error: string }> {
+  async updateSessionMetadata(sessionId: string, updates: SessionMetadataUpdate): Promise<{ ok: true } | { error: string }> {
     const session = this.getSession(sessionId);
-    if (!session) return { error: "Session not found" };
-
-    const optimisticAt = new Date().toISOString();
-    const previous: SessionPatch = {};
-    const optimistic: SessionPatch = {};
-    if (updates.name !== undefined) {
-      previous.name = session.name;
-      optimistic.name = updates.name?.trim() || null;
-    }
-    if (updates.pinned !== undefined) {
-      previous.pinnedAt = session.pinnedAt;
-      optimistic.pinnedAt = updates.pinned ? optimisticAt : null;
-    }
-    if (updates.archived !== undefined) {
-      previous.archivedAt = session.archivedAt;
-      optimistic.archivedAt = updates.archived ? optimisticAt : null;
-    }
-    this._sessionCache?.set(sessionId, optimistic);
-
-    const rollback = () => {
-      const current = this.getSession(sessionId);
-      const patch: SessionPatch = {};
-      if (updates.name !== undefined && current?.name === optimistic.name) {
-        patch.name = previous.name;
-      }
-      if (updates.pinned !== undefined && current?.pinnedAt === optimistic.pinnedAt) {
-        patch.pinnedAt = previous.pinnedAt;
-      }
-      if (updates.archived !== undefined && current?.archivedAt === optimistic.archivedAt) {
-        patch.archivedAt = previous.archivedAt;
-      }
-      this._sessionCache?.set(sessionId, patch);
-    };
-
-    try {
-      const data = await api.sessions.update(sessionId, updates);
-      const confirmed: SessionPatch = {};
-      if (updates.name !== undefined) confirmed.name = data.name;
-      if (updates.pinned !== undefined) confirmed.pinnedAt = data.pinnedAt;
-      if (updates.archived !== undefined) confirmed.archivedAt = data.archivedAt;
-      this._sessionCache?.set(sessionId, confirmed);
-      return { ok: true };
-    } catch (error) {
-      rollback();
-      return { error: error instanceof ReinsHttpError ? `HTTP ${error.status}` : "Network error" };
-    }
+    if (!session || !this._sessionCache) return { error: "Session not found" };
+    return updateSessionMetadata(this._sessionCache, session, updates);
   }
 
   /** Every node, eligible move targets first, with why the others are not. */
   async loadMoveTargets(sessionId: string): Promise<SessionMoveTargetView[] | { error: string }> {
-    try {
-      return await api.sessions.moveTargets(sessionId);
-    } catch (error) {
-      return { error: error instanceof ReinsHttpError ? error.message : "Network error" };
-    }
+    return loadMoveTargets(sessionId);
   }
 
   /**
@@ -263,13 +284,7 @@ export class ProjectStore {
    * is cached here (the `session_updated` broadcast also refreshes it).
    */
   async moveSession(sessionId: string, nodeId: string, path: string): Promise<{ ok: true } | { error: string }> {
-    try {
-      const placement = await api.sessions.move(sessionId, { nodeId, path });
-      this._sessionCache?.set(sessionId, { placement });
-    } catch (error) {
-      return { error: error instanceof ReinsHttpError ? error.message : "Network error" };
-    }
-    return { ok: true };
+    return moveSession(this._sessionCache, sessionId, nodeId, path);
   }
 
   /**

@@ -4,5 +4,6 @@
 import type { ExtensionRegistration } from "./host.js";
 import { mcp } from "./mcp/index.js";
 import { automations } from "./automations/index.js";
+import { recentSessionsExtension } from "./recent-sessions/index.js";
 
-export const BUILT_IN_EXTENSIONS: readonly ExtensionRegistration[] = [{ name: "mcp", ...mcp }, { name: "automations", ...automations }];
+export const BUILT_IN_EXTENSIONS: readonly ExtensionRegistration[] = [{ name: "mcp", ...mcp }, { name: "automations", ...automations }, { name: "recent-sessions", ...recentSessionsExtension }];

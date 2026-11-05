@@ -2,6 +2,8 @@ import { ReinsClient } from "@reins/client";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { AppStore } from "../../../models/stores/app-store.js";
 import { createReinsSdk } from "../../../sdk-host/create-sdk.js";
+import { SdkNodes, SdkProjects, SdkTasks } from "../../../sdk-host/projects.js";
+import { SdkUi } from "../../../sdk-host/ui.js";
 import { SdkSessions } from "../../../sdk-host/sessions.js";
 import { StubClient } from "../../helpers/stub-client.js";
 import { mockFetch, restoreFetch } from "../../helpers/mock-fetch.js";
@@ -138,7 +140,7 @@ describe("AppStore as what the Reins SDK is built over", () => {
     const store = new AppStore(new StubClient());
     const reins = createReinsSdk(
       { name: "test", label: "Test" },
-      { app: store, sessions: new SdkSessions(store), main: { current: () => null, show: () => false }, http: new ReinsClient(), socket: store.client },
+      { app: store, sessions: new SdkSessions(store), projects: new SdkProjects(store.projectsStore), tasks: new SdkTasks(store.projectsStore), nodes: new SdkNodes(store.projectsStore), ui: new SdkUi(store.sessionCache, new SdkSessions(store)), main: { current: () => null, show: () => false, subscribe: () => () => {} }, http: new ReinsClient(), socket: store.client },
     );
     const view = { view: "file" as const, source: { nodeId: "node", path: "/work" }, path: "README.md" };
     const renderer = { pane: { title: () => "README.md", description: () => "README.md", icon: { mount: () => {} }, mount: () => {} } };

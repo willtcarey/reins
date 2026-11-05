@@ -6,7 +6,7 @@ import { copyTextToClipboard } from "../../helpers/clipboard.js";
 import { isRemovable, nodeStatus, type NodesStore, type Pairing } from "../../models/stores/nodes-store.js";
 import { checkIcon, copyIcon } from "../../ui/icons.js";
 import { confirmDialog } from "../../ui/confirm-dialog.js";
-import { dialogButton } from "../../ui/dialog.js";
+import { inputDialog } from "../../ui/input-dialog.js";
 import { nodeStatusDot } from "../node-status-dot.js";
 import { showToast } from "../../ui/toast.js";
 
@@ -49,15 +49,11 @@ export class SettingsNodesSection extends LitElement {
 
   @state() private _adding = false;
   @state() private _name = "";
-  /** The node the rename dialog is open for, and the name typed in it. */
-  @state() private _renaming: NodeView | null = null;
-  @state() private _renameDraft = "";
 
   /** Leaving the section ends pairing: a code is shown only once. */
   override disconnectedCallback() {
     this._adding = false;
     this._name = "";
-    this._renaming = null;
     this.store?.dismissPairingCode();
     super.disconnectedCallback();
   }
@@ -106,32 +102,21 @@ export class SettingsNodesSection extends LitElement {
     }
   }
 
-  private _openRename(node: NodeView) {
-    this._renaming = node;
-    this._renameDraft = node.name;
-  }
-
-  private _closeRename = () => {
-    this._renaming = null;
-  };
-
-  /** Saves the typed name; the dialog stays open, saying why, if it is refused. */
-  private _saveRename = async () => {
+  private _rename(node: NodeView) {
     const store = this.store;
-    const node = this._renaming;
-    if (!store || !node || store.renamingNodeId) return;
-    if (this._renameDraft.trim() === node.name) {
-      this._closeRename();
-      return;
-    }
-
-    const result = await store.rename(node.id, this._renameDraft);
-    if ("error" in result) {
-      showToast(`Failed to rename node: ${result.error}`, "error");
-      return;
-    }
-    this._closeRename();
-  };
+    if (!store) return;
+    void inputDialog({
+      heading: `Rename ${node.name}`,
+      label: "Name",
+      value: node.name,
+      required: true,
+      maxLength: 100,
+      save: async (name) => {
+        const result = await store.rename(node.id, name);
+        if ("error" in result) throw new Error(result.error);
+      },
+    });
+  }
 
   private async _copy(text: string, label: string) {
     try {
@@ -169,7 +154,7 @@ export class SettingsNodesSection extends LitElement {
           <span class="text-[10px] ${status === "revoked" ? "text-red-400/80" : "text-zinc-500"}">${status}</span>
           <button
             class="text-[10px] text-zinc-400 hover:text-zinc-200 cursor-pointer transition-colors"
-            @click=${() => this._openRename(node)}
+            @click=${() => this._rename(node)}
             title="Change the name this node is shown with"
           >Rename</button>
           ${isRemovable(node)
@@ -188,39 +173,6 @@ export class SettingsNodesSection extends LitElement {
         class="pl-4 pb-1.5 text-[11px] text-zinc-500"
         title="Projects' working copies on this node. Add one from a project's settings (Add a source), or create a project on this node."
       >${sourceCount(node)}</p>
-    `;
-  }
-
-  private _renderRenameDialog(store: NodesStore) {
-    const node = this._renaming;
-    const saving = node !== null && store.renamingNodeId === node.id;
-
-    return html`
-      <app-dialog
-        .open=${node !== null}
-        heading=${node ? `Rename ${node.name}` : ""}
-        selectOnOpen
-        .onSubmit=${() => void this._saveRename()}
-        .body=${node ? html`
-          <label for="node-name" class="block text-[10px] font-medium text-zinc-400 uppercase tracking-wide mb-1">Name</label>
-          <input
-            id="node-name"
-            type="text"
-            autofocus
-            maxlength="100"
-            class="w-full px-2.5 py-1.5 text-base md:text-xs bg-zinc-700 border border-zinc-600 rounded text-zinc-100 placeholder-zinc-500 outline-none focus:border-blue-500 transition-colors"
-            .value=${this._renameDraft}
-            @input=${(e: Event) => {
-              if (e.target instanceof HTMLInputElement) this._renameDraft = e.target.value;
-            }}
-          />
-        ` : nothing}
-        .actions=${html`
-          ${dialogButton({ label: "Cancel", onClick: this._closeRename })}
-          ${dialogButton({ label: saving ? "Saving..." : "Save", variant: "primary", type: "submit", disabled: saving || this._renameDraft.trim() === "" })}
-        `}
-        @dialog-cancel=${this._closeRename}
-      ></app-dialog>
     `;
   }
 
@@ -402,7 +354,6 @@ export class SettingsNodesSection extends LitElement {
           @click=${() => { this._adding = true; }}
         >Add node</button>
       </div>
-      ${this._renderRenameDialog(store)}
     `;
   }
 }

@@ -21,6 +21,8 @@ export interface FrontendExtension {
     /** Command names, without the `/`. */
     commands: string[];
     settingsPage: boolean;
+    /** Sidebar section IDs. */
+    sidebarSections: string[];
   };
 }
 
@@ -31,9 +33,15 @@ export class Extensions {
   private readonly listeners = new Set<() => void>();
   private readonly unsubscribe: Disposer[];
 
-  constructor(private readonly registries: Pick<SdkBacking, "views" | "decorators" | "commands" | "settingsPages">) {
+  constructor(private readonly registries: Pick<SdkBacking, "views" | "decorators" | "commands" | "settingsPages" | "sidebar">) {
     const changed = () => this.notify();
-    this.unsubscribe = [registries.views.subscribe(changed), registries.decorators.subscribe(changed), registries.commands.subscribe(changed), registries.settingsPages.subscribe(changed)];
+    this.unsubscribe = [
+      registries.views.subscribe(changed),
+      registries.decorators.subscribe(changed),
+      registries.commands.subscribe(changed),
+      registries.settingsPages.subscribe(changed),
+      registries.sidebar.subscribe(changed),
+    ];
   }
 
   /**
@@ -62,7 +70,7 @@ export class Extensions {
 
   /** Each activated extension, in the order of activation. */
   list(): FrontendExtension[] {
-    const { views, decorators, commands, settingsPages } = this.registries;
+    const { views, decorators, commands, settingsPages, sidebar } = this.registries;
     return this.activations.map(({ extension, error }) => ({
       extension,
       status: error === null ? "loaded" : "failed",
@@ -72,11 +80,12 @@ export class Extensions {
         decorators: decorators.registeredBy(extension.name),
         commands: commands.registeredBy(extension.name),
         settingsPage: settingsPages.page(extension.name) !== null,
+        sidebarSections: sidebar.registeredBy(extension.name),
       },
     }));
   }
 
-  /** Listens for an extension activated or gone, or a registration made or disposed. */
+  /** Listens for an extension activated or gone, or a registration made or disposed (or the sidebar's sections rearranged). */
   subscribe(listener: () => void): Disposer {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);

@@ -31,7 +31,7 @@ import type { RuntimeProviderInfo } from "@reins/backend/pi/model-catalog.js";
 import type { TelemetryEvent } from "@reins/telemetry";
 import type { SessionAttachmentInfo } from "@reins/backend/session-attachments-store.js";
 import type { PaletteItem } from "@reins/backend/session-store.js";
-import type { SettingEntry } from "@reins/backend/settings-store.js";
+import type { AnySettingEntry } from "@reins/backend/settings-store.js";
 import type { TaskRow } from "@reins/backend/task-store.js";
 
 type FetchTransport = (input: string, init?: RequestInit) => Promise<Response>;
@@ -205,7 +205,7 @@ export class ReinsClient {
   };
 
   readonly settings = {
-    list: (keys: readonly string[], options?: RequestOptions) => this.json<SettingEntry[]>("GET", this.repeatedQuery("/api/settings", "key", keys), undefined, options),
+    list: (keys: readonly string[], options?: RequestOptions) => this.json<AnySettingEntry[]>("GET", this.repeatedQuery("/api/settings", "key", keys), undefined, options),
     put: (key: string, body: unknown, options?: RequestOptions) => this.json<void>("PUT", `/api/settings/${this.segment(key)}`, body, options),
     delete: (key: string, options?: RequestOptions) => this.none("DELETE", `/api/settings/${this.segment(key)}`, undefined, options),
   };
