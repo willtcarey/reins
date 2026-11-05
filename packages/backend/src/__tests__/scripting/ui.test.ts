@@ -51,7 +51,7 @@ describe("ui.openFile", () => {
 
       const result = await script(`return await api.ui.openFile(${JSON.stringify(join(elsewhere, "report.html"))}, { node: "mac mini", startLine: 1, endLine: 1 });`);
 
-      expect(result).toEqual({ ok: true, text: "File opened" });
+      expect(result).toMatchObject({ ok: true, text: "File opened" });
       expect(opened).toEqual([{
         type: "open_file",
         sessionId: "caller",

@@ -14,6 +14,7 @@ import { executeTool, reinsTool } from "../helpers/execute-tool.js";
 import { useLoopbackState } from "../helpers/app-state.js";
 import { SEEDED_NODE_ID } from "../helpers/loopback-node.js";
 import { defaultSource } from "../../node-store.js";
+import { noisePng } from "../helpers/noise-png.js";
 
 
 // Initialize encryption secret for tests
@@ -658,6 +659,58 @@ describe("execute tool", () => {
       }, undefined, undefined);
 
       expect(textOf(result)).toBe("undefined");
+    });
+  });
+
+  describe("script output: text() and image()", () => {
+    const png = Buffer.from(noisePng(4, 3)).toString("base64");
+    const run = (code: string) => executeTool(makeTool(), "out", { code }, undefined, undefined);
+
+    test("text() and image() add blocks in call order, and a return value comes last as text", async () => {
+      const result = await run(`text("first"); image({ type: "image", data: "${png}", mimeType: "image/png" }); text({ n: 1 }); return { done: true }`);
+      expect(result.content).toEqual([
+        { type: "text", text: "first" },
+        { type: "image", data: png, mimeType: "image/png" },
+        { type: "text", text: JSON.stringify({ n: 1 }, null, 2) },
+        { type: "text", text: JSON.stringify({ done: true }, null, 2) },
+      ]);
+    });
+
+    test("an undefined return value is left out when the script gave output, and is 'undefined' when it gave none", async () => {
+      expect((await run(`text("only")`)).content).toEqual([{ type: "text", text: "only" }]);
+      expect((await run(`image({ data: "${png}", mimeType: "image/png" })`)).content).toEqual([{ type: "image", data: png, mimeType: "image/png" }]);
+      expect(textOf(await run("// nothing"))).toBe("undefined");
+      expect((await run(`text("a"); return null`)).content).toEqual([{ type: "text", text: "a" }, { type: "text", text: "null" }]);
+    });
+
+    test("image() takes bytes, image blocks, a generation's result, a tool's result (its images only) and arrays of these", async () => {
+      const block = `{ type: "image", data: "${png}", mimeType: "image/png" }`;
+      const result = await run(`
+        const bytes = new Uint8Array(${JSON.stringify([...noisePng(4, 3)])});
+        image({ data: bytes, mimeType: "image/png" });
+        image({ images: [${block}], text: "ignored" });
+        image({ content: [{ type: "text", text: "ignored" }, ${block}] });
+        image([${block}, [${block}]]);
+      `);
+      expect(result.content).toEqual(Array.from({ length: 5 }, () => ({ type: "image", data: png, mimeType: "image/png" })));
+    });
+
+    test("image() throws for what is not an image, and over 10 images in a script", async () => {
+      expect(textOf(await run(`image("x")`))).toStartWith("Error: image(): ");
+      expect(textOf(await run(`image({ data: "${png}" })`))).toStartWith("Error: image(): ");
+      expect(textOf(await run(`image({ content: [{ type: "text", text: "no image" }] })`))).toStartWith("Error: image(): ");
+      const over = await run(`for (let i = 0; i < 11; i++) image({ data: "${png}", mimeType: "image/png" })`);
+      expect(textOf(over)).toBe("Error: image(): at most 10 images in a script");
+    });
+
+    test("a large image is scaled down to the provider's limit with Pi's note, and one that cannot be is a note", async () => {
+      const wide = Buffer.from(noisePng(2000, 8)).toString("base64");
+      const scaled = await run(`image({ data: "${wide}", mimeType: "image/png" })`);
+      expect(scaled.content[0]).toMatchObject({ type: "image" });
+      expect(scaled.content[1]).toMatchObject({ type: "text", text: expect.stringContaining("[Image: original 2000x8, displayed at 1568x6.") });
+
+      const broken = await run(`image({ data: new Uint8Array(5 * 1024 * 1024), mimeType: "image/png" })`);
+      expect(broken.content).toEqual([{ type: "text", text: "[Image omitted: 5.0 MiB is over the provider's image size limit, and it could not be resized.]" }]);
     });
   });
 

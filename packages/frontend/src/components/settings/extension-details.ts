@@ -63,9 +63,10 @@ export class SettingsExtensionDetails extends LitElement {
   /** What agents get from it: all from its backend part. */
   private _renderForAgents(extension: ExtensionSummary) {
     const r = extension.backend?.registrations;
-    if (!r || (!r.tools && r.promptSections === 0 && r.scriptFunctions.length === 0)) return nothing;
+    if (!r || (!r.tools && !r.images && r.promptSections === 0 && r.scriptFunctions.length === 0)) return nothing;
     return group("For agents", html`
       ${row("Tool providers", r.tools ? r.tools.title : null)}
+      ${row("Image providers", r.images ? r.images.title : null)}
       ${row("System prompt", r.promptSections > 0 ? (r.promptSections === 1 ? "1 section" : `${r.promptSections} sections`) : null)}
       ${row("API functions", names(r.scriptFunctions.map((name) => `api.${name}`)))}
     `);

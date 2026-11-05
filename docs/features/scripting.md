@@ -40,8 +40,25 @@ execute({
 | `api.ui` | `openFile(path, options?)` (options `{ node?, startLine?, endLine? }`) |
 | `api.nodes` | `list()`, `get(node?)`, `reload(node?, force?)`, `readFile(node, path, options?)`, `writeFile(node, path, content)`, `copy(fromNode, fromPath, toNode, toPath)`, `run(node, command, options?)` |
 | `api.tools` | `search(query, filters?)`, `call(id, args?, timeoutMs?)` |
+| `api.images` | `list()`, `generate(prompt, { model?, images?, size?, count?, parameters? }?)` ([images.md](images.md)) |
 | `api.mcp` | `list()`, `get(server)`, `add(server)`, `update(server, changes)`, `remove(server)`, `test(server)`, `signIn(server, callbackOrigin?)`, `finishSignIn(callbackUrl)`, `signOut(server)` |
 | `api.automations` | `create({ trigger, message?, target?, once?, name?, source?, model?, compactAboveTokens?, background?, project? })` (target `"this"`, `"own"` or `"new"`) (a `{ schedule, timezone? }` or `{ command, every, node?, cwd?, timeoutMs? }` trigger), `cancel(id)`, `list({ all?, includeCancelled? }?)`, `runs(id, limit?)`, `replaceSession(id)` ([automations.md](automations.md)) |
+
+### Script output: `text()` and `image()`
+
+A script can give the agent more than its return value. Two globals add content blocks to the tool result, in call order; the return value comes last, as text:
+
+- **`text(value)`** adds a text block (a string as it is, another value as JSON).
+- **`image(...items)`** adds images. It takes `{ data, mimeType }` (`data` is base64 or a `Uint8Array`), image blocks (`{ type: "image", data, mimeType }`, as MCP tools return), a result of `api.tools.call` (its image blocks only), a result of `api.images.generate`, and arrays of these. It throws for something that is not an image, for a call that holds no image, and over 10 images in a script.
+
+```javascript
+const shot = await api.tools.call("mcp__browser__screenshot", { url: "https://example.com" });
+text("The page now:");
+image(shot);
+return "Check the header.";
+```
+
+A script that returns nothing and adds blocks gives only its blocks; one that gives neither gives `undefined`, as before. Each image is made to fit the model as `read` does: scaled to 1568 px on its long side and under the provider's size limit, with Pi's note on the original size when it was scaled. An image that cannot be made to fit becomes a note (`[Image omitted: …]`). The images are stored with the session (as `read`'s are), and the chat shows them under the script without expanding it. A model without image input gets Pi's placeholder in their place.
 
 ### Behavior
 

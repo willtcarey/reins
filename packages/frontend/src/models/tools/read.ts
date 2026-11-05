@@ -3,7 +3,7 @@
  */
 
 import type { ToolBlockData } from "../chat-state.js";
-import { isImageAttachmentBlock, isInlineImageBlock, type ChatImageBlock } from "../chat-content.js";
+import { toolResultImages } from "./images.js";
 
 /** Regex matching the trailing "[N more lines..." metadata line from the Read tool. */
 const TRAILER_RE = /\n*\[(\d+ more lines in file\. Use offset=\d+ to continue.*)\]\s*$/;
@@ -34,7 +34,7 @@ function getRawText(block: ToolBlockData): string {
     .map((c) => c.text)
     .join("\n") ?? "";
   const text = stripLineNumbers(joined);
-  return getReadImages(block).length > 0 ? stripImageReadNotice(text) : text;
+  return toolResultImages(block).length > 0 ? stripImageReadNotice(text) : text;
 }
 
 /** Strip the trailing metadata line (e.g. "[163 more lines...]") from result text. */
@@ -89,10 +89,4 @@ export function getReadLineCount(block: ToolBlockData): number {
   const cleaned = stripTrailer(raw);
   if (!cleaned) return 0;
   return cleaned.split("\n").length;
-}
-
-/** Extract image content blocks from a Read tool block's result. */
-export function getReadImages(block: ToolBlockData): ChatImageBlock[] {
-  return block.result?.content
-    ?.filter((c): c is ChatImageBlock => isInlineImageBlock(c) || isImageAttachmentBlock(c)) ?? [];
 }

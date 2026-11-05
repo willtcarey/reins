@@ -2,7 +2,8 @@
  * ExecuteToolBlock — Lit component for rendering Execute tool calls.
  *
  * Terminal-style block: JS code is always visible with a `>` prompt,
- * syntax-highlighted via Shiki. Clicking expands to reveal the output below.
+ * syntax-highlighted via Shiki. Clicking expands to reveal the output below. Images the script gave
+ * (`image()`) are shown below the code without expanding, as read's are; clicking one opens it.
  *
  * This is a pure presentational component — all data is passed in as
  * primitive props. It has no dependency on ToolBlockData or helper functions.
@@ -16,6 +17,9 @@ import { escapeHtml } from "../../models/changes/diff-utils.js";
 import type { ToolRenderer } from "./types.js";
 import type { ToolBlockData } from "../../models/chat-state.js";
 import { ringSpinnerIcon, toolLogoIcon } from "../../ui/icons.js";
+import type { ChatImageBlock } from "../../models/chat-content.js";
+import { toolResultImages } from "../../models/tools/images.js";
+import "./tool-result-images.js";
 import {
   getExecuteCode,
   getExecuteExitInfo,
@@ -52,6 +56,12 @@ export class ExecuteToolBlock extends LitElement {
 
   @property({ attribute: false })
   output = "";
+
+  @property({ attribute: false })
+  images: ChatImageBlock[] = [];
+
+  @property({ attribute: false })
+  sessionId = "";
 
   @property({ type: Boolean })
   showSpinner = false;
@@ -119,6 +129,12 @@ export class ExecuteToolBlock extends LitElement {
             : nothing}
         </div>
 
+        ${!showSpinner && this.images.length > 0 ? html`
+          <div class="border-t border-zinc-800 p-2">
+            <tool-result-images .images=${this.images} .sessionId=${this.sessionId} .maxHeight=${"max-h-64"}></tool-result-images>
+          </div>
+        ` : nothing}
+
         <!-- Output area (only when expanded) -->
         ${this.expanded && hasOutput ? html`
           <div class="border-t border-zinc-800">
@@ -146,10 +162,13 @@ export const executeRenderer: ToolRenderer = {
     const code = getExecuteCode(block);
     const { isError } = getExecuteExitInfo(block);
     const output = isRunning ? "" : getExecuteOutput(block);
+    const images = isRunning ? [] : toolResultImages(block);
     return html`<execute-tool-block
       .code=${code}
       .isError=${isError}
       .output=${output}
+      .images=${images}
+      .sessionId=${block.sessionId ?? ""}
       .showSpinner=${isRunning}
     ></execute-tool-block>`;
   },

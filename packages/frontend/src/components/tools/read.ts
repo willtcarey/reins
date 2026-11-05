@@ -15,8 +15,10 @@ import { customElement, property, state } from "lit/decorators.js";
 import { unsafeHTML } from "lit/directives/unsafe-html.js";
 import { LazyHighlightController } from "../../controllers/lazy-highlight-controller.js";
 import { escapeHtml, shouldWrapLines } from "../../models/changes/diff-utils.js";
-import { imageBlockSrc, type ChatImageBlock } from "../../models/chat-content.js";
-import { openImageViewerEvent, openInBrowserEvent } from "../events.js";
+import type { ChatImageBlock } from "../../models/chat-content.js";
+import { openInBrowserEvent } from "../events.js";
+import { toolResultImages } from "../../models/tools/images.js";
+import "./tool-result-images.js";
 import { isBrowsablePath, toRelativePath } from "../../models/path-utils.js";
 import type { ToolRenderer } from "./types.js";
 import type { Source } from "@reins/sdk";
@@ -24,7 +26,7 @@ import { ringSpinnerIcon } from "../../ui/icons.js";
 import type { ToolBlockData } from "../../models/chat-state.js";
 import {
   getReadSummary, getReadRange, getReadTrailer, getReadPreview,
-  getReadContent, getReadLineCount, getReadImages, PREVIEW_LINES,
+  getReadContent, getReadLineCount, PREVIEW_LINES,
 } from "../../models/tools/read.js";
 
 @customElement("read-tool-block")
@@ -119,13 +121,6 @@ export class ReadToolBlock extends LitElement {
       : undefined;
     this.dispatchEvent(openInBrowserEvent(this.source, this.path, lineRange));
   };
-
-  private _openImage(event: Event, image: ChatImageBlock) {
-    event.stopPropagation();
-    const src = imageBlockSrc(this.sessionId, image);
-    const alt = "filename" in image && image.filename ? image.filename : "Tool result image";
-    this.dispatchEvent(openImageViewerEvent({ src, alt, title: alt }));
-  }
 
   private _renderHighlightedLine(index: number, text: string) {
     const highlighted = this._hl.getLineHtml(index);
@@ -248,27 +243,7 @@ export class ReadToolBlock extends LitElement {
         ${hasImages
           ? html`
               <div class="border-t border-zinc-800 p-2">
-                ${images.map((img) => {
-                  const src = imageBlockSrc(this.sessionId, img);
-                  const alt = "filename" in img && img.filename ? img.filename : "Tool result image";
-                  const imageSizeClass = this.expanded ? "max-h-96" : "max-h-48";
-                  return html`
-                    <button
-                      type="button"
-                      class="group mt-1 block max-w-full cursor-zoom-in rounded focus:outline-none focus:ring-2 focus:ring-blue-400 focus:ring-offset-2 focus:ring-offset-zinc-950"
-                      aria-label=${`Open image full screen: ${alt}`}
-                      title="Open image full screen"
-                      @click=${(event: Event) => this._openImage(event, img)}
-                    >
-                      <img
-                        src=${src}
-                        class="max-w-full ${imageSizeClass} rounded transition-opacity group-hover:opacity-90"
-                        alt=${alt}
-                        loading="lazy"
-                      />
-                    </button>
-                  `;
-                })}
+                <tool-result-images .images=${images} .sessionId=${this.sessionId} .maxHeight=${this.expanded ? "max-h-96" : "max-h-48"}></tool-result-images>
               </div>
             `
           : nothing}
@@ -298,7 +273,7 @@ export const readRenderer: ToolRenderer = {
     const totalLines = isRunning ? 0 : getReadLineCount(block);
     const startLine = (typeof block.args?.offset === "number" ? block.args.offset : undefined) ?? 1;
     const isError = !isRunning && !!block.isError;
-    const images = isRunning ? [] : getReadImages(block);
+    const images = isRunning ? [] : toolResultImages(block);
 
     return html`<read-tool-block
       .path=${path}

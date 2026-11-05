@@ -87,7 +87,7 @@ describe("nodes.readFile, nodes.writeFile, nodes.copy and nodes.run", () => {
         const copied = await api.nodes.copy("mac MINI", ${JSON.stringify(join(dir, "video.mp4"))}, "internal", ${JSON.stringify(join(dir, "copies/new/video.mp4"))});
         const empty = await api.nodes.copy("mini", ${JSON.stringify(join(dir, "empty.txt"))}, "current", ${JSON.stringify(join(dir, "copies/empty.txt"))});
         return [copied, empty];`);
-      expect(result).toEqual({ ok: true, text: JSON.stringify([{ bytes: bytes.length }, { bytes: 0 }], null, 2) });
+      expect(result).toMatchObject({ ok: true, text: JSON.stringify([{ bytes: bytes.length }, { bytes: 0 }], null, 2) });
       expect(readFileSync(join(dir, "copies/new/video.mp4")).equals(Buffer.from(bytes))).toBe(true);
       expect(readFileSync(join(dir, "copies/empty.txt"), "utf8")).toBe("");
       expect(await script(`return await api.nodes.copy("mini", ${JSON.stringify(join(dir, "missing.mp4"))}, "current", ${JSON.stringify(join(dir, "copies/missing.mp4"))});`))
@@ -104,7 +104,7 @@ describe("nodes.readFile, nodes.writeFile, nodes.copy and nodes.run", () => {
         const bytes = await api.nodes.readFile("mac MINI", ${JSON.stringify(join(dir, "photo.png"))}, { binary: true });
         await api.nodes.writeFile("internal", ${JSON.stringify(join(dir, "copies/new/photo.png"))}, bytes);
         return bytes.length;`);
-      expect(result).toEqual({ ok: true, text: "1024" });
+      expect(result).toMatchObject({ ok: true, text: "1024" });
       expect(readFileSync(join(dir, "copies/new/photo.png"))).toEqual(Buffer.from(bytes));
     } finally { await stop(); }
   });
@@ -117,7 +117,7 @@ describe("nodes.readFile, nodes.writeFile, nodes.copy and nodes.run", () => {
         await api.nodes.writeFile("current", ${JSON.stringify(join(dir, "hi.txt"))}, new Uint8Array([104, 105]));
         const note = await api.nodes.readFile("Mac mini", ${JSON.stringify(join(dir, "note.md"))});
         return { note, hi: await api.nodes.readFile("mini", ${JSON.stringify(join(dir, "hi.txt"))}) };`);
-      expect(result).toEqual({ ok: true, text: JSON.stringify({ note: "# Plans\nCafé ☕\n", hi: "hi" }, null, 2) });
+      expect(result).toMatchObject({ ok: true, text: JSON.stringify({ note: "# Plans\nCafé ☕\n", hi: "hi" }, null, 2) });
       expect(readFileSync(join(dir, "note.md"), "utf8")).toBe("# Plans\nCafé ☕\n");
     } finally { await stop(); }
   });
@@ -134,7 +134,7 @@ describe("nodes.readFile, nodes.writeFile, nodes.copy and nodes.run", () => {
           (await api.nodes.run("mini", "pwd")).output,
           (await api.nodes.run("mini", "pwd", { cwd: ${JSON.stringify(dir)} })).output,
         ];`);
-      expect(result).toEqual({ ok: true, text: JSON.stringify(["found", "found", `${homedir()}\n`, `${dir}\n`], null, 2) });
+      expect(result).toMatchObject({ ok: true, text: JSON.stringify(["found", "found", `${homedir()}\n`, `${dir}\n`], null, 2) });
     } finally { await stop(); }
   });
 
@@ -142,9 +142,9 @@ describe("nodes.readFile, nodes.writeFile, nodes.copy and nodes.run", () => {
     const { script, stop } = await twoNodes();
     try {
       expect(await script(`return await api.nodes.run("current", "echo out; exit 3");`))
-        .toEqual({ ok: true, text: JSON.stringify({ exitCode: 3, output: "out\n", truncated: false }, null, 2) });
+        .toMatchObject({ ok: true, text: JSON.stringify({ exitCode: 3, output: "out\n", truncated: false }, null, 2) });
       expect(await script(`return await api.nodes.run("Mac mini", "echo err >&2");`))
-        .toEqual({ ok: true, text: JSON.stringify({ exitCode: 0, output: "err\n", truncated: false }, null, 2) });
+        .toMatchObject({ ok: true, text: JSON.stringify({ exitCode: 0, output: "err\n", truncated: false }, null, 2) });
       const timedOut = await script(`return await api.nodes.run("mini", "sleep 5", { timeoutMs: 200 });`);
       expect(timedOut).toEqual({ ok: false, error: 'Command timed out after 200 ms on "Mac mini"' });
     } finally { await stop(); }
@@ -156,7 +156,7 @@ describe("nodes.readFile, nodes.writeFile, nodes.copy and nodes.run", () => {
       const sizes = await script(`
         const outputs = [await api.nodes.run("mini", "head -c 2097152 /dev/zero | tr '\\\\0' a"), await api.nodes.run("mini", "head -c 17000000 /dev/zero | tr '\\\\0' b")];
         return outputs.map(run => ({ length: run.output.length, last: run.output.at(-1), truncated: run.truncated }));`);
-      expect(sizes).toEqual({ ok: true, text: JSON.stringify([{ length: 2097152, last: "a", truncated: false }, { length: 16 * 1024 * 1024, last: "b", truncated: true }], null, 2) });
+      expect(sizes).toMatchObject({ ok: true, text: JSON.stringify([{ length: 2097152, last: "a", truncated: false }, { length: 16 * 1024 * 1024, last: "b", truncated: true }], null, 2) });
       mkdirSync(join(dir, "big"));
       writeFileSync(join(dir, "big/video.mp4"), "");
       truncateSync(join(dir, "big/video.mp4"), 16 * 1024 * 1024 + 1);

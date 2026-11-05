@@ -16,31 +16,30 @@
 import { createContext, runInContext } from "node:vm";
 import { buildApiObject, scriptingApi } from "../scripting/api-registry.js";
 import type { ApiContext } from "../scripting/define-function.js";
+import { formatValue, scriptOutput, type ScriptContentBlock } from "./script-output.js";
 
 /** Bounds synchronous script execution only; awaited API calls (e.g. `sessions.wait`) are bounded by their own limits and `signal`. */
 const TIMEOUT_MS = 30_000;
 
-/** Format the return value for the agent. */
-function formatResult(value: unknown): string {
-  if (value === undefined) return "undefined";
-  if (value === null) return "null";
-  if (typeof value === "string") return value;
-  if (typeof value === "number" || typeof value === "boolean") return String(value);
-  return JSON.stringify(value, null, 2);
-}
-
-/** A script that throws is a completed call: its error message reaches the model unchanged. */
-export type ScriptExecuteResult = { ok: true; text: string } | { ok: false; error: string };
+/**
+ * A script that throws is a completed call: its error message reaches the model unchanged. `content` is what
+ * the model gets: the blocks of `text()` and `image()`, then the return value. It crosses from the app to a
+ * session runtime (`App.executeScript`), which may run older code that reads only `text`: so `text` stays,
+ * the text blocks joined.
+ */
+export type ScriptExecuteResult = { ok: true; text: string; content?: ScriptContentBlock[] } | { ok: false; error: string };
 
 /** A script that throws is a completed call: its message is returned for the model unchanged. */
 export async function runScript(ctx: ApiContext, code: string): Promise<ScriptExecuteResult> {
   try {
     const api = buildApiObject(ctx, scriptingApi(ctx.models.extensions).functions);
+    const output = scriptOutput();
 
     // Build a vm context with only the api object and safe JS builtins.
     // This prevents access to process, require, import(), fs, network, etc.
     const vmContext = createContext({
       api,
+      ...output.globals,
       // Safe builtins
       JSON,
       Math,
@@ -75,7 +74,10 @@ export async function runScript(ctx: ApiContext, code: string): Promise<ScriptEx
     // The trailing newline ensures a closing `//` comment doesn't eat the `})`.
     const wrapped = `(async function(api) { ${code}\n})(api)`;
     const result = await runInContext(wrapped, vmContext, { timeout: TIMEOUT_MS });
-    return { ok: true, text: formatResult(result) };
+    const content = await output.blocks();
+    if (result !== undefined || content.length === 0) content.push({ type: "text", text: formatValue(result) });
+    const text = content.flatMap(block => block.type === "text" ? [block.text] : []).join("\n");
+    return { ok: true, text, content };
   } catch (err: any) {
     return { ok: false, error: String(err?.message) };
   }

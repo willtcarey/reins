@@ -133,7 +133,10 @@ function executeTool(calls: ReinsToolCalls): AgentHarnessTool<HostToolContext | 
     description:
       "Run async JavaScript against Reins internals. " +
       "Write a function body using the existing `api` object. " +
-      "Use the `search` tool to discover functions not already documented in the system prompt.",
+      "Use the `search` tool to discover functions not already documented in the system prompt. " +
+      "Use `return` to produce a result; `text(value)` and `image(...images)` add content blocks before it, in call order. " +
+      "`image()` takes `{ data, mimeType }` (data is base64 or a Uint8Array), image blocks, results of `api.tools.call` " +
+      "and results of `api.images.generate`; at most 10 images in a script.",
     parameters: executeParameters,
     replay: "never",
     async execute(_toolCallId, params, _onUpdate, _toolContext, _invocation, context) {
@@ -149,8 +152,9 @@ function executeTool(calls: ReinsToolCalls): AgentHarnessTool<HostToolContext | 
           details: { success: false, error: reason },
         };
       }
+      // `content` is absent from an app of older code.
       return result.ok
-        ? { content: text(result.text), details: { success: true } }
+        ? { content: result.content ?? text(result.text), details: { success: true } }
         : { content: text(`Error: ${result.error}`), details: { success: false, error: result.error } };
     },
   };

@@ -10,12 +10,14 @@
 
 import { LitElement, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
-import { imageBlockSrc, type ChatImageBlock } from "../../models/chat-content.js";
+import type { ChatImageBlock } from "../../models/chat-content.js";
 import type { ToolRenderer } from "./types.js";
 import { ringSpinnerIcon } from "../../ui/icons.js";
 import type { ToolBlockData } from "../../models/chat-state.js";
 import { parseCommandSegments } from "../../models/tools/bash-command-parser.js";
-import { getBashCommand, getBashExitInfo, getBashOutput, getBashImages } from "../../models/tools/bash.js";
+import { getBashCommand, getBashExitInfo, getBashOutput } from "../../models/tools/bash.js";
+import { toolResultImages } from "../../models/tools/images.js";
+import "./tool-result-images.js";
 
 function renderCommandSegments(command: string) {
   const segments = parseCommandSegments(command);
@@ -100,9 +102,7 @@ export class BashToolBlock extends LitElement {
         <!-- Images (show when expanded, or always if no text output) -->
         ${images.length > 0 && (this.expanded || !hasOutput) ? html`
           <div class="border-t border-zinc-800 p-2">
-            ${images.map(
-              (img) => html`<img src=${imageBlockSrc(sessionId, img)} class="max-w-full max-h-96 rounded mt-1" alt="Tool result image" />`,
-            )}
+            <tool-result-images .images=${images} .sessionId=${sessionId} .maxHeight=${"max-h-96"}></tool-result-images>
           </div>
         ` : nothing}
       </div>
@@ -126,7 +126,7 @@ export const bashRenderer: ToolRenderer = {
     const command = getBashCommand(block);
     const { isError } = getBashExitInfo(block);
     const output = isRunning ? "" : getBashOutput(block);
-    const images = isRunning ? [] : getBashImages(block);
+    const images = isRunning ? [] : toolResultImages(block);
     return html`<bash-tool-block
       .command=${command}
       .isError=${isError}

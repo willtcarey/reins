@@ -58,7 +58,7 @@ const MODEL_VISIBLE_SURFACE: unknown = [
   {
     "name": "execute",
     "label": "Execute",
-    "description": "Run async JavaScript against Reins internals. Write a function body using the existing `api` object. Use the `search` tool to discover functions not already documented in the system prompt.",
+    "description": "Run async JavaScript against Reins internals. Write a function body using the existing `api` object. Use the `search` tool to discover functions not already documented in the system prompt. Use `return` to produce a result; `text(value)` and `image(...images)` add content blocks before it, in call order. `image()` takes `{ data, mimeType }` (data is base64 or a Uint8Array), image blocks, results of `api.tools.call` and results of `api.images.generate`; at most 10 images in a script.",
     "parameters": {
       "type": "object",
       "required": [
@@ -107,6 +107,15 @@ test("execute returns the script's text, and a script error reaches the model un
   expect(seen[2]!.signal?.aborted).toBe(false);
   controller.abort();
   expect(seen[2]!.signal?.aborted).toBe(true);
+});
+
+test("execute gives the model the script's content blocks when the app sends them, else its text (an app of older code)", async () => {
+  const image = { type: "image" as const, data: "iVBORw0KGgo=", mimeType: "image/png" };
+  const content = [{ type: "text" as const, text: "before" }, image, { type: "text" as const, text: "42" }];
+  const withContent = tool("execute", { executeScript: async () => ({ ok: true, text: "before\n42", content }) });
+  expect(await run(withContent, { code: "x" })).toEqual({ content, details: { success: true } });
+  const textOnly = tool("execute", { executeScript: async () => ({ ok: true, text: "42" }) });
+  expect(await run(textOnly, { code: "x" })).toEqual({ content: [{ type: "text", text: "42" }], details: { success: true } });
 });
 
 test("an unknown outcome is stated for side-effecting tools and each call is attempted once", async () => {

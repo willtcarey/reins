@@ -10,7 +10,9 @@
 
 import { LitElement, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
-import { imageBlockSrc, isImageAttachmentBlock, isInlineImageBlock, type ChatImageBlock } from "../../models/chat-content.js";
+import type { ChatImageBlock } from "../../models/chat-content.js";
+import { toolResultImages } from "../../models/tools/images.js";
+import "./tool-result-images.js";
 import type { ToolRenderer } from "./types.js";
 import { ringSpinnerIcon } from "../../ui/icons.js";
 import type { ToolBlockData } from "../../models/chat-state.js";
@@ -94,9 +96,7 @@ export class GenericToolBlock extends LitElement {
         </button>
         ${!this.expanded && this.images.length > 0 ? html`
           <div class="mt-1">
-            ${this.images.map(
-              (img) => html`<img src=${imageBlockSrc(this.sessionId, img)} class="max-w-full max-h-96 rounded mt-1" alt="Tool result image" />`,
-            )}
+            <tool-result-images .images=${this.images} .sessionId=${this.sessionId} .maxHeight=${"max-h-96"}></tool-result-images>
           </div>
         ` : nothing}
         ${this.expanded ? html`
@@ -105,9 +105,9 @@ export class GenericToolBlock extends LitElement {
             <pre class="bg-zinc-900 rounded p-2 overflow-x-auto text-zinc-300 max-h-48 overflow-y-auto">${this.argsJson}</pre>
             ${this.hasResult ? html`
               <div class="text-zinc-500 mt-2 mb-1">Result${this.isError ? " (error)" : ""}:</div>
-              ${this.images.map(
-                (img) => html`<img src=${imageBlockSrc(this.sessionId, img)} class="max-w-full max-h-96 rounded mt-1 mb-1" alt="Tool result image" />`,
-              )}
+              ${this.images.length > 0 ? html`<div class="mt-1 mb-1">
+                <tool-result-images .images=${this.images} .sessionId=${this.sessionId} .maxHeight=${"max-h-96"}></tool-result-images>
+              </div>` : nothing}
               ${this.resultText ? html`
                 <pre class="bg-zinc-900 rounded p-2 overflow-x-auto max-h-48 overflow-y-auto ${this.isError ? "text-red-400" : "text-zinc-300"}">${this.resultText}</pre>
               ` : nothing}
@@ -129,12 +129,6 @@ declare global {
 // Extraction helpers
 // ---------------------------------------------------------------------------
 
-function extractImages(block: ToolBlockData): ChatImageBlock[] {
-  return block.result?.content?.filter(
-    (c): c is ChatImageBlock => isInlineImageBlock(c) || isImageAttachmentBlock(c),
-  ) ?? [];
-}
-
 function extractResultText(block: ToolBlockData): string {
   return (
     block.result?.content
@@ -153,7 +147,7 @@ export const genericRenderer: ToolRenderer = {
   render(block: ToolBlockData) {
     const isRunning = block.status === "running";
     const summary = getToolSummary(block.name, block.args);
-    const images = isRunning ? [] : extractImages(block);
+    const images = isRunning ? [] : toolResultImages(block);
     const resultText = isRunning ? "" : extractResultText(block);
     return html`<generic-tool-block
       .name=${block.name}

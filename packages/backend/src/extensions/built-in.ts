@@ -5,5 +5,11 @@ import type { ExtensionRegistration } from "./host.js";
 import { mcp } from "./mcp/index.js";
 import { automations } from "./automations/index.js";
 import { recentSessionsExtension } from "./recent-sessions/index.js";
+import { openaiImages } from "./openai-images/index.js";
 
-export const BUILT_IN_EXTENSIONS: readonly ExtensionRegistration[] = [{ name: "mcp", ...mcp }, { name: "automations", ...automations }, { name: "recent-sessions", ...recentSessionsExtension }];
+export const BUILT_IN_EXTENSIONS: readonly ExtensionRegistration[] = [
+  { name: "mcp", ...mcp },
+  { name: "automations", ...automations },
+  { name: "recent-sessions", ...recentSessionsExtension },
+  { name: "openai-images", ...openaiImages },
+];

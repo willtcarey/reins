@@ -144,7 +144,7 @@ models/tools/delegate.ts   → getDelegateSummary(), getDelegateDetail()
 models/tools/generic.ts    → getToolSummary()
 ```
 
-Tool result image helpers use the canonical `ChatImageBlock` type from `models/chat-content.ts`. The `ToolRenderer` interface (which depends on Lit's `TemplateResult`) lives in `components/tools/types.ts`.
+Every tool shows its result's images the same way: `toolResultImages(block)` (`models/tools/images.ts`) takes them from the result (inline blocks live, attachment references once stored), and `<tool-result-images>` (`components/tools/tool-result-images.ts`) draws them as thumbnails that open full screen on click (`openImageViewerEvent`; the click does not reach the block's own toggle). A renderer decides only where and how large (`maxHeight`). The images use the canonical `ChatImageBlock` type from `models/chat-content.ts`. A user's attached images in a message are drawn by `chat-message.ts`, with size hints. The `ToolRenderer` interface (which depends on Lit's `TemplateResult`) lives in `components/tools/types.ts`.
 
 ## Interaction Patterns
 
@@ -158,6 +158,7 @@ Each tool chooses its own expand/collapse UX:
 | **write** | File path + first 4 lines preview | Full content, all lines as additions | Card-click to expand, header-click to collapse |
 | **create_task** | Task title + branch name | Description + result | Whole block click |
 | **delegate** | Truncated prompt (2 lines) | Full prompt + result | Whole block click |
+| **execute** | Script code; the images the script gave (`image()`) below it | Code + output below divider | Whole block click (an image click opens it full screen) |
 
 ## Lazy Syntax Highlighting
 

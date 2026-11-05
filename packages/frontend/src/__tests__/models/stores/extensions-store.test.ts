@@ -15,7 +15,7 @@ function backendExtension(name: string, overrides: Partial<ExtensionView> = {}):
     status: "loaded",
     failure: null,
     errors: [],
-    registrations: { tools: null, promptSections: 0, settlementListeners: 0, scriptFunctions: [], httpMethods: [], pages: [] },
+    registrations: { tools: null, images: null, promptSections: 0, settlementListeners: 0, scriptFunctions: [], httpMethods: [], pages: [] },
     services: [],
     storage: null,
     ...overrides,
@@ -40,7 +40,7 @@ describe("ExtensionsStore", () => {
     const viewer: ExtensionRegistration = { name: "file-viewer", label: "File viewer", register: () => () => {} };
     sdk.extensions.activate(mcp, sdk.sdkFor(mcp));
     sdk.extensions.activate(viewer, sdk.sdkFor(viewer));
-    const backendMcp = backendExtension("mcp", { registrations: { tools: { title: "MCP servers" }, promptSections: 1, settlementListeners: 0, scriptFunctions: ["mcp.list"], httpMethods: ["list"], pages: [] } });
+    const backendMcp = backendExtension("mcp", { registrations: { tools: { title: "MCP servers" }, images: null, promptSections: 1, settlementListeners: 0, scriptFunctions: ["mcp.list"], httpMethods: ["list"], pages: [] } });
     const requests = serveBackend(() => Response.json([backendMcp, backendExtension("audit")]));
     const store = new ExtensionsStore(sdk.extensions);
 
