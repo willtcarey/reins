@@ -7,22 +7,21 @@
 
 import { LitElement, html, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
-import { springCollapse } from "../directives/spring-collapse.js";
-import { copyTextToClipboard } from "../helpers/clipboard.js";
-import type { SessionListView as SessionListItem } from "@backend/models/sessions.js";
-import type { TaskWithDiffStats as TaskListItem } from "@backend/models/tasks.js";
-import type { ActivityState } from "../models/stores/session-cache.js";
-import { formatRelativeDate } from "../models/format.js";
+import type { Sessions, SessionSummary, Task } from "@reins/sdk";
+import { springCollapse } from "../../../directives/spring-collapse.js";
+import { copyTextToClipboard } from "../../../helpers/clipboard.js";
+import { formatRelativeDate } from "../../../models/format.js";
 import { buildDescendantMap } from "./delegate-popover.js";
 import {
   editTaskEvent,
   newTaskSessionEvent,
   requestDeleteTaskEvent,
   toggleTaskExpandEvent,
-} from "./events.js";
-import { branchIcon, plusIcon } from "../ui/icons.js";
-import "./activity-dot.js";
-import "../ui/popover-menu.js";
+} from "../../../components/events.js";
+import { branchIcon, plusIcon } from "../../../ui/icons.js";
+import { appActivity } from "./activity.js";
+import "../../../components/activity-dot.js";
+import "../../../ui/popover-menu.js";
 import "./session-list-item.js";
 
 @customElement("task-list-item")
@@ -32,28 +31,24 @@ export class TaskListItemElement extends LitElement {
   }
 
   @property({ attribute: false })
-  task!: TaskListItem;
+  task!: Task;
 
   @property({ type: Boolean })
   expanded = false;
 
+  /** Its sessions; only read while it is expanded. */
   @property({ attribute: false })
-  sessions: SessionListItem[] = [];
+  sessions: readonly SessionSummary[] = [];
 
   @property({ type: String })
   activeSessionId = "";
 
-  @property({ attribute: false })
-  activityState: ActivityState | undefined = undefined;
-
   @property({ type: Number })
   projectId: number | null = null;
 
+  /** What its sessions' actions use. */
   @property({ attribute: false })
-  onSetSessionUnread: ((sessionId: string, unread: boolean) => Promise<unknown>) | null = null;
-
-  @property({ attribute: false })
-  onUpdateMetadata: ((sessionId: string, updates: { name?: string | null; pinned?: boolean; archived?: boolean }) => Promise<unknown>) | null = null;
+  sessionActions: Sessions | null = null;
 
   private handleExpand() {
     this.dispatchEvent(toggleTaskExpandEvent(this.task.id));
@@ -73,22 +68,22 @@ export class TaskListItemElement extends LitElement {
   }
 
   private handleCopyBranchName() {
-    copyTextToClipboard(this.task.branch_name).catch(() => {});
+    copyTextToClipboard(this.task.branchName).catch(() => {});
   }
 
   private renderActivityDot() {
-    return html`<activity-dot .state=${this.activityState}></activity-dot>`;
+    return html`<activity-dot .state=${appActivity(this.task.activity)}></activity-dot>`;
   }
 
   private renderBranchInfo() {
     const task = this.task;
-    if (task.status === "closed") return nothing;
+    if (task.closed) return nothing;
 
     const stats = task.diffStats;
     return html`
       <div class="flex items-center gap-1.5 mt-0.5">
         ${branchIcon("shrink-0 text-zinc-500", 10)}
-        <span class="text-[10px] font-mono text-zinc-500 truncate">${task.branch_name}</span>
+        <span class="text-[10px] font-mono text-zinc-500 truncate">${task.branchName}</span>
         ${stats && (stats.additions > 0 || stats.removals > 0) ? html`
           <span class="text-[10px] shrink-0">
             ${stats.additions > 0 ? html`<span class="text-green-500">+${stats.additions}</span>` : nothing}
@@ -104,8 +99,8 @@ export class TaskListItemElement extends LitElement {
     const task = this.task;
     const isExpanded = this.expanded;
     const sessions = this.sessions;
-    const date = formatRelativeDate(task.updated_at);
-    const isClosed = task.status === "closed";
+    const date = formatRelativeDate(task.updatedAt);
+    const isClosed = task.closed;
     return html`
       <div class="px-1 pb-1 group/task ${isClosed ? "opacity-50" : ""}">
         <div class="flex items-start rounded-md transition-colors hover:bg-zinc-800/70">
@@ -121,7 +116,7 @@ export class TaskListItemElement extends LitElement {
               </div>
               ${this.renderBranchInfo()}
               <div class="text-[10px] text-zinc-500 mt-0.5">
-                ${date} · ${task.session_count} session${task.session_count !== 1 ? "s" : ""}
+                ${date} · ${task.sessionCount} session${task.sessionCount !== 1 ? "s" : ""}
               </div>
             </div>
           </button>
@@ -166,13 +161,12 @@ export class TaskListItemElement extends LitElement {
                   .active=${s.id === this.activeSessionId}
                   .childSessions=${descendantMap.get(s.id) ?? []}
                   .activeSessionId=${this.activeSessionId}
-                  .onSetSessionUnread=${this.onSetSessionUnread}
-                  .onUpdateMetadata=${this.onUpdateMetadata}
+                  .sessions=${this.sessionActions}
                 ></session-list-item>
               `);
             })()}
           </div>
-        ` : task.session_count > 0 ? html`
+        ` : task.sessionCount > 0 ? html`
           <div class="mx-2 mt-1 mb-1 rounded-md border border-zinc-800/80 bg-zinc-950/30 overflow-hidden">
             <div class="px-3 py-2 text-[10px] text-zinc-500">Loading…</div>
           </div>

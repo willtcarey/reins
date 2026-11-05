@@ -2,15 +2,14 @@
  * Task Form Dialog
  *
  * Modal dialog for creating a new task within a project.
- * Single text input — the workspace supplies view context while ProjectsStore
- * owns task generation and project-list refresh behavior.
+ * Single text input: Reins writes the task from it (`reins.tasks.create`).
  */
 
 import { LitElement, html } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
-import type { WorkspaceStore } from "../models/stores/workspace-store.js";
-import { dialogButton } from "../ui/dialog.js";
-import { showToast } from "../ui/toast.js";
+import type { Tasks } from "@reins/sdk";
+import { dialogButton } from "../../../ui/dialog.js";
+import { showToast } from "../../../ui/toast.js";
 
 @customElement("task-form")
 export class TaskForm extends LitElement {
@@ -19,7 +18,7 @@ export class TaskForm extends LitElement {
   }
 
   @property({ attribute: false })
-  store: WorkspaceStore | null = null;
+  tasks: Tasks | null = null;
 
   @state() private _projectId: number | null = null;
 
@@ -40,14 +39,14 @@ export class TaskForm extends LitElement {
   }
 
   private handleCreate = async () => {
-    if (this._projectId == null || !this.prompt.trim() || !this.store || this.creating) return;
+    if (this._projectId == null || !this.prompt.trim() || !this.tasks || this.creating) return;
     this.creating = true;
-    const result = await this.store.generateTask(this._projectId, this.prompt.trim());
-    if ("ok" in result) {
+    try {
+      await this.tasks.create(this._projectId, this.prompt.trim());
       this.prompt = "";
       this.close();
-    } else {
-      showToast(`Failed to create task: ${result.error}`, "error");
+    } catch (error) {
+      showToast(`Failed to create task: ${error instanceof Error ? error.message : String(error)}`, "error");
     }
     this.creating = false;
   };

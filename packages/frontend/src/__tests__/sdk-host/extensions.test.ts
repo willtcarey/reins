@@ -42,13 +42,13 @@ describe("Extensions", () => {
         extension: viewer,
         status: "loaded",
         error: null,
-        registrations: { views: ["file", "file-reference"], decorators: 1, commands: [], settingsPage: true },
+        registrations: { views: ["file", "file-reference"], decorators: 1, commands: [], settingsPage: true, sidebarSections: [] },
       },
       {
         extension: commands,
         status: "loaded",
         error: null,
-        registrations: { views: [], decorators: 0, commands: ["compact", "new"], settingsPage: false },
+        registrations: { views: [], decorators: 0, commands: ["compact", "new"], settingsPage: false, sidebarSections: [] },
       },
     ]);
   });
@@ -70,7 +70,7 @@ describe("Extensions", () => {
     const disposeViewer = sdk.extensions.activate(viewer, sdk.sdkFor(viewer));
     sdk.extensions.activate(other, sdk.sdkFor(other));
     removeView?.();
-    expect(sdk.extensions.list()[0]?.registrations).toEqual({ views: [], decorators: 1, commands: [], settingsPage: false });
+    expect(sdk.extensions.list()[0]?.registrations).toEqual({ views: [], decorators: 1, commands: [], settingsPage: false, sidebarSections: [] });
 
     disposeViewer();
     expect(sdk.extensions.list().map(({ extension }) => extension.name)).toEqual(["other"]);

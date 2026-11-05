@@ -19,6 +19,7 @@ import type { NamedType } from "../scripting/api-registry.js";
 import type { AppState, SessionSettledNotice } from "../state.js";
 import { ExtensionSessions } from "./sessions.js";
 import { ExtensionNodes } from "./nodes.js";
+import { ExtensionProjects, ExtensionTasks } from "./projects.js";
 import { createBroadcast } from "../models/broadcast.js";
 import { requestOrigin } from "../nodes/node-link.js";
 import { logger } from "../logger.js";
@@ -423,6 +424,8 @@ export class ExtensionHost {
         return add(this.settlementListeners, { extension: name, listener });
       })),
       nodes: Object.freeze(new ExtensionNodes(this.app())),
+      projects: Object.freeze(new ExtensionProjects()),
+      tasks: Object.freeze(new ExtensionTasks()),
       prompt: Object.freeze({
         register: (contribution: PromptContribution) => add(this.contributions, { extension: name, contribution }),
       }),

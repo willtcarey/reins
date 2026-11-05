@@ -1,9 +1,7 @@
 import type { SendAnimationSource } from "../helpers/chat-send-animation.js";
 import type { ClientPromptContent } from "../models/chat-content.js";
-import type { TaskWithDiffStats as TaskListItem } from "@backend/models/tasks.js";
 import type { ModelSetting } from "@backend/settings-store.js";
-import type { ProjectView as ProjectInfo } from "@backend/routes/projects.js";
-import type { Source } from "@reins/sdk";
+import type { Project, Source, Task } from "@reins/sdk";
 import type { FileView, FileViewerMode } from "./file-viewer/file-viewer.js";
 import type { WorkspacePane } from "../models/workspace-pages.js";
 
@@ -41,7 +39,6 @@ declare global {
     "reload-request": CustomEvent<void>;
     "rename-session": CustomEvent<RenameSessionDetail>;
     "move-session": CustomEvent<MoveSessionDetail>;
-    "save-session-name": CustomEvent<SaveSessionNameDetail>;
     "active-file-change": CustomEvent<string | null>;
     "active-item-change": CustomEvent<string>;
   }
@@ -103,6 +100,11 @@ export function openFileSearchEvent(source: Source) {
 /** Request to open the settings page. */
 export function openSettingsEvent() {
   return componentSignal("open-settings");
+}
+
+/** The workspace drew again: what its main area shows, or what that is about, may have changed (`workspace.subscribe`). */
+export function mainViewChangeEvent() {
+  return componentSignal("main-view-change");
 }
 
 /** Request to open the file browser overlay. */
@@ -174,15 +176,6 @@ export function moveSessionEvent(sessionId: string) {
   return componentEvent<MoveSessionDetail>("move-session", { sessionId });
 }
 
-export interface SaveSessionNameDetail {
-  sessionId: string;
-  name: string | null;
-}
-
-export function saveSessionNameEvent(detail: SaveSessionNameDetail) {
-  return componentEvent("save-session-name", detail);
-}
-
 export function toggleTaskExpandEvent(taskId: number) {
   return componentEvent("toggle-expand", { taskId });
 }
@@ -191,11 +184,11 @@ export function newTaskSessionEvent(projectId: number | null, taskId: number) {
   return componentEvent("new-task-session", { projectId, taskId });
 }
 
-export function editTaskEvent(projectId: number | null, task: TaskListItem) {
+export function editTaskEvent(projectId: number | null, task: Task) {
   return componentEvent("edit-task", { projectId, task });
 }
 
-export function requestDeleteTaskEvent(task: TaskListItem) {
+export function requestDeleteTaskEvent(task: Task) {
   return componentEvent("delete-task", { task });
 }
 
@@ -209,11 +202,11 @@ export function deleteTaskEvent(projectId: number | null, taskId: number) {
 
 export type ProjectEventName = "toggle-project" | "edit-project" | "delete-project";
 
-export function projectEvent(name: ProjectEventName, project: ProjectInfo) {
+export function projectEvent(name: ProjectEventName, project: Project) {
   return componentEvent(name, project);
 }
 
-export function projectCreatedEvent(project: ProjectInfo) {
+export function projectCreatedEvent(project: Project) {
   return componentEvent("project-created", { project });
 }
 

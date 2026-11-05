@@ -135,32 +135,6 @@ export class WorkspaceStore {
     this.notify();
   }
 
-  async updateTask(taskId: number, updates: { title?: string; description?: string | null }) {
-    const projectId = this.projectId;
-    if (projectId == null) return { error: "No project" } as const;
-    return this.app.projectsStore.updateTask(projectId, taskId, updates);
-  }
-
-  async deleteTask(taskId: number) {
-    const projectId = this.projectId;
-    if (projectId == null) return { error: "No project" } as const;
-    const result = await this.app.projectsStore.deleteTask(projectId, taskId);
-    if ("ok" in result && this.active?.sessionData.taskId === taskId) await this.setSession(null);
-    return result;
-  }
-
-  listNodes() { return this.app.projectsStore.listNodes(); }
-  createProject(data: { name: string; path: string; nodeId: string; base_branch: string }) {
-    return this.app.projectsStore.createProject(data);
-  }
-  updateProject(projectId: number, data: { name: string; base_branch: string; defaultSource?: { nodeId: string; path: string } }) {
-    return this.app.projectsStore.updateProject(projectId, data);
-  }
-  deleteProject(projectId: number) { return this.app.projectsStore.deleteProject(projectId); }
-  generateTask(projectId: number, prompt: string) {
-    return this.app.projectsStore.generateTask(projectId, prompt);
-  }
-
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;

@@ -18,9 +18,17 @@ export const ModelSettingSchema = Type.Object({
   thinkingLevel: ModelSettingThinkingLevelSchema,
 });
 
+/** The sidebar's sections as the user arranged them (Settings → Sidebar), by section ID: `order` is theirs
+ * (sections it does not name follow, in registration order) and `hidden` the ones turned off. */
+export const SidebarSectionsSettingSchema = Type.Object({
+  order: Type.Array(Type.String()),
+  hidden: Type.Array(Type.String()),
+});
+
 export const SETTINGS_SCHEMA = {
   default_model: ModelSettingSchema,
   utility_model: ModelSettingSchema,
+  sidebar_sections: SidebarSectionsSettingSchema,
 } as const;
 
 type SettingsSchema = typeof SETTINGS_SCHEMA;
@@ -33,12 +41,16 @@ type KeysMatchingSchema<TTarget extends TSchema> = {
 export type SettingsKey = keyof SettingsSchema;
 export type SettingValue<K extends SettingsKey> = Static<SettingsSchema[K]>;
 export type ModelSetting = Static<typeof ModelSettingSchema>;
+export type SidebarSectionsSetting = Static<typeof SidebarSectionsSettingSchema>;
 export type ModelSettingsKey = KeysMatchingSchema<typeof ModelSettingSchema>;
 
 export interface SettingEntry<K extends SettingsKey = SettingsKey> {
   key: K;
   value: SettingValue<K>;
 }
+
+/** Any setting with its value, told apart by `key`, as a list of settings has them. */
+export type AnySettingEntry = { [K in SettingsKey]: SettingEntry<K> }[SettingsKey];
 
 function getSchema<K extends SettingsKey>(key: K): SettingsSchema[K] {
   return SETTINGS_SCHEMA[key];

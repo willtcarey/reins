@@ -1,30 +1,20 @@
-import { describe, expect, mock, test } from "bun:test";
-import { buildDescendantMap, DelegatePopover } from "../../components/delegate-popover.js";
-import type { SessionListView as SessionListItem } from "@backend/models/sessions.js";
+import { afterEach, describe, expect, test } from "bun:test";
+import type { SessionSummary } from "@reins/sdk";
+import { buildDescendantMap, DelegatePopover } from "../../../../extensions/sidebar/projects/delegate-popover.js";
+import { makeSessionListItem, makeSessionSummary } from "../../../helpers/fixtures.js";
 import {
   collectTemplateEventListeners,
   collectTemplateValues,
   isTemplateResult,
   templateToString,
-} from "../helpers/lit-template.js";
+} from "../../../helpers/lit-template.js";
+import { mockFetch, restoreFetch } from "../../../helpers/mock-fetch.js";
+import { testSdk } from "../../../helpers/reins-sdk.js";
 
-function childSession(activityState: SessionListItem["activityState"]): SessionListItem {
-  return {
-    id: "child-1",
-    projectId: 1,
-    taskId: 2,
-    parentSessionId: "parent-1",
-    name: "Investigation",
-    createdAt: "2026-01-01T00:00:00Z",
-    updatedAt: "2026-01-01T00:00:00Z",
-    messageCount: 2,
-    firstMessage: "Investigate",
-    activityState,
-    pinnedAt: null,
-    archivedAt: null,
-    sourceExtension: null,
-    placement: { available: true, removed: false, nodeId: "internal", nodeName: "Internal", path: "" },
-  };
+afterEach(restoreFetch);
+
+function childSession(activity: SessionSummary["activity"]): SessionSummary {
+  return makeSessionSummary("child-1", { taskId: 2, parentSessionId: "parent-1", name: "Investigation", activity });
 }
 
 function popoverContent(popover: DelegatePopover): unknown {
@@ -40,7 +30,7 @@ describe("DelegatePopover", () => {
     const parent = { ...childSession(null), id: "parent-1", parentSessionId: null };
     const child = childSession(null);
     const grandchild = {
-      ...childSession("finished"),
+      ...childSession("unread"),
       id: "grandchild-1",
       parentSessionId: child.id,
       name: "Unread nested work",
@@ -59,12 +49,10 @@ describe("DelegatePopover", () => {
 
   test("renders delegate sessions through the shared actionable session row", () => {
     const popover = new DelegatePopover();
-    const child = childSession("finished");
-    const setSessionUnread = mock(async () => ({ ok: true }));
-    const updateMetadata = mock(async () => ({ ok: true }));
+    const child = childSession("unread");
+    const { reins } = testSdk();
     popover.childSessions = [child];
-    popover.onSetSessionUnread = setSessionUnread;
-    popover.onUpdateMetadata = updateMetadata;
+    popover.sessions = reins.sessions;
 
     const content = popoverContent(popover);
     const output = templateToString(content);
@@ -76,26 +64,37 @@ describe("DelegatePopover", () => {
 
     expect(output).toContain("<session-list-item");
     expect(row.values).toContain(child);
-    expect(row.values).toContain(setSessionUnread);
-    expect(row.values).toContain(updateMetadata);
+    expect(row.values).toContain(reins.sessions);
   });
 
   test("marks every unread child as read from the bulk action", () => {
+    const { reins, sessions } = testSdk();
+    sessions.setMany([
+      makeSessionListItem("child-1", { activityState: "finished" }),
+      makeSessionListItem("child-2", { activityState: "finished" }),
+      makeSessionListItem("child-3"),
+      makeSessionListItem("child-4", { activityState: "running" }),
+    ]);
+    const writes: string[] = [];
+    mockFetch((url, init) => {
+      writes.push(`${init?.method} ${url} ${init?.body}`);
+      return new Response("{}", { headers: { "Content-Type": "application/json" } });
+    });
     const popover = new DelegatePopover();
     popover.childSessions = [
-      childSession("finished"),
-      { ...childSession("finished"), id: "child-2", name: "Other unread work" },
+      childSession("unread"),
+      { ...childSession("unread"), id: "child-2", name: "Other unread work" },
       { ...childSession(null), id: "child-3", name: "Already read" },
       { ...childSession("running"), id: "child-4", name: "Still running" },
     ];
-    const setSessionUnread = mock(async (_sessionId: string, _unread: boolean) => ({ ok: true }));
-    popover.onSetSessionUnread = setSessionUnread;
+    popover.sessions = reins.sessions;
 
     const [markAllRead] = collectTemplateEventListeners(popoverContent(popover), "click");
     markAllRead?.(new Event("click"));
 
-    expect(setSessionUnread).toHaveBeenCalledTimes(2);
-    expect(setSessionUnread).toHaveBeenNthCalledWith(1, "child-1", false);
-    expect(setSessionUnread).toHaveBeenNthCalledWith(2, "child-2", false);
+    expect(writes).toEqual([
+      'PATCH /api/sessions/child-1/activity {"unread":false}',
+      'PATCH /api/sessions/child-2/activity {"unread":false}',
+    ]);
   });
 });

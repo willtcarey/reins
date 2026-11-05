@@ -14,7 +14,7 @@ The **base branch** (e.g. `main` or `develop`) is the branch that new task branc
 
 ## Sidebar
 
-All projects appear in the sidebar simultaneously as collapsible sections. Clicking a project springs it open to show its assistant and tasks. Collapsing and reopening a project preserves its nested task disclosure state. Projects with active (running) sessions auto-expand.
+All projects appear in the sidebar's **Projects** section ([sidebar.md](sidebar.md)) as collapsible rows, in name order. Clicking a project springs it open to show its assistant and tasks. Collapsing and reopening a project preserves its nested task disclosure state. The current project (the one of the session you look at) is expanded; opening a session in another project collapses the previous one unless you expanded it by hand ([sidebar.md](sidebar.md) *Projects*). A project's menu has **History**, **Pin** or **Unpin**, **Edit** and **Remove**.
 
 ```
 ▶ 📁 Acme API

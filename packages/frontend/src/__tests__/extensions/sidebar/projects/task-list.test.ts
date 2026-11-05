@@ -1,20 +1,19 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import type { Task } from "@reins/sdk";
 import {
   TaskList,
   createTaskListDisclosureState,
-} from "../../components/task-list.js";
-import { ProjectStore } from "../../models/stores/project-store.js";
-import { SessionCache } from "../../models/stores/session-cache.js";
-import type { TaskWithDiffStats as TaskListItem } from "@backend/models/tasks.js";
-import { makeTask } from "../helpers/fixtures.js";
+} from "../../../../extensions/sidebar/projects/task-list.js";
+import { makeSessionListItem, makeTask, makeTaskSummary } from "../../../helpers/fixtures.js";
 import {
   collectTemplateValues,
   isTemplateResult,
   templateToString,
-} from "../helpers/lit-template.js";
-import { mockFetch, restoreFetch } from "../helpers/mock-fetch.js";
+} from "../../../helpers/lit-template.js";
+import { mockFetch, restoreFetch } from "../../../helpers/mock-fetch.js";
+import { testSdk } from "../../../helpers/reins-sdk.js";
 
-function expectExpanded(el: TaskList, item: TaskListItem, expanded: boolean) {
+function expectExpanded(el: TaskList, item: Task, expanded: boolean) {
   const rendered = Reflect.apply(Reflect.get(el, "renderTask"), el, [item]);
   if (!isTemplateResult(rendered)) throw new Error("Expected task template");
   const index = rendered.strings.findIndex((part) => part.includes(".expanded="));
@@ -22,65 +21,65 @@ function expectExpanded(el: TaskList, item: TaskListItem, expanded: boolean) {
   expect(rendered.values[index]).toBe(expanded);
 }
 
-function projectStore(activeTaskId: number) {
-  const sessionCache = new SessionCache();
-  sessionCache.set("session-1", { projectId: 1, taskId: activeTaskId });
-  sessionCache.set("session-2", { projectId: 1, taskId: activeTaskId });
-  return new ProjectStore(1, sessionCache);
+/** The SDK over a project 1 whose sessions `session-1` and `session-2` are of task `activeTaskId`. */
+function sdkWithSessions(activeTaskId: number) {
+  mockFetch(() => Response.json([]));
+  const sdk = testSdk();
+  sdk.sessions.setMany([makeSessionListItem("session-1", { taskId: activeTaskId }), makeSessionListItem("session-2", { taskId: activeTaskId })]);
+  return sdk.reins;
+}
+
+function taskList(reins = sdkWithSessions(1)) {
+  const el = new TaskList();
+  el.projectId = 1;
+  el.reins = reins;
+  return el;
 }
 
 afterEach(restoreFetch);
 
 describe("TaskList expansion", () => {
-  test("renders only active project tasks", () => {
-    const el = new TaskList();
-    const store = projectStore(1);
-    store.tasks = [
-      makeTask({ id: 1, title: "Active task", status: "open" }),
-      makeTask({ id: 2, title: "Finished task", status: "closed" }),
-    ];
-    el.projectStore = store;
+  test("renders only open project tasks", async () => {
+    const sdk = testSdk();
+    mockFetch(() => Response.json([makeTask({ id: 1, title: "Active task", status: "open" }), makeTask({ id: 2, title: "Finished task", status: "closed" })]));
+    const el = taskList(sdk.reins);
+    el.render();
+    await new Promise((resolve) => setTimeout(resolve, 0));
 
     const output = templateToString(collectTemplateValues(el.render()));
     expect(output.match(/<task-list-item/g)).toHaveLength(1);
-    expect(output).not.toContain("Completed tasks");
   });
 
   test("restores disclosure state when the task list remounts", () => {
-    mockFetch(() => Response.json([]));
     const disclosureState = createTaskListDisclosureState();
-    const task = makeTask({ id: 2, title: "Task 2" });
-    const first = new TaskList();
+    const task = makeTaskSummary({ id: 2, title: "Task 2" });
+    const first = taskList();
     first.disclosureState = disclosureState;
-    first.projectStore = projectStore(1);
 
     Reflect.apply(Reflect.get(first, "handleToggleExpand"), first, [
       new CustomEvent("toggle-expand", { detail: { taskId: task.id } }),
     ]);
 
-    const replacement = new TaskList();
+    const replacement = taskList();
     replacement.disclosureState = disclosureState;
     expectExpanded(replacement, task, true);
   });
 
   test("does not replace a manually expanded task when remounting for the same session", () => {
-    mockFetch(() => Response.json([]));
     const disclosureState = createTaskListDisclosureState();
-    const store = projectStore(1);
-    const firstTask = makeTask({ id: 1, title: "Task 1" });
-    const secondTask = makeTask({ id: 2, title: "Task 2" });
-    const first = new TaskList();
+    const reins = sdkWithSessions(1);
+    const firstTask = makeTaskSummary({ id: 1, title: "Task 1" });
+    const secondTask = makeTaskSummary({ id: 2, title: "Task 2" });
+    const first = taskList(reins);
     first.disclosureState = disclosureState;
-    first.projectStore = store;
     first.activeSessionId = "session-1";
     first.willUpdate(new Map([["activeSessionId", ""]]));
     Reflect.apply(Reflect.get(first, "handleToggleExpand"), first, [
       new CustomEvent("toggle-expand", { detail: { taskId: secondTask.id } }),
     ]);
 
-    const replacement = new TaskList();
+    const replacement = taskList(reins);
     replacement.disclosureState = disclosureState;
-    replacement.projectStore = store;
     replacement.activeSessionId = "session-1";
     replacement.willUpdate(new Map([["activeSessionId", ""]]));
 
@@ -89,17 +88,12 @@ describe("TaskList expansion", () => {
   });
 
   test("does not replace a manually expanded task during unrelated updates", () => {
-    mockFetch(() => Response.json([]));
-    const el = new TaskList();
-    const firstTask = makeTask({ id: 1, title: "Task 1" });
-    const secondTask = makeTask({ id: 2, title: "Task 2" });
-    el.projectStore = projectStore(1);
+    const el = taskList();
+    const firstTask = makeTaskSummary({ id: 1, title: "Task 1" });
+    const secondTask = makeTaskSummary({ id: 2, title: "Task 2" });
     el.activeSessionId = "session-1";
 
-    el.willUpdate(new Map([
-      ["projectStore", null],
-      ["activeSessionId", ""],
-    ]));
+    el.willUpdate(new Map([["activeSessionId", ""]]));
     expectExpanded(el, firstTask, true);
 
     Reflect.apply(Reflect.get(el, "handleToggleExpand"), el, [
@@ -112,11 +106,9 @@ describe("TaskList expansion", () => {
   });
 
   test("expands the active session task when activeSessionId changes", () => {
-    mockFetch(() => Response.json([]));
-    const el = new TaskList();
-    const firstTask = makeTask({ id: 1, title: "Task 1" });
-    const secondTask = makeTask({ id: 2, title: "Task 2" });
-    el.projectStore = projectStore(2);
+    const el = taskList(sdkWithSessions(2));
+    const firstTask = makeTaskSummary({ id: 1, title: "Task 1" });
+    const secondTask = makeTaskSummary({ id: 2, title: "Task 2" });
     Reflect.apply(Reflect.get(el, "handleToggleExpand"), el, [
       new CustomEvent("toggle-expand", { detail: { taskId: firstTask.id } }),
     ]);

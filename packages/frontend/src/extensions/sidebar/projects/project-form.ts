@@ -7,20 +7,19 @@
  * the project is created and its new sessions work unless told otherwise.
  * Changing the default location on Save moves no session. A directory not known yet is
  * checked on its node.
- * Project mutations go through the route-scoped workspace interface, which
- * delegates project-domain work to ProjectsStore.
+ * It lists nodes and changes projects through the SDK (`reins.nodes`, `reins.projects`).
  */
 
 import { LitElement, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
-import type { ProjectView } from "@backend/routes/projects.js";
-import type { NodeView } from "@backend/models/node.js";
-import type { WorkspaceStore } from "../models/stores/workspace-store.js";
-import { dialogButton } from "../ui/dialog.js";
-import { projectCreatedEvent, projectUpdatedEvent } from "./events.js";
+import type { NodeSummary, Project, ReinsSdk } from "@reins/sdk";
+import { dialogButton } from "../../../ui/dialog.js";
+import { projectCreatedEvent, projectUpdatedEvent } from "../../../components/events.js";
 
-/** What the form asks of the workspace: nodes, and the project changes it makes. */
-export type ProjectFormStore = Pick<WorkspaceStore, "listNodes" | "createProject" | "updateProject">;
+/** What the form asks of the SDK: nodes, and the project changes it makes. */
+export type ProjectFormSdk = Pick<ReinsSdk, "nodes" | "projects">;
+
+const errorMessage = (error: unknown) => error instanceof Error ? error.message : String(error);
 
 interface OpenCreateOptions {
   mode: "create";
@@ -28,7 +27,7 @@ interface OpenCreateOptions {
 
 interface OpenEditOptions {
   mode: "edit";
-  project: ProjectView;
+  project: Project;
 }
 
 const LABEL_CLASS = "block text-[10px] text-zinc-400 mb-1";
@@ -42,7 +41,7 @@ export class ProjectForm extends LitElement {
   }
 
   @property({ attribute: false })
-  store: ProjectFormStore | null = null;
+  reins: ProjectFormSdk | null = null;
 
   @state() private isOpen = false;
   @state() private mode: "create" | "edit" = "create";
@@ -50,7 +49,7 @@ export class ProjectForm extends LitElement {
   @state() private name = "";
   /** The project's default source: its node and its path there. */
   @state() private path = "";
-  @state() private nodes: NodeView[] | null = null;
+  @state() private nodes: readonly NodeSummary[] | null = null;
   @state() private nodeId = "";
   /** The default source it had when the form opened (edit only): Save changes it only when it changed. */
   private savedSource: { nodeId: string; path: string } | null = null;
@@ -67,7 +66,7 @@ export class ProjectForm extends LitElement {
     if (options.mode === "edit") {
       this.editProjectId = options.project.id;
       this.name = options.project.name;
-      this.baseBranch = options.project.base_branch;
+      this.baseBranch = options.project.baseBranch;
       this.savedSource = options.project.defaultSource;
       this.path = options.project.defaultSource?.path ?? "";
     } else {
@@ -90,10 +89,12 @@ export class ProjectForm extends LitElement {
   private async loadNodes() {
     this.nodes = null;
     this.nodeId = "";
-    const result = await this.store?.listNodes();
-    if (!result) return;
-    if ("error" in result) {
-      this.error = result.error;
+    if (!this.reins) return;
+    let result: readonly NodeSummary[];
+    try {
+      result = await this.reins.nodes.list();
+    } catch (error) {
+      this.error = errorMessage(error);
       return;
     }
     this.nodes = result;
@@ -129,32 +130,34 @@ export class ProjectForm extends LitElement {
   };
 
   private async createProject() {
-    if (!this.store) return;
-    const result = await this.store.createProject({
-      name: this.name.trim(),
-      path: this.path.trim(),
-      nodeId: this.nodeId,
-      base_branch: this.baseBranch.trim() || "main",
-    });
-    if ("error" in result) {
-      this.error = result.error;
+    if (!this.reins) return;
+    let created: Project;
+    try {
+      created = await this.reins.projects.create({
+        name: this.name.trim(),
+        source: { nodeId: this.nodeId, path: this.path.trim() },
+        baseBranch: this.baseBranch.trim() || "main",
+      });
+    } catch (error) {
+      this.error = errorMessage(error);
       return;
     }
     this.close();
-    this.dispatchEvent(projectCreatedEvent(result));
+    this.dispatchEvent(projectCreatedEvent(created));
   }
 
   private async updateProject() {
-    if (!this.store || this.editProjectId == null) return;
+    if (!this.reins || this.editProjectId == null) return;
     const defaultSource = { nodeId: this.nodeId, path: this.path.trim() };
     const moved = defaultSource.nodeId !== this.savedSource?.nodeId || defaultSource.path !== this.savedSource?.path;
-    const result = await this.store.updateProject(this.editProjectId, {
-      name: this.name.trim(),
-      base_branch: this.baseBranch.trim() || "main",
-      ...(moved ? { defaultSource } : {}),
-    });
-    if ("error" in result) {
-      this.error = result.error;
+    try {
+      await this.reins.projects.update(this.editProjectId, {
+        name: this.name.trim(),
+        baseBranch: this.baseBranch.trim() || "main",
+        ...(moved ? { defaultSource } : {}),
+      });
+    } catch (error) {
+      this.error = errorMessage(error);
       return;
     }
     this.close();
@@ -170,7 +173,7 @@ export class ProjectForm extends LitElement {
     return this.mode === "create" ? "Add" : "Save";
   }
 
-  private renderNodeSelect(nodes: NodeView[], selected: string, onChange: (nodeId: string) => void) {
+  private renderNodeSelect(nodes: readonly NodeSummary[], selected: string, onChange: (nodeId: string) => void) {
     return html`
       <select
         class="${INPUT_CLASS} w-32 shrink-0 cursor-pointer appearance-none truncate"

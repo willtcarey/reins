@@ -9,9 +9,9 @@
 
 import { LitElement, html, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
-import type { TaskWithDiffStats as TaskListItem } from "@backend/models/tasks.js";
-import { dialogButton } from "../ui/dialog.js";
-import { cancelDeleteEvent, confirmDeleteEvent } from "./events.js";
+import type { Task } from "@reins/sdk";
+import { dialogButton } from "../../../ui/dialog.js";
+import { cancelDeleteEvent, confirmDeleteEvent } from "../../../components/events.js";
 
 @customElement("delete-task-dialog")
 export class DeleteTaskDialog extends LitElement {
@@ -20,7 +20,7 @@ export class DeleteTaskDialog extends LitElement {
   }
 
   @property({ attribute: false })
-  task: TaskListItem | null = null;
+  task: Task | null = null;
 
   private handleCancel = () => {
     this.dispatchEvent(cancelDeleteEvent());
@@ -46,13 +46,13 @@ export class DeleteTaskDialog extends LitElement {
             <div class="text-xs text-zinc-200 font-medium">${task.title}</div>
             ${task.description ? html`<div class="text-[11px] text-zinc-400 mt-1">${task.description}</div>` : nothing}
             <div class="text-[10px] text-zinc-500 mt-1.5">
-              Branch: <span class="text-zinc-400 font-mono">${task.branch_name}</span>
-              · ${task.session_count} session${task.session_count !== 1 ? "s" : ""}
+              Branch: <span class="text-zinc-400 font-mono">${task.branchName}</span>
+              · ${task.sessionCount} session${task.sessionCount !== 1 ? "s" : ""}
             </div>
           </div>
           <p class="text-[11px] text-zinc-400">
             This will permanently delete the task, all its sessions, and the git branch
-            <span class="font-mono text-zinc-300">${task.branch_name}</span>.
+            <span class="font-mono text-zinc-300">${task.branchName}</span>.
           </p>
         ` : nothing}
         .actions=${html`

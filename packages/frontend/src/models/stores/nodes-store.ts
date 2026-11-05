@@ -65,8 +65,6 @@ export class NodesStore {
   nodes: Loadable<NodeView[]> = Loadable.idle();
   pairing: Pairing | null = null;
   creatingPairingCode = false;
-  /** The node whose rename is being saved. */
-  renamingNodeId: string | null = null;
 
   private _listeners = new Set<() => void>();
   private _unsubscribe: (() => void) | null = null;
@@ -170,17 +168,11 @@ export class NodesStore {
 
   /** Renames the node to `name` trimmed (any node, the local one included). */
   async rename(nodeId: string, name: string): Promise<NodesStoreResult> {
-    this.renamingNodeId = nodeId;
-    this.notify();
-
     try {
       this._upsert(await api.nodes.rename(nodeId, { name: name.trim() }));
       return { ok: true };
     } catch (err: unknown) {
       return { error: errorMessage(err) };
-    } finally {
-      this.renamingNodeId = null;
-      this.notify();
     }
   }
 

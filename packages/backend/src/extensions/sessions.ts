@@ -6,12 +6,15 @@
  * Settlement listeners are the host's (`ExtensionHost.sessionSettled`): it gives the way to add one.
  */
 
-import type { ContextUsage, Disposer, MessageContent, MessageMetadata, SessionInfo, SessionSettlement, SessionStart, Sessions } from "@reins/sdk/server";
+import type { ContextUsage, Disposer, MessageContent, MessageMetadata, SessionInfo, SessionListQuery, SessionSettlement, SessionStart, Sessions } from "@reins/sdk/server";
 import type { AppState } from "../state.js";
 import { Models } from "../models/models.js";
 import { sessionActivity } from "../models/session-activity.js";
 import { latestSettlement } from "../sessions/session-runs.js";
 import type { SessionModel } from "../models/session.js";
+import { firstMessage, latestSessionIds } from "../session-store.js";
+import { getDb } from "../app-globals.js";
+import { readNewestRunResult, readPendingPiOperation } from "../pi/run-state.js";
 
 const MAX_LABEL = 80;
 const MAX_METADATA_BYTES = 64 * 1024;
@@ -63,9 +66,17 @@ function checkedContent(message: MessageContent, blank: string): { content: { ty
   return { content, details: { start, label } };
 }
 
+/** When the session's latest run started, as Pi recorded it: the run in progress, else the newest that ended. */
+function lastRunStartedAt(sessionId: string): string | null {
+  const pending = readPendingPiOperation(getDb(), sessionId);
+  const startedAt = pending?.kind === "run" ? pending.startedAt : readNewestRunResult(getDb(), sessionId)?.startedAt;
+  return startedAt === undefined ? null : new Date(startedAt).toISOString();
+}
+
 function sessionInfo(session: SessionModel, state: AppState): SessionInfo {
   const { row } = session;
   const source = session.source.record;
+  const running = sessionActivity(row, state.process.sessions) === "running";
   return {
     id: row.id,
     source: { id: source.id, nodeId: source.node_id, path: source.path },
@@ -73,10 +84,13 @@ function sessionInfo(session: SessionModel, state: AppState): SessionInfo {
     taskId: row.task_id,
     parentSessionId: row.parent_session_id,
     name: row.name,
+    firstMessage: firstMessage(row.id),
     background: row.background === 1,
-    running: sessionActivity(row, state.process.sessions) === "running",
+    running,
+    unread: !running && row.activity_state === "finished",
     startedBy: row.source_extension,
     archivedAt: row.archived_at,
+    lastRunStartedAt: lastRunStartedAt(row.id),
     lastRunId: latestSettlement(row.id)?.operationId ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -100,6 +114,13 @@ export class ExtensionSessions implements Sessions {
 
   async get(sessionId: string): Promise<SessionInfo> {
     return sessionInfo(this.#sessions.get(sessionId), this.#state);
+  }
+
+  async list({ limit = 50, offset = 0 }: SessionListQuery = {}): Promise<SessionInfo[]> {
+    if (!Number.isInteger(limit) || limit < 1 || limit > 200) throw new Error("limit must be an integer from 1 to 200");
+    if (!Number.isInteger(offset) || offset < 0) throw new Error("offset must be a non-negative integer");
+    const sessions = this.#sessions;
+    return latestSessionIds(limit, offset).map(id => sessionInfo(sessions.get(id), this.#state));
   }
 
   // A refused first prompt leaves the session: the extension sends it again, or moves the session.

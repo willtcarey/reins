@@ -10,7 +10,7 @@ export interface AppRouteRenderContext {
 
 /** The host's own settings sections; each extension with settings has a page too (`/settings/extensions/<name>`).
  * `extensions` (`/settings/extensions`) is the host's list of every extension, one segment shorter than their pages. */
-export const SETTINGS_SECTIONS = ["models", "nodes", "extensions"] as const;
+export const SETTINGS_SECTIONS = ["models", "nodes", "sidebar", "extensions"] as const;
 export type SettingsSectionId = (typeof SETTINGS_SECTIONS)[number];
 
 export function isSettingsSection(value: string): value is SettingsSectionId {
@@ -173,6 +173,7 @@ function viewOfRoute(route: Route): View | null {
 /** The route of a view the main area can show, or null for any other. */
 export function mainViewHash(view: View): string | null {
   if (view.view === "session") return typeof view.sessionId === "string" && view.sessionId ? sessionHash(view.sessionId) : null;
+  if (view.view === "project-history") return typeof view.projectId === "number" && Number.isInteger(view.projectId) ? projectHistoryHash(view.projectId) : null;
   if (view.view !== "new-session") return null;
   const { projectId, taskId } = view;
   if (!isOptionalId(projectId) || !isOptionalId(taskId) || (projectId == null && taskId != null)) return null;

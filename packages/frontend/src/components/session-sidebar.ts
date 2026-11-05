@@ -1,39 +1,24 @@
 /**
  * Session Sidebar
  *
- * Multi-project orchestrator. Renders ALL projects as collapsible sections,
- * each with its own sessions and tasks. Reads project list and per-project
- * data from AppStore's public ProjectsStore sub-store.
+ * The sidebar's frame, which the host owns: its header (search, settings, collapse), the collapsed rail with
+ * its activity badge (from every session's activity, not from any section), and its body, a stack of the
+ * sections extensions register (`reins.sidebar.registerSection`), in the order and with the switches the user
+ * set in Settings → Sidebar (`SidebarSections`). Each section draws itself in a `<reins-view-mount>`.
  *
- * Child components:
- *  - project-sidebar  — "Add Project" button + project-form modal
- *  - task-form        — new task creation (shared, opened with projectId)
- *  - task-detail      — task editing (shared)
- *  - sidebar-project  — keyed project section with persistent disclosure state
+ * Height: each section is as tall as its content, and the body is the sidebar's one scroller.
  */
 
 import { LitElement, html, nothing } from "lit";
-import { customElement, property, state, query } from "lit/decorators.js";
+import { customElement, property } from "lit/decorators.js";
 import { repeat } from "lit/directives/repeat.js";
-import { navigate, navigateToSession, newSessionHash } from "../routing/app-router.js";
-import type { WorkspaceStore } from "../models/stores/workspace-store.js";
-import type { TaskWithDiffStats as TaskListItem } from "@backend/models/tasks.js";
-
-import type { ProjectView as ProjectInfo } from "@backend/routes/projects.js";
+import type { SidebarSection } from "@reins/sdk";
+import type { AppStore } from "../models/stores/app-store.js";
 import { chevronLeftIcon, chevronRightIcon } from "../ui/icons.js";
-import type { TaskForm } from "./task-form.js";
-import type { TaskDetail } from "./task-detail.js";
-import type { ProjectSidebar } from "./project-sidebar.js";
-import "./project-sidebar.js";
-import "./task-form.js";
-import "./task-detail.js";
-import "./sidebar-project.js";
-import { showToast } from "../ui/toast.js";
 import { openQuickOpenEvent, openSettingsEvent } from "./events.js";
-import { ScrollToController } from "../controllers/scroll-to-controller.js";
 import { ViewportController } from "../controllers/viewport-controller.js";
-import { confirmDialog } from "../ui/confirm-dialog.js";
 import "./nav-icon.js";
+import "./view-mount.js";
 
 @customElement("session-sidebar")
 export class SessionSidebar extends LitElement {
@@ -41,145 +26,39 @@ export class SessionSidebar extends LitElement {
     return this;
   }
 
-  @property({ attribute: false })
-  store: WorkspaceStore | null = null;
-
+  @property({ attribute: false }) app: AppStore | null = null;
   @property({ attribute: false }) collapsed = false;
   @property({ attribute: false }) onToggleCollapse: (() => void) | null = null;
-  @state() private expandedProjects = new Set<number>();
 
-
-  private _unsubscribe: (() => void) | null = null;
+  private unsubscribe: Array<() => void> = [];
   private viewport = new ViewportController(this);
-  private _activeSessionScroll = new ScrollToController(this, {
-    getTargetId: () => this.store?.sessionId,
-    targetSelector: "[data-session-id]",
-    getItemId: (row) => row.getAttribute("data-session-id") ?? undefined,
-    scrollContainerSelector: "[data-sidebar-scroll-container]",
-  });
-
-  @query("task-form") private taskForm!: TaskForm;
-  @query("task-detail") private taskDetail!: TaskDetail;
-  @query("project-sidebar") private projectSidebar!: ProjectSidebar;
 
   override connectedCallback() {
     super.connectedCallback();
-    this._subscribe();
+    this.subscribe();
   }
 
   override disconnectedCallback() {
     super.disconnectedCallback();
-    this._unsubscribe?.();
-    this._unsubscribe = null;
+    this.stopListening();
   }
 
   override willUpdate(changed: Map<string, unknown>) {
-    if (changed.has("store")) {
-      this._subscribe();
-    }
-    this._autoExpand();
+    if (changed.has("app")) this.subscribe();
   }
 
-  private _subscribe() {
-    this._unsubscribe?.();
-    this._unsubscribe = this.store?.subscribe(() => {
-      this.requestUpdate();
-    }) ?? null;
+  /** The sections shown change with the registry; the rail's badge with every session's activity. */
+  private subscribe() {
+    this.stopListening();
+    const app = this.app;
+    if (!app || !this.isConnected) return;
+    const update = () => this.requestUpdate();
+    this.unsubscribe = [app.sidebar.subscribe(update), app.projectsStore.subscribe(update)];
   }
 
-  // ---- Auto-expand logic ----------------------------------------------------
-
-  private _autoExpand() {
-    const store = this.store;
-    if (!store) return;
-
-    let changed = false;
-
-    // Auto-expand the project containing the visited session
-    if (store.projectId != null && !this.expandedProjects.has(store.projectId)) {
-      this.expandedProjects.add(store.projectId);
-      store.projectsStore.ensureLoaded(store.projectId);
-      changed = true;
-    }
-
-    if (changed) {
-      this.expandedProjects = new Set(this.expandedProjects);
-    }
-  }
-
-  // ---- Toggle ---------------------------------------------------------------
-
-  private toggleProject(projectId: number) {
-    const next = new Set(this.expandedProjects);
-    if (next.has(projectId)) {
-      next.delete(projectId);
-    } else {
-      next.add(projectId);
-      this.store?.projectsStore.ensureLoaded(projectId);
-    }
-    this.expandedProjects = next;
-  }
-
-  // ---- Event handlers from child components ---------------------------------
-
-  private handleSelectSession(e: CustomEvent<{ projectId: number; sessionId: string }>) {
-    const { sessionId } = e.detail;
-    if (!sessionId) return;
-    navigateToSession(sessionId);
-  }
-
-  private handleNewSession(e: CustomEvent<{ projectId: number }>) {
-    const projectId = e.detail.projectId;
-    if (!projectId) return;
-    navigate(newSessionHash({ projectId, taskId: null }));
-  }
-
-  private handleNewTask(e: CustomEvent<{ projectId: number }>) {
-    this.taskForm?.open(e.detail.projectId);
-  }
-
-  private handleNewTaskSession(e: CustomEvent<{ projectId: number; taskId: number }>) {
-    const { projectId, taskId } = e.detail;
-    if (!projectId) return;
-    navigate(newSessionHash({ projectId, taskId }));
-  }
-
-  private handleEditTask(e: CustomEvent<{ task: TaskListItem }>) {
-    this.taskDetail?.open(e.detail.task);
-  }
-
-  private async handleSaveTask(e: CustomEvent<{ taskId: number; title: string; description: string | null }>) {
-    const store = this.store;
-    if (!store) return;
-    const { taskId, title, description } = e.detail;
-    const result = await store.updateTask(taskId, { title, description });
-    if ("error" in result) {
-      this.taskDetail?.saveComplete(result.error);
-    } else {
-      this.taskDetail?.saveComplete();
-    }
-  }
-
-  private async handleDeleteTask(e: CustomEvent<{ projectId: number; taskId: number }>) {
-    const store = this.store;
-    if (!store) return;
-
-    const { projectId, taskId } = e.detail;
-    const result = await store.deleteTask(taskId);
-    if ("error" in result) {
-      showToast(result.error, "error");
-      return;
-    }
-
-    // Refresh the project data store
-    if (projectId) {
-      store.projectsStore.refresh(projectId);
-    }
-
-    // If the store cleared the active session, navigate to empty state
-    if (!store.sessionId) {
-      navigate("#/");
-    }
+  private stopListening() {
+    for (const stop of this.unsubscribe) stop();
+    this.unsubscribe = [];
   }
 
   private toggleCollapse() {
@@ -187,112 +66,58 @@ export class SessionSidebar extends LitElement {
     this.onToggleCollapse?.();
   }
 
-  /** Open the quick-open palette (Cmd+K). */
-  private _openQuickOpen() {
+  private openQuickOpen() {
     this.dispatchEvent(openQuickOpenEvent());
   }
 
-  /** Open the settings page. */
-  private _openSettings() {
+  private openSettings() {
     this.dispatchEvent(openSettingsEvent());
   }
 
-  private handleToggleProject(e: CustomEvent<ProjectInfo>) {
-    this.toggleProject(e.detail.id);
-  }
-
-  private handleEditProject(e: CustomEvent<ProjectInfo>) {
-    this.projectSidebar?.openEdit(e.detail);
-  }
-
-  private async handleDeleteProject(e: CustomEvent<ProjectInfo>) {
-    const project = e.detail;
-    const confirmed = await confirmDialog({
-      title: `Remove ${project.name} from REINS?`,
-      message: "This won't delete any files on disk.",
-      confirmLabel: "Remove",
-      destructive: true,
-    });
-    if (!confirmed) return;
-
-    if (project.id === this.store?.projectId) {
-      navigate("#/");
-    }
-    await this.store?.deleteProject(project.id);
-    this.store?.projectsStore.remove(project.id);
-  }
-
-  // ---- Render helpers -------------------------------------------------------
-
-  /** Render a small badge dot on the collapsed rail if there's activity. */
+  /** A dot on the collapsed rail while any session runs (green) or has something unread (amber). */
   private renderRailBadge() {
-    const summary = this.store?.projectsStore.activitySummary;
+    const summary = this.app?.projectsStore.activitySummary;
     const hasRunning = (summary?.running ?? 0) > 0;
     const hasFinished = (summary?.finished ?? 0) > 0;
     if (!hasRunning && !hasFinished) return nothing;
-    const colorClass = hasRunning
-      ? "bg-green-500 animate-pulse"
-      : "bg-amber-500";
-    return html`<span class="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full ${colorClass}"></span>`;
+    const colorClass = hasRunning ? "bg-green-500 animate-pulse" : "bg-amber-500";
+    return html`<span class="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full ${colorClass}" data-role="rail-badge"></span>`;
   }
 
-  private get sortedProjects(): ProjectInfo[] {
-    return (this.store?.projects ?? []).toSorted((a, b) =>
-      a.name.localeCompare(b.name, undefined, { sensitivity: "base" })
-    );
-  }
-
-  // ---- Render ---------------------------------------------------------------
-
-  /** Sessions of no project (Reins features such as extensions create them; the browser does not), so a
-   * visible one stays reachable. Listed only when there is one; opening one is all they offer here. */
-  private renderOtherSessions() {
-    const sessions = this.store?.projectsStore.unownedSessions ?? [];
-    if (sessions.length === 0) return nothing;
+  private renderSection(section: SidebarSection) {
+    const title = section.title ?? section.id;
     return html`
-      <section class="mt-2" aria-label="Other sessions">
-        <div class="px-3 py-1.5 text-[11px] font-medium text-zinc-400">Other sessions</div>
-        <div class="mx-2 mb-1 divide-y divide-zinc-800/80 rounded-md border border-zinc-800/80 bg-zinc-950/30 overflow-hidden">
-          ${sessions.map((session) => html`
-            <session-list-item
-              class="block"
-              .session=${session}
-              .active=${session.id === this.store?.sessionId}
-              .activeSessionId=${this.store?.sessionId ?? ""}
-              .movable=${false}
-            ></session-list-item>
-          `)}
-        </div>
+      <section class="shrink-0" aria-label=${title} data-sidebar-section=${section.id}>
+        ${section.title ? html`
+          <h2 class="shrink-0 px-3 pt-3 pb-1 text-[10px] font-semibold uppercase tracking-wider text-zinc-500">${section.title}</h2>
+        ` : nothing}
+        <reins-view-mount class="block" .presentation=${section}></reins-view-mount>
       </section>
     `;
   }
 
+  private renderBody() {
+    const sections = this.app?.sidebar.shown() ?? [];
+    if (sections.length === 0) {
+      return html`<p class="px-3 py-4 text-xs text-zinc-500">No sidebar sections are on. Turn some on in Settings → Sidebar.</p>`;
+    }
+    return html`
+      <div class="flex-1 min-h-0 overflow-y-auto" data-sidebar-scroll-container data-swipe-surface>
+        ${repeat(sections, (section) => section.id, (section) => this.renderSection(section))}
+      </div>
+    `;
+  }
+
   override render() {
-    const store = this.store;
     const isCollapsed = !this.viewport.isMobileLayout && this.collapsed;
     const shellClass = `${isCollapsed ? "md:w-full" : "w-full"}
       h-full bg-zinc-900 border-r border-zinc-700 flex flex-col shrink-0 overflow-hidden
       md:transition-[width] duration-200 ease-out`;
 
     return html`
-      <div
-        class=${shellClass}
-        @select-session=${this.handleSelectSession}
-        @new-session=${this.handleNewSession}
-        @new-task=${this.handleNewTask}
-        @new-task-session=${this.handleNewTaskSession}
-        @toggle-project=${this.handleToggleProject}
-        @edit-project=${this.handleEditProject}
-        @delete-project=${this.handleDeleteProject}
-        @save-task=${this.handleSaveTask}
-        @edit-task=${this.handleEditTask}
-        @delete-task=${this.handleDeleteTask}
-        @toggle-collapse=${this.toggleCollapse}
-      >
-        <!-- Header: collapse toggle + quick-open -->
+      <div class=${shellClass}>
         <div class="flex items-center border-b border-zinc-800/80 shrink-0 ${isCollapsed ? "justify-center" : "h-[50px] px-2 gap-1"}">
           ${isCollapsed ? html`
-            <!-- Collapsed: expand chevron + search icon -->
             <div class="flex flex-col items-center gap-1 py-1">
               <button
                 class="relative p-2 text-zinc-400 hover:text-zinc-200 cursor-pointer transition-colors"
@@ -302,13 +127,12 @@ export class SessionSidebar extends LitElement {
                 ${chevronRightIcon()}
                 ${this.renderRailBadge()}
               </button>
-              <nav-icon icon="search" label="Search sessions (Cmd+K)" compact @click=${this._openQuickOpen}></nav-icon>
-              <nav-icon icon="settings" label="Settings" compact @click=${this._openSettings}></nav-icon>
+              <nav-icon icon="search" label="Search sessions (Cmd+K)" compact @click=${this.openQuickOpen}></nav-icon>
+              <nav-icon icon="settings" label="Settings" compact @click=${this.openSettings}></nav-icon>
             </div>
           ` : html`
-            <!-- Expanded: search button + settings gear + collapse chevron -->
-            <nav-icon icon="search" label="Search sessions (Cmd+K)" .size=${18} @click=${this._openQuickOpen}></nav-icon>
-            <nav-icon icon="settings" label="Settings" .size=${18} @click=${this._openSettings}></nav-icon>
+            <nav-icon icon="search" label="Search sessions (Cmd+K)" .size=${18} @click=${this.openQuickOpen}></nav-icon>
+            <nav-icon icon="settings" label="Settings" .size=${18} @click=${this.openSettings}></nav-icon>
             <div class="flex-1 min-w-0"></div>
             <button
               class="hidden md:block p-2 rounded-md text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/70 cursor-pointer transition-colors shrink-0"
@@ -320,39 +144,7 @@ export class SessionSidebar extends LitElement {
           `}
         </div>
 
-        <!-- Sidebar content (hidden when collapsed) -->
-        ${!isCollapsed ? html`
-          <!-- Shared dialogs -->
-          <task-form .store=${store}></task-form>
-          <task-detail></task-detail>
-
-          <!-- Scrollable content: project sections -->
-          <div
-            class="flex-1 overflow-y-auto"
-            data-sidebar-scroll-container
-            data-swipe-surface
-          >
-            ${repeat(
-              this.sortedProjects,
-              (project) => project.id,
-              (project) => html`
-                <sidebar-project
-                  .project=${project}
-                  .projectStore=${store?.projectsStore.peekStore(project.id) ?? null}
-                  .expanded=${this.expandedProjects.has(project.id)}
-                  .active=${project.id === store?.projectId}
-                  .activeSessionId=${store?.sessionId ?? ""}
-                  .activityState=${store?.projectsStore.activityForProject(project.id)}
-                ></sidebar-project>
-              `,
-            )}
-
-            ${this.renderOtherSessions()}
-
-            <!-- Add Project at the bottom of the list -->
-            <project-sidebar .store=${store}></project-sidebar>
-          </div>
-        ` : nothing}
+        ${isCollapsed ? nothing : this.renderBody()}
       </div>
     `;
   }

@@ -7,10 +7,12 @@ import { SendHandoff } from "../send-handoff.js";
 import { DecoratorRegistry } from "../../sdk-host/decorators.js";
 import { Extensions } from "../../sdk-host/extensions.js";
 import { SettingsPages } from "../../sdk-host/settings-pages.js";
+import { SidebarSections, type SidebarLayout, type SidebarLayoutStorage } from "../../sdk-host/sidebar-sections.js";
 import { ViewRegistry } from "../../sdk-host/view-registry.js";
 import { Inspector } from "../inspector.js";
 import type { IAppClient } from "../ws-client.js";
 import { SessionOperations } from "../session-operations.js";
+import { api } from "../api.js";
 import { ConversationsStore } from "./conversations-store.js";
 import { NodesStore } from "./nodes-store.js";
 import { LocationSkills } from "./location-skills.js";
@@ -20,6 +22,23 @@ import { SessionCache } from "./session-cache.js";
 import { SettingsStore } from "./settings-store.js";
 
 export type AppStoreListener = () => void;
+
+function isStringList(list: unknown): boolean {
+  return Array.isArray(list) && list.every((item) => typeof item === "string");
+}
+
+function isSidebarLayout(value: unknown): value is SidebarLayout {
+  return typeof value === "object" && value !== null && "order" in value && "hidden" in value && isStringList(value.order) && isStringList(value.hidden);
+}
+
+/** The sidebar's arrangement, as the server's `sidebar_sections` setting. */
+const sidebarLayoutSetting: SidebarLayoutStorage = {
+  load: async () => {
+    const [entry] = await api.settings.list(["sidebar_sections"]);
+    return entry && isSidebarLayout(entry.value) ? entry.value : null;
+  },
+  save: (layout) => api.settings.put("sidebar_sections", layout),
+};
 type Reconciler = () => void | Promise<unknown>;
 
 /**
@@ -40,8 +59,11 @@ export class AppStore {
   readonly commands = new CommandRegistry();
   /** The extensions' Settings pages, which the settings page lists after its own sections. */
   readonly settingsPages = new SettingsPages();
+  /** The sidebar's sections, in the order the user gave them (Settings → Sidebar). */
+  readonly sidebar: SidebarSections;
   /** The frontend extensions app-shell activated, and what each registered in the registries above. */
-  readonly extensions = new Extensions(this);
+  readonly extensions: Extensions;
+  /** When this browser last opened each session: the sidebar's Recent. */
   readonly inspector = new Inspector(this.views);
   /** A message the new session page sent, which the session's chat panel animates into its conversation. */
   readonly sendHandoff = new SendHandoff();
@@ -56,7 +78,9 @@ export class AppStore {
   private removeBrowserResumeHandlers: (() => void) | null = null;
   private serverReconcileInFlight: Promise<void> | null = null;
 
-  constructor(readonly client: IAppClient) {
+  constructor(readonly client: IAppClient, sidebarLayout: SidebarLayoutStorage | null = sidebarLayoutSetting) {
+    this.sidebar = new SidebarSections(sidebarLayout);
+    this.extensions = new Extensions(this);
     this.sessionCache = new SessionCache();
     this.activeConversationsStore = new ConversationsStore({
       sessionCache: this.sessionCache,
@@ -65,7 +89,7 @@ export class AppStore {
     this.sessionOperations = new SessionOperations({ conversations: this.activeConversationsStore });
     this.projectsStore = new ProjectsStore(this.sessionCache, client);
     this.nodesStore = new NodesStore(client);
-    this.settingsStore = new SettingsStore(this.nodesStore, this.extensions);
+    this.settingsStore = new SettingsStore(this.nodesStore, this.extensions, this.sidebar);
     this.files = new ProjectFiles(client, this.sessionCache, this.nodesStore);
 
     this.unsubscribers = [
@@ -133,6 +157,7 @@ export class AppStore {
     await Promise.allSettled([
       this.requestServerReconcile(),
       this.nodesStore.load(),
+      this.sidebar.load(),
       ...[...this.reconcilers].map((reconcile) => Promise.resolve().then(reconcile)),
     ]);
   }

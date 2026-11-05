@@ -1,18 +1,17 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { NodeView } from "@backend/models/node.js";
-import type { ProjectView } from "@backend/routes/projects.js";
-import { ProjectForm, type ProjectFormStore } from "../../components/project-form.js";
-import { ProjectsStore } from "../../models/stores/projects-store.js";
-import { mockFetch, restoreFetch } from "../helpers/mock-fetch.js";
-import { collectTemplateEventListeners, collectTemplateProperties, submitDialog, templateToString } from "../helpers/lit-template.js";
+import type { Project } from "@reins/sdk";
+import { ProjectForm } from "../../../../extensions/sidebar/projects/project-form.js";
+import { makeProject } from "../../../helpers/fixtures.js";
+import { mockFetch, restoreFetch } from "../../../helpers/mock-fetch.js";
+import { testSdk } from "../../../helpers/reins-sdk.js";
+import { collectTemplateEventListeners, collectTemplateProperties, submitDialog, templateToString } from "../../../helpers/lit-template.js";
 
 const node = (id: string, name: string, connected: boolean): NodeView =>
   ({ id, name, connected, paired: id !== "internal", hostname: null, pairedAt: null, revokedAt: null, sources: [], build: null, failure: null });
 const nodes = [node("internal", "Internal", true), node("desktop", "Desktop", true), node("laptop", "Laptop", false)];
-const project: ProjectView = {
-  id: 7, name: "App", base_branch: "main", default_source_id: 3, created_at: "2026-10-01T09:00:00.000Z", last_opened_at: "2026-10-01T09:00:00.000Z",
-  defaultSource: { nodeId: "laptop", path: "/srv/app" },
-};
+const projectView = makeProject(7, "App", { default_source_id: 3, defaultSource: { nodeId: "laptop", path: "/srv/app" } });
+const project: Project = { id: 7, name: "App", activity: null, baseBranch: "main", defaultSource: { nodeId: "laptop", path: "/srv/app" } };
 
 const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } });
 
@@ -26,17 +25,11 @@ afterEach(() => {
   Reflect.set(globalThis, "HTMLSelectElement", originalSelect);
 });
 
-/** The form, its nodes loaded through the projects store from `respond`, opened as `open` says. */
+/** The form, its nodes loaded through the SDK from `respond`, opened as `open` says. */
 async function openForm(respond: (url: string, init?: RequestInit) => Response, open: Parameters<ProjectForm["open"]>[0]) {
   mockFetch(respond);
-  const projects = new ProjectsStore();
   const form = new ProjectForm();
-  const store: ProjectFormStore = {
-    listNodes: () => projects.listNodes(),
-    createProject: (data) => projects.createProject(data),
-    updateProject: (projectId, data) => projects.updateProject(projectId, data),
-  };
-  form.store = store;
+  form.reins = testSdk().reins;
   form.open(open);
   for (let i = 0; i < 20 && Reflect.get(form, "nodes") === null; i++) await Bun.sleep(1);
   return form;
@@ -69,7 +62,7 @@ describe("ProjectForm: the project's default source", () => {
     const posts: unknown[] = [];
     const form = await openForm((url, init) => {
       if (url === "/api/nodes") return json(nodes);
-      if (url === "/api/projects" && init?.method === "POST") { posts.push(JSON.parse(String(init.body))); return json({ ...project, id: 8 }, 201); }
+      if (url === "/api/projects" && init?.method === "POST") { posts.push(JSON.parse(String(init.body))); return json({ ...projectView, id: 8 }, 201); }
       return json([]);
     }, { mode: "create" });
 
@@ -86,7 +79,7 @@ describe("ProjectForm: the project's default source", () => {
     const patches: unknown[] = [];
     const respond = (url: string, init?: RequestInit) => {
       if (url === "/api/nodes") return json(nodes);
-      if (url === "/api/projects/7" && init?.method === "PATCH") { patches.push(JSON.parse(String(init.body))); return json(project); }
+      if (url === "/api/projects/7" && init?.method === "PATCH") { patches.push(JSON.parse(String(init.body))); return json(projectView); }
       return json([]);
     };
     const unchanged = await openForm(respond, { mode: "edit", project });

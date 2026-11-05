@@ -10,6 +10,7 @@ import { useFakeModel } from "../helpers/fake-model.js";
 import { until } from "../helpers/session-host.js";
 import { makeRequest } from "../helpers/request.js";
 import { createProject } from "../project-fixture.js";
+import { createSession, updateActivityState } from "../session-fixture.js";
 import { createTask } from "../../task-store.js";
 import { getDb } from "../../app-globals.js";
 import { upsertSource } from "../../node-store.js";
@@ -65,13 +66,15 @@ describe("reins.sessions", () => {
     expect(await automation.sessions.get(sessionId)).toMatchObject({
       id: sessionId, source: { nodeId: "internal", path: dir }, projectId: null, taskId: null, background: true, running: true, startedBy: "automation", archivedAt: null, lastRunId: null,
     });
+    const startedWhileRunning = (await automation.sessions.get(sessionId)).lastRunStartedAt;
+    expect(startedWhileRunning).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     const turn = await model.nextTurn(sessionId);
     expect(turn.input).toBe("Morning heartbeat");
     turn.finish({ reply: "All quiet" });
     await until(() => settled.automation!.length > 0, "the run settled");
 
     expect(settled).toEqual({ automation: [{ sessionId, status: "completed", result: "All quiet", error: null }], other: [] });
-    expect(await automation.sessions.get(sessionId)).toMatchObject({ running: false });
+    expect(await automation.sessions.get(sessionId)).toMatchObject({ running: false, lastRunStartedAt: startedWhileRunning });
     expect(inputs(sessionId)).toEqual([{ text: "Morning heartbeat", metadata: { sourceExtension: "automation" } }]);
   });
 
@@ -190,6 +193,39 @@ describe("reins.sessions", () => {
     expect(await refusal("Hello", [1])).toBe("Metadata must be a plain object");
     expect(await refusal("Hello", { big: "x".repeat(70_000) })).toBe("Metadata must be at most 65536 bytes of JSON");
     expect(storedInputs(sessionId)).toHaveLength(1);
+  });
+
+  test("lists the sessions the browser lists, of every project, the latest change first, a page at a time, with their first message and unread", async () => {
+    const project = createProject("Project", dir);
+    for (const id of ["older", "newer", "archived", "hidden"]) createSession(id, project.id, { agentRuntimeType: "pi" });
+    const setUpdated = (id: string, at: string) => getDb().query("UPDATE sessions SET updated_at = ? WHERE id = ?").run(at, id);
+    setUpdated("older", "2026-01-01T00:00:00.000Z");
+    setUpdated("newer", "2026-01-02T00:00:00.000Z");
+    getDb().query("UPDATE sessions SET archived_at = '2026-01-03T00:00:00.000Z' WHERE id = 'archived'").run();
+    getDb().query("UPDATE sessions SET background = 1 WHERE id = 'hidden'").run();
+    updateActivityState("older", "finished");
+    getDb().query(`INSERT INTO session_messages (session_id, seq, role, message_json) VALUES ('newer', 1, 'reinsInput', ?)`)
+      .run(JSON.stringify({ message: { role: "reinsInput", content: [{ type: "text", text: "Fix the build" }] } }));
+
+    const pages = [await automation.sessions.list({ limit: 1 }), await automation.sessions.list({ limit: 1, offset: 1 }), await automation.sessions.list({ offset: 2 })];
+
+    expect(pages.map(page => page.map(({ id, firstMessage, unread }) => ({ id, firstMessage, unread })))).toEqual([
+      [{ id: "newer", firstMessage: "Fix the build", unread: false }],
+      [{ id: "older", firstMessage: null, unread: true }],
+      [],
+    ]);
+    await expect(automation.sessions.list({ limit: 0 })).rejects.toThrow("limit must be an integer from 1 to 200");
+  });
+
+  test("reads projects and tasks, and refuses ones the server does not have", async () => {
+    const project = createProject("Project", dir);
+    const task = createTask(project.id, "Ship it", null, "task/ship-it");
+    getDb().query("UPDATE tasks SET closed_at = '2026-01-03T00:00:00.000Z' WHERE id = ?").run(task.id);
+
+    expect(await automation.projects.get(project.id)).toEqual({ id: project.id, name: "Project" });
+    expect(await automation.tasks.get(task.id)).toMatchObject({ id: task.id, projectId: project.id, title: "Ship it", closedAt: "2026-01-03T00:00:00.000Z" });
+    await expect(automation.projects.get(999)).rejects.toThrow("Project not found: 999");
+    await expect(automation.tasks.get(999)).rejects.toThrow("Task not found: 999");
   });
 
   test("refuses a session the server does not have", async () => {

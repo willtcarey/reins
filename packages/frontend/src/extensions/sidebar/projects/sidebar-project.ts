@@ -1,61 +1,54 @@
 import { LitElement, html, nothing } from "lit";
 import { customElement, property, query } from "lit/decorators.js";
-import { StoreController } from "../controllers/store-controller.js";
-import { springCollapse } from "../directives/spring-collapse.js";
-import type { ActivityState } from "../models/stores/session-cache.js";
-import type { ProjectStore } from "../models/stores/project-store.js";
-import type { ProjectView as ProjectInfo } from "@backend/routes/projects.js";
-import { navigateToProjectHistory } from "../routing/app-router.js";
+import type { Project, ReinsSdk, SessionSummary } from "@reins/sdk";
+import { springCollapse } from "../../../directives/spring-collapse.js";
 import {
   newSessionEvent,
   projectEvent,
   type ProjectEventName,
   type MoveSessionDetail,
-  type RenameSessionDetail,
-  type SaveSessionNameDetail,
-} from "./events.js";
-import { conversationIcon, folderIcon, plusIcon } from "../ui/icons.js";
+} from "../../../components/events.js";
+import { conversationIcon, folderIcon, plusIcon } from "../../../ui/icons.js";
+import { statusDot } from "../../../ui/status-dot.js";
+import type { LocationDialog } from "../../../components/location-dialog.js";
 import {
   createTaskListDisclosureState,
   type TaskListDisclosureState,
 } from "./task-list.js";
-import "../ui/popover-menu.js";
-import type { SessionRenameDialog } from "./session-rename-dialog.js";
-import type { LocationDialog } from "./location-dialog.js";
+import { SubscriptionsController } from "../../../controllers/subscriptions-controller.js";
+import "../../../ui/popover-menu.js";
 import "./session-list-item.js";
-import "./location-dialog.js";
-import "./session-rename-dialog.js";
+import "../../../components/location-dialog.js";
 import "./task-list.js";
-import { statusDot } from "../ui/status-dot.js";
 
+const errorMessage = (error: unknown) => error instanceof Error ? error.message : String(error);
+
+/** A project in the Projects section: its row (activity, menu) and, while expanded, its assistant's
+ * conversations and its tasks, read from the SDK. */
 @customElement("sidebar-project")
 export class SidebarProject extends LitElement {
   override createRenderRoot() {
     return this;
   }
 
-  @property({ attribute: false }) project!: ProjectInfo;
-
-  private projectStoreController = new StoreController<ProjectStore>(this);
-
-  @property({ attribute: false })
-  set projectStore(store: ProjectStore | null) {
-    this.projectStoreController.store = store;
-  }
-
-  get projectStore(): ProjectStore | null {
-    return this.projectStoreController.store;
-  }
-
+  @property({ attribute: false }) project!: Project;
+  @property({ attribute: false }) reins: ReinsSdk | null = null;
   @property({ type: Boolean }) expanded = false;
   @property({ type: Boolean }) active = false;
   @property({ type: String }) activeSessionId = "";
-  @property({ attribute: false }) activityState: ActivityState | undefined = undefined;
 
-  @query("session-rename-dialog") private sessionRenameDialog!: SessionRenameDialog;
   @query("location-dialog") private moveDialog!: LocationDialog;
 
   private taskListDisclosureState: TaskListDisclosureState = createTaskListDisclosureState();
+
+  constructor() {
+    super();
+    // Its conversations and whether its tasks loaded; the project itself comes from the section.
+    const mine = ({ projectIds }: { projectIds: readonly (number | null)[] }) => {
+      if (projectIds.includes(this.project.id)) this.requestUpdate();
+    };
+    new SubscriptionsController(this, () => this.reins, (reins) => [reins.sessions.onDidChange(mine), reins.tasks.onDidChange(mine)]);
+  }
 
   override willUpdate(changed: Map<string, unknown>) {
     const previousProject = changed.get("project");
@@ -69,6 +62,11 @@ export class SidebarProject extends LitElement {
     }
   }
 
+  /** Any loaded session of the project: its conversations, its tasks' and their delegates'. */
+  private findSession(sessionId: string): SessionSummary | undefined {
+    return this.reins?.sessions.list({ projectId: this.project.id }).find((session) => session.id === sessionId);
+  }
+
   private dispatchProjectEvent(name: ProjectEventName) {
     this.dispatchEvent(projectEvent(name, this.project));
   }
@@ -77,37 +75,29 @@ export class SidebarProject extends LitElement {
     this.dispatchEvent(newSessionEvent(this.project.id));
   }
 
-  private handleRenameSession(event: CustomEvent<RenameSessionDetail>) {
-    event.stopPropagation();
-    const session = this.projectStore?.getSession(event.detail.sessionId);
-    if (session) this.sessionRenameDialog?.open(session);
-  }
-
   private handleMoveSession(event: CustomEvent<MoveSessionDetail>) {
     event.stopPropagation();
-    const store = this.projectStore;
-    const session = store?.getSession(event.detail.sessionId);
-    if (!store || !session) return;
+    const reins = this.reins;
+    const session = this.findSession(event.detail.sessionId);
+    if (!reins || !session) return;
     void this.moveDialog?.open({
       heading: "Move Session",
       subtitle: session.name || session.firstMessage || "Empty session",
       confirmLabel: "Move",
       busyLabel: "Moving…",
-      loadTargets: () => store.loadMoveTargets(session.id),
-      choose: (nodeId, path) => store.moveSession(session.id, nodeId, path),
+      loadTargets: () => reins.sessions.moveTargets(session.id).then(
+        (targets) => targets.map((target) => ({ ...target, paths: [...target.paths] })),
+        (error: unknown) => ({ error: errorMessage(error) }),
+      ),
+      choose: (nodeId, path) => reins.sessions.move(session.id, { nodeId, path }).then(
+        () => ({ ok: true as const }),
+        (error: unknown) => ({ error: errorMessage(error) }),
+      ),
     });
   }
 
-  private async handleSaveSessionName(event: CustomEvent<SaveSessionNameDetail>) {
-    event.stopPropagation();
-    const result = await this.projectStore?.updateSessionMetadata(event.detail.sessionId, {
-      name: event.detail.name,
-    }) ?? { error: "Project is unavailable" };
-    this.sessionRenameDialog?.saveComplete("error" in result ? result.error : undefined);
-  }
-
-  private renderScratchSessions() {
-    const sessions = this.projectStore?.sessions ?? [];
+  private renderScratchSessions(reins: ReinsSdk) {
+    const sessions = reins.sessions.list({ projectId: this.project.id, taskId: null });
 
     return html`
       <div class="flex items-center px-3 pt-3 pb-1">
@@ -128,14 +118,7 @@ export class SidebarProject extends LitElement {
               .session=${session}
               .active=${session.id === this.activeSessionId}
               .activeSessionId=${this.activeSessionId}
-              .onSetSessionUnread=${(sessionId: string, unread: boolean) => (
-                this.projectStore?.setSessionUnread(sessionId, unread)
-                  ?? Promise.resolve({ error: "Project is unavailable" })
-              )}
-              .onUpdateMetadata=${(sessionId: string, updates: { name?: string | null; pinned?: boolean; archived?: boolean }) => (
-                this.projectStore?.updateSessionMetadata(sessionId, updates)
-                  ?? Promise.resolve({ error: "Project is unavailable" })
-              )}
+              .sessions=${reins.sessions}
             ></session-list-item>
           `)}
         </div>
@@ -152,10 +135,27 @@ export class SidebarProject extends LitElement {
   }
 
   private renderActivityDot() {
-    if (!this.activityState) return nothing;
-    return this.activityState === "running"
+    const { activity } = this.project;
+    if (!activity) return nothing;
+    return activity === "running"
       ? statusDot("success", { label: "Running", pulse: true })
       : statusDot("warning", { label: "New activity" });
+  }
+
+  private renderBody(reins: ReinsSdk | null) {
+    if (!reins) return nothing;
+    // Asking for its tasks loads the project the first time it expands.
+    reins.tasks.list(this.project.id);
+    if (!reins.tasks.loaded(this.project.id)) return html`<div class="px-3 py-2 text-[10px] text-zinc-500">Loading...</div>`;
+    return html`
+      ${this.renderScratchSessions(reins)}
+      <task-list
+        .projectId=${this.project.id}
+        .reins=${reins}
+        .activeSessionId=${this.activeSessionId}
+        .disclosureState=${this.taskListDisclosureState}
+      ></task-list>
+    `;
   }
 
   override render() {
@@ -165,13 +165,12 @@ export class SidebarProject extends LitElement {
     return html`
       <div
         class="px-1.5 py-0.5"
-        @rename-session=${this.handleRenameSession}
         @move-session=${this.handleMoveSession}
-        @save-session-name=${this.handleSaveSessionName}
       >
         <div class="flex items-center rounded-md overflow-hidden transition-colors group/project relative z-10 ${this.active ? "bg-zinc-800/70" : "hover:bg-zinc-800/70"} ${this.expanded ? "shadow-[0_4px_6px_-2px_rgba(0,0,0,0.5)]" : ""}">
           <button
             class="flex-1 min-w-0 flex items-center gap-2 px-3 py-2 cursor-pointer text-left"
+            aria-expanded=${this.expanded ? "true" : "false"}
             @click=${() => this.dispatchProjectEvent("toggle-project")}
           >
             <span class="text-zinc-500 text-[10px] shrink-0">${this.expanded ? "▼" : "▶"}</span>
@@ -185,7 +184,7 @@ export class SidebarProject extends LitElement {
             .content=${() => html`
               <button
                 class="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 cursor-pointer transition-colors"
-                @click=${() => navigateToProjectHistory(project.id)}
+                @click=${() => this.reins?.workspace.open({ view: "project-history", projectId: project.id }, { in: "main" })}
               >History</button>
               <button
                 class="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 cursor-pointer transition-colors"
@@ -201,22 +200,10 @@ export class SidebarProject extends LitElement {
 
         ${springCollapse(!this.expanded, () => html`
           <div class="mt-1 rounded-lg bg-black/25 border border-zinc-800/80 overflow-hidden shadow-[inset_0_6px_8px_-4px_rgba(0,0,0,0.6),inset_0_-6px_8px_-4px_rgba(0,0,0,0.6)]">
-            ${this.projectStore?.loading && !this.projectStore.loaded ? html`
-              <div class="px-3 py-2 text-[10px] text-zinc-500">Loading...</div>
-            ` : html`
-              ${this.renderScratchSessions()}
-
-              <task-list
-                .projectId=${project.id}
-                .projectStore=${this.projectStore}
-                .activeSessionId=${this.activeSessionId}
-                .disclosureState=${this.taskListDisclosureState}
-              ></task-list>
-            `}
+            ${this.renderBody(this.reins)}
           </div>
         `)}
 
-        <session-rename-dialog></session-rename-dialog>
         <location-dialog></location-dialog>
       </div>
     `;

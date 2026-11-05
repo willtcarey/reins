@@ -7,10 +7,10 @@
 
 import { LitElement, html, nothing } from "lit";
 import { customElement, state } from "lit/decorators.js";
-import type { TaskWithDiffStats as TaskListItem } from "@backend/models/tasks.js";
-import { dialogButton } from "../ui/dialog.js";
-import { saveTaskEvent } from "./events.js";
-import { showToast } from "../ui/toast.js";
+import type { Task } from "@reins/sdk";
+import { dialogButton } from "../../../ui/dialog.js";
+import { saveTaskEvent } from "../../../components/events.js";
+import { showToast } from "../../../ui/toast.js";
 
 @customElement("task-detail")
 export class TaskDetail extends LitElement {
@@ -19,14 +19,14 @@ export class TaskDetail extends LitElement {
   }
 
   @state() private isOpen = false;
-  @state() private task: TaskListItem | null = null;
+  @state() private task: Task | null = null;
   @state() private taskTitle = "";
   @state() private description = "";
   @state() private saving = false;
   @state() private dirty = false;
 
   /** Open the dialog for a given task. */
-  open(task: TaskListItem) {
+  open(task: Task) {
     this.task = task;
     this.taskTitle = task.title;
     this.description = task.description ?? "";
@@ -99,7 +99,7 @@ export class TaskDetail extends LitElement {
 
           ${task ? html`
             <div class="mt-3 text-[10px] text-zinc-500">
-              Branch: <span class="font-mono text-zinc-400">${task.branch_name}</span>
+              Branch: <span class="font-mono text-zinc-400">${task.branchName}</span>
             </div>
           ` : nothing}
         `}

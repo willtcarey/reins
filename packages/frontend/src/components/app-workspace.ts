@@ -17,7 +17,7 @@ import {
   type WorkspacePane,
 } from "../models/workspace-pages.js";
 import { folderIcon } from "../ui/icons.js";
-import { openFileSearchEvent, type MainPaneSelectDetail } from "./events.js";
+import { mainViewChangeEvent, openFileSearchEvent, type MainPaneSelectDetail } from "./events.js";
 import type { ReviewDiffPanel } from "./changes/review-diff-panel.js";
 import "./app-main-toolbar.js";
 import "./chat-panel.js";
@@ -173,6 +173,15 @@ export class AppWorkspace extends LitElement {
     this.observedProjectId = store.projectId;
   }
 
+  protected override updated(): void {
+    this.dispatchEvent(mainViewChangeEvent());
+  }
+
+  /** Brings the main area's page forward on a phone: opening a view there shows it, even the one shown already. */
+  revealMain(): void {
+    if (this.viewport.isMobileLayout) this.activePane = "chat";
+  }
+
   private handleGlobalKeydown = (event: KeyboardEvent) => {
     if (!(event.metaKey || event.ctrlKey) || event.key !== "p") return;
     const source = this.store?.source;
@@ -229,10 +238,9 @@ export class AppWorkspace extends LitElement {
     return html`
       <session-sidebar
         class="block h-full"
-        .store=${store}
+        .app=${store.app}
         .collapsed=${this.layout.sessionsCollapsed}
         .onToggleCollapse=${() => { this.layout.toggleSessions(); this.requestUpdate(); }}
-        @select-session=${() => { this.activePane = "chat"; }}
       ></session-sidebar>
     `;
   }

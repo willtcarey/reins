@@ -458,6 +458,25 @@ export function clearFinishedActivityForTasks(taskIds: number[]): string[] {
   return sessionIds;
 }
 
+/** The IDs of the sessions the browser lists (not archived, not background), of any project, the latest change first. */
+export function latestSessionIds(limit: number, offset = 0): string[] {
+  return getDb()
+    .query<{ id: string }, [number, number]>("SELECT id FROM sessions WHERE archived_at IS NULL AND background = 0 ORDER BY updated_at DESC, rowid DESC LIMIT ? OFFSET ?")
+    .all(limit, offset)
+    .map((row) => row.id);
+}
+
+/** The text of the session's first input (as lists show it), or null before it has one. */
+export function firstMessage(sessionId: string): string | null {
+  const row = getDb()
+    .query<{ text: string | null }, [string]>(
+      `SELECT json_extract(message_json, '$.message.content[0].text') AS text FROM session_messages
+       WHERE session_id = ? AND role = 'reinsInput' AND json_valid(message_json) ORDER BY seq LIMIT 1`,
+    )
+    .get(sessionId);
+  return stripLeadingSkillBlocks(row?.text ?? null);
+}
+
 /**
  * Sessions with activity for session activity snapshots: the unread ones and the running ones
  * (`liveActivityState`); background sessions are left out. Closed tasks are not: their sessions only
