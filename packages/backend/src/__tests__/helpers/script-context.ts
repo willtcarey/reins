@@ -1,7 +1,7 @@
 import { Models } from "../../models/models.js";
 import { upsertSource, defaultSource } from "../../node-store.js";
 import { createSession, getSession } from "../../session-store.js";
-import type { ApiContext } from "../../scripting/define-function.js";
+import type { ApiContext } from "../../sdk-host/projection.js";
 import type { SessionInstance } from "../../sessions/session-instance.js";
 import type { AppState } from "../../state.js";
 import { SEEDED_NODE_ID } from "./loopback-node.js";

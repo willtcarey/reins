@@ -8,8 +8,7 @@ import { getDb } from "../../app-globals.js";
 import { type Project } from "../../project-store.js";
 import { createProject } from "../project-fixture.js";
 import { createSession } from "../session-fixture.js";
-import { sessionsCompactFunction } from "../../scripting/sessions.js";
-import type { ApiContext } from "../../scripting/define-function.js";
+import { buildApiObject } from "../../sdk-host/scripts.js";
 import { scriptContext } from "../helpers/script-context.js";
 
 const storedRoles = (sessionId: string) => getDb()
@@ -23,10 +22,7 @@ describe("sessions.compact", () => {
 
   beforeEach(() => { project = createProject("Test Project", "/tmp/test-project", "main"); });
 
-  function makeCtx(): ApiContext {
-    const state = createAppState();
-    return scriptContext(state, { sessionId: "ctx-session", projectId: project.id });
-  }
+  const reins = () => buildApiObject(scriptContext(createAppState(), { sessionId: "ctx-session", projectId: project.id }));
 
   test("compacts a session of the current project with the given instructions", async () => {
     createSession("idle", project.id, { agentRuntimeType: "pi", modelProvider: model.model.provider, modelId: model.model.modelId });
@@ -35,7 +31,7 @@ describe("sessions.compact", () => {
       { role: "assistant", content: [{ type: "text", text: "Here is a plan" }], timestamp: 2 },
     ]);
 
-    expect(await sessionsCompactFunction.execute({ sessionId: "idle", instructions: "Keep the endpoint names" }, makeCtx())).toEqual({ sessionId: "idle" });
+    expect(await reins().sessions.compact("idle", { instructions: "Keep the endpoint names" })).toBeUndefined();
 
     const summary = await model.nextSummary();
     expect(JSON.stringify(summary.context)).toContain("Keep the endpoint names");
@@ -51,7 +47,7 @@ describe("sessions.compact", () => {
       { role: "assistant", content: [{ type: "text", text: "Hi" }], timestamp: 2 },
     ]);
 
-    expect(await sessionsCompactFunction.execute({ sessionId: "elsewhere" }, makeCtx())).toEqual({ sessionId: "elsewhere" });
+    expect(await reins().sessions.compact("elsewhere")).toBeUndefined();
 
     (await model.nextSummary()).finish({ reply: "A greeting" });
     await until(() => storedRoles("elsewhere").at(-1) === "compaction", "the compaction was committed");

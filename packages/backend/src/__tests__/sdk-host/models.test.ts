@@ -1,18 +1,24 @@
 /**
- * Tests for the models scripting API functions.
+ * Tests for reins.models.
  */
 
 import { describe, test, expect } from "bun:test";
 import { useTestDb } from "../helpers/test-db.js";
 import { createAppState } from "../helpers/app-state.js";
 import { setApiKeyCredential } from "../../auth-credentials-store.js";
-import { modelsListFunction, modelsListProvidersFunction } from "../../scripting/models.js";
-import type { ApiContext } from "../../scripting/define-function.js";
+import { Type } from "@sinclair/typebox";
+import { Value } from "@sinclair/typebox/value";
+import { buildApiObject } from "../../sdk-host/scripts.js";
+import { ProviderInfoSchema } from "../../sdk-host/models.js";
 import { scriptContext } from "../helpers/script-context.js";
 
-
-function makeCtx(): ApiContext {
-  return scriptContext(createAppState());
+/** A script's `reins.models`. */
+function makeCtx() {
+  const reins = buildApiObject(scriptContext(createAppState()));
+  return {
+    list: async () => Value.Parse(Type.Array(ProviderInfoSchema), await reins.models.list()),
+    listProviders: async () => Value.Parse(Type.Array(Type.String()), await reins.models.listProviders()),
+  };
 }
 
 describe("models.list", () => {
@@ -20,7 +26,7 @@ describe("models.list", () => {
 
   test("returns expected shape", async () => {
     const ctx = makeCtx();
-    const result = await modelsListFunction.execute({}, ctx);
+    const result = await ctx.list();
 
     expect(Array.isArray(result)).toBe(true);
     expect(result.length).toBeGreaterThan(0);
@@ -36,7 +42,7 @@ describe("models.list", () => {
 
   test("includes anthropic provider with models", async () => {
     const ctx = makeCtx();
-    const result = await modelsListFunction.execute({}, ctx);
+    const result = await ctx.list();
 
     const anthropic = result.find((p) => p.provider === "anthropic");
     expect(anthropic).toBeDefined();
@@ -54,7 +60,7 @@ describe("models.list", () => {
     const ctx = makeCtx();
     setApiKeyCredential("anthropic", "sk-test-key");
 
-    const result = await modelsListFunction.execute({}, ctx);
+    const result = await ctx.list();
     const anthropic = result.find((p) => p.runtimeType === "pi" && p.provider === "anthropic");
     expect(anthropic!.isAvailable).toBe(true);
     expect(anthropic!.availabilitySource).toBe("db");
@@ -62,7 +68,7 @@ describe("models.list", () => {
 
   test("does not advertise the inert Claude SDK runtime", async () => {
     const ctx = makeCtx();
-    const result = await modelsListFunction.execute({}, ctx);
+    const result = await ctx.list();
 
     const claudeProvider = result.find((p) => p.runtimeType === "claude_agent_sdk" && p.provider === "claude_agent_sdk");
     expect(claudeProvider).toBeUndefined();
@@ -74,7 +80,7 @@ describe("models.listProviders", () => {
 
   test("returns string array of provider names", async () => {
     const ctx = makeCtx();
-    const result = await modelsListProvidersFunction.execute({}, ctx);
+    const result = await ctx.listProviders();
 
     expect(Array.isArray(result)).toBe(true);
     expect(result.length).toBeGreaterThan(0);

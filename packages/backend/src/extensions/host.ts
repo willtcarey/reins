@@ -1,31 +1,38 @@
 /**
  * The host of backend extensions (docs/dev/server-sdk.md): what one app's extensions registered through the
  * server SDK (`@reins/sdk/server`), and the SDK object each one gets. `createAppState` builds one and
- * registers the extensions; the app's `stop` disposes it. The core reads it: `api.tools` (`searchTools`,
- * `callTool`), `api.images` (`imageProviders`), `api.<namespace>` (`scriptFunctions`), the system prompt (`promptSections`) and
+ * registers the extensions; the app's `stop` disposes it. The core reads it: `reins.tools` (`searchTools`,
+ * `callTool`), `reins.images` (`imageProviders`), `reins.<namespace>` (`scriptFunctions`), the system prompt (`promptSections`) and
  * `/api/extensions/…` and `/extensions/…` (`handle`), and Settings' Extensions section (`list`).
  */
 
-import { KindGuard, type TObject, type TProperties, type TSchema } from "@sinclair/typebox";
+import { KindGuard, type TSchema } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 import type {
-  Database, Disposer, HttpApi, HttpCall, ImagesProvider, Logger, Migration, PageHandler, PromptContext, PromptContribution, ScriptFunction, ScriptType, SecretStorage, ServerExtension, ServerSdk,
-  Service, SessionSettlement, ToolFilters, ToolResult, ToolProvider,
+  Database, Disposer, HttpApi, HttpCall, ImagesProvider, Logger, Migration, PageHandler, PromptContext, PromptContribution, ScriptContext, ScriptNamespace, SecretStorage, ServerExtension, ServerSdk,
+  Service, SessionSettlement, ToolFilters, ToolResult, ToolProvider, ToolSearchGroup,
 } from "@reins/sdk/server";
 import { statSync } from "fs";
 import type { ExtensionStorage } from "../database.js";
-import type { ApiFunctionDef } from "../scripting/define-function.js";
-import type { NamedType } from "../scripting/api-registry.js";
+import { scriptFunctions, scriptTypes, type ApiContext, type ScriptFunction } from "../sdk-host/projection.js";
+import type { NamedType } from "../sdk-host/scripts.js";
 import type { AppState, SessionSettledNotice } from "../state.js";
-import { ExtensionSessions } from "./sessions.js";
-import { ExtensionNodes } from "./nodes.js";
-import { ExtensionProjects, ExtensionTasks } from "./projects.js";
 import { createBroadcast } from "../models/broadcast.js";
 import { requestOrigin } from "../nodes/node-link.js";
 import { logger } from "../logger.js";
 import { deleteExtensionSecret, extensionSecretKeys, getExtensionSecret, setExtensionSecret } from "../extension-secrets-store.js";
-import { matchTools, type ToolSearchGroup } from "./tool-docs.js";
+import { matchTools } from "./tool-docs.js";
 import { ServiceRunner, type ServiceView } from "./services.js";
+import { Models } from "../models/models.js";
+import { bind, type CallContext } from "../sdk-host/declaration.js";
+import { TOOLS } from "../sdk-host/tools.js";
+import { SESSIONS } from "../sdk-host/sessions.js";
+import { PROJECTS, TASKS } from "../sdk-host/projects.js";
+import { NODES } from "../sdk-host/nodes.js";
+import { IMAGES } from "../sdk-host/images.js";
+import { UI } from "../sdk-host/ui.js";
+import { MODELS } from "../sdk-host/models.js";
+import { REVIEWS } from "../sdk-host/reviews.js";
 
 /** A backend extension as the server registers it: its name, its migrations and its register function. */
 export interface ExtensionRegistration extends ServerExtension { name: string }
@@ -40,7 +47,7 @@ const LOCAL_ID = /^[a-zA-Z0-9_-]+$/;
 
 export class UnknownToolError extends Error {
   constructor(id: string) {
-    super(`Unknown tool: ${id}. Find tools with api.tools.search(query).`);
+    super(`Unknown tool: ${id}. Find tools with reins.tools.search(query).`);
     this.name = "UnknownToolError";
   }
 }
@@ -59,7 +66,7 @@ interface Method {
   // Its input type is the method's schema's, which the host checks each input against before the call.
   handler: (call: HttpCall<any>) => unknown;
 }
-interface Script { extension: string; namespace: string; functions: ApiFunctionDef[]; types: NamedType[] }
+interface Script { extension: string; namespace: string; functions: ScriptFunction[]; types: NamedType[] }
 interface RegisteredService { extension: string; runner: ServiceRunner }
 interface SettlementListener { extension: string; listener: (settlement: SessionSettlement) => void | Promise<void> }
 
@@ -113,21 +120,6 @@ export interface ExtensionView {
   } | null;
 }
 
-// The core's registry and renderer are typed with TypeBox but read only JSON Schema fields, so any JSON
-// Schema object works there. The check is at runtime because an extension without TypeScript can give anything.
-function isSchema(schema: unknown): schema is TSchema {
-  return typeof schema === "object" && schema !== null && !Array.isArray(schema);
-}
-
-function isObjectSchema(schema: unknown): schema is TObject<TProperties> {
-  return isSchema(schema) && "type" in schema && schema.type === "object";
-}
-
-function schemaOf(name: string, schema: unknown): TSchema {
-  if (!isSchema(schema)) throw new Error(`${name}: not a JSON Schema object`);
-  return schema;
-}
-
 export class ExtensionHost {
   /** Each extension's tool provider. */
   private readonly providers: { extension: string; provider: ToolProvider }[] = [];
@@ -144,7 +136,7 @@ export class ExtensionHost {
 
   /** `app`: the app the host is of, read when an extension registers (the host is built with it): its process
    * has each extension's directory and database and the broadcast, and its sessions and nodes are what
-   * `reins.sessions` and `reins.nodes` reach. `reservedNamespaces`: the core's `api` namespaces, which no
+   * `reins.sessions` and `reins.nodes` reach. `reservedNamespaces`: the core's script namespaces, which no
    * extension may take. `onError`: what an extension's failure to register or dispose is told to. */
   constructor(
     private readonly app: () => AppState,
@@ -283,8 +275,8 @@ export class ExtensionHost {
     return entry.provider.call(localId, args, options);
   }
 
-  /** The extensions' `api` functions, as the core's registry holds functions. */
-  scriptFunctions(): ApiFunctionDef[] {
+  /** The extensions' script functions, as the core's registry holds functions. */
+  scriptFunctions(): ScriptFunction[] {
     return this.scripts.flatMap(script => script.functions);
   }
 
@@ -403,6 +395,8 @@ export class ExtensionHost {
       return () => { for (const remove of removals) void remove(); };
     };
     const broadcast = createBroadcast(this.app().process);
+    // Each call gets the app's models of that moment, as the extension acts as no session.
+    const context = (): CallContext => ({ models: new Models(this.app()), caller: { kind: "extension", name } });
     return Object.freeze({
       name,
       dataDir,
@@ -411,6 +405,7 @@ export class ExtensionHost {
       secrets: secretStorage(name),
       broadcast: (message: object) => broadcast({ type: "extension", extension: name, message }),
       tools: Object.freeze({
+        ...bind(TOOLS.methods, context),
         register: (provider: ToolProvider) => {
           if (this.providers.some(entry => entry.extension === name)) {
             throw new Error("An extension registers one tool provider: remove the one it has first");
@@ -421,6 +416,7 @@ export class ExtensionHost {
         match: matchTools,
       }),
       images: Object.freeze({
+        ...bind(IMAGES.methods, context),
         registerProvider: (provider: ImagesProvider) => {
           if (this.imageProviders.has(name)) throw new Error("An extension registers one image provider at a time");
           this.imageProviders.set(name, provider);
@@ -430,19 +426,24 @@ export class ExtensionHost {
         },
       }),
       services: Object.freeze({ register: registerService }),
-      sessions: Object.freeze(new ExtensionSessions(this.app(), name, listener => {
-        if (typeof listener !== "function") throw new Error("A settlement listener is a function");
-        return add(this.settlementListeners, { extension: name, listener });
-      })),
-      nodes: Object.freeze(new ExtensionNodes(this.app())),
-      projects: Object.freeze(new ExtensionProjects()),
-      tasks: Object.freeze(new ExtensionTasks()),
+      sessions: Object.freeze({
+        ...bind(SESSIONS.methods, context),
+        onSettled: (listener: (settlement: SessionSettlement) => void | Promise<void>) => {
+          if (typeof listener !== "function") throw new Error("A settlement listener is a function");
+          return add(this.settlementListeners, { extension: name, listener });
+        },
+      }),
+      nodes: Object.freeze(bind(NODES.methods, context)),
+      ui: Object.freeze(bind(UI.methods, context)),
+      models: Object.freeze(bind(MODELS.methods, context)),
+      reviews: Object.freeze(bind(REVIEWS.methods, context)),
+      projects: Object.freeze(bind(PROJECTS.methods, context)),
+      tasks: Object.freeze(bind(TASKS.methods, context)),
       prompt: Object.freeze({
         register: (contribution: PromptContribution) => add(this.contributions, { extension: name, contribution }),
       }),
       scripting: Object.freeze({
-        register: ({ functions, types = [] }: { functions: readonly ScriptFunction[]; types?: readonly ScriptType[] }) =>
-          add(this.scripts, this.script(name, functions, types)),
+        register: (namespace: ScriptNamespace) => add(this.scripts, this.script(name, namespace)),
       }),
       http: Object.freeze({
         handle: handleApi,
@@ -455,28 +456,21 @@ export class ExtensionHost {
     });
   }
 
-  /** An extension's functions in the core's form; throws when their namespace is taken. */
-  private script(extension: string, functions: readonly ScriptFunction[], types: readonly ScriptType[]): Script {
-    const namespaces = new Set(functions.map(fn => fn.name.split(".")[0]!));
-    if (namespaces.size !== 1) throw new Error("A registration's functions must share one api namespace");
-    const namespace = [...namespaces][0]!;
-    if (this.reservedNamespaces.has(namespace) || this.scripts.some(script => script.namespace === namespace)) {
-      throw new Error(`The api namespace ${namespace} is taken`);
+  /** An extension's namespace as script functions (`scriptFunctions`), each called for the script's session;
+   * throws when its namespace is taken, or the projection cannot use it. */
+  private script(extension: string, namespace: ScriptNamespace): Script {
+    if (typeof namespace?.namespace !== "string") throw new Error("A script namespace needs its name (namespace)");
+    if (this.reservedNamespaces.has(namespace.namespace) || this.scripts.some(script => script.namespace === namespace.namespace)) {
+      throw new Error(`The script namespace ${namespace.namespace} is taken`);
     }
-    return {
-      extension,
-      namespace,
-      functions: functions.map((fn): ApiFunctionDef => {
-        if (!/^[a-z][A-Za-z0-9]*\.[a-z][A-Za-z0-9]*$/.test(fn.name)) throw new Error(`Not an api function name: ${fn.name}`);
-        if (!isObjectSchema(fn.parameters)) throw new Error(`${fn.name}: its parameters must be an object schema`);
-        return {
-          name: fn.name, description: fn.description, parameters: fn.parameters, returns: schemaOf(fn.name, fn.returns), async: fn.async, tags: fn.tags,
-          execute: (params, ctx) => fn.execute(params, { sessionId: ctx.session.id, projectId: ctx.session.projectId, taskId: ctx.session.taskId, signal: ctx.signal }),
-        };
-      }),
-      types: types.map(type => ({ name: type.name, schema: schemaOf(type.name, type.schema) })),
-    };
+    if (typeof namespace.methods !== "object" || namespace.methods === null) throw new Error(`${namespace.namespace}: no methods`);
+    return { extension, namespace: namespace.namespace, functions: scriptFunctions(namespace, scriptContextOf), types: scriptTypes(namespace) };
   }
+}
+
+/** What an extension's script method is told of the script's call: its session, and its signal. */
+function scriptContextOf(ctx: ApiContext): ScriptContext {
+  return { sessionId: ctx.session.id, projectId: ctx.session.projectId, taskId: ctx.session.taskId, ...(ctx.signal ? { signal: ctx.signal } : {}) };
 }
 
 /** What the extension keeps: its directory, its database's size and migrations, and its secrets' keys. */

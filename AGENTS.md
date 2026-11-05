@@ -11,7 +11,7 @@ Base branch: `master`.
 You may be running inside a Reins dev instance (`bun run dev`) serving this checkout. Your edits then reach it as follows ([hot-reload.md](docs/dev/hot-reload.md)):
 
 - **Server code** (`packages/backend/src`) hot reloads on save.
-- **Node code** (`packages/node`) does not. After changing it, reload the node with `await api.nodes.reload()` from `execute`, or `bun run node:reload`. It returns at once; your run pauses at its next request and continues on the new code. A build error is reported instead.
+- **Node code** (`packages/node`) does not. After changing it, reload the node with `await reins.nodes.reload()` from `execute`, or `bun run node:reload`. It returns at once; your run pauses at its next request and continues on the new code. A build error is reported instead.
 - **Process-owned code** (`packages/backend/src/process-owned.json`: `index.ts`, `server-process.ts`, `process-state.ts`, …) restarts the server process by itself on save, once the new code builds (a build error is logged and the server kept); the node keeps running, and so do its commands. Your run pauses, and the new process resumes it. `kill -HUP <server pid>` asks for the same restart by hand.
 - **The supervisor** (`supervisor.ts`) and **`@reins/node-protocol`** need a full restart of `bun run dev` (after a protocol edit, process-owned edits stop restarting the server too, until that full restart). You cannot do that from inside it: tell the user.
 

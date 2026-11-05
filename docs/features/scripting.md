@@ -4,7 +4,7 @@ Agents have two tools for scriptable access to Reins internals.
 
 ## `search` — Discover the API
 
-The `search` tool discovers Reins internal API functions for `execute` scripts against Reins-managed data or UI state. It returns documentation-only TypeScript interfaces for the existing `api` object and referenced domain types, filtered by query.
+The `search` tool discovers Reins internal API functions for `execute` scripts against Reins-managed data or UI state. It returns documentation-only TypeScript interfaces for the existing `reins` object and referenced domain types, filtered by query.
 
 ```
 search({ query: "sessions" })       → partial Api interface for session-related functions + types
@@ -12,18 +12,20 @@ search({ query: "tasks.create" })   → Api interface containing the create meth
 search({ query: "" })               → full API surface
 ```
 
-Results include related data shapes (`Task`, `Session`, `Project`, etc.) as TypeScript interfaces. The returned interfaces are documentation only: `execute` scripts should call methods on the existing `api` object with positional arguments, e.g. `api.tasks.update(taskId, updates)`.
+Results include related data shapes (`Task`, `Session`, `Project`, etc.) as TypeScript interfaces. The returned interfaces are documentation only: `execute` scripts should call methods on the existing `reins` object with positional arguments, e.g. `reins.tasks.update(taskId, updates)`. Every method returns a promise: `await` it.
+
+`reins` is the server SDK that extensions use ([server-sdk.md](../dev/server-sdk.md) *One layer*), bound to the calling session: the same object name, methods, fields and errors as an extension's `reins`, with the session's defaults. Fields are camelCase (`projectId`, `taskId`, `createdAt`), as in the SDK.
 
 ## `execute` — Run scripts against Reins
 
-The `execute` tool runs async JavaScript against a curated `api` object for Reins-managed data and UI state. The agent writes a function body; only the `api` object is in scope.
+The `execute` tool runs async JavaScript against a curated `reins` object for Reins-managed data and UI state. The agent writes a function body; only the `reins` object is in scope.
 
 ```javascript
 execute({
   code: `
-    const tasks = api.tasks.list();
+    const tasks = await reins.tasks.list();
     const open = tasks.filter(t => t.status === 'open');
-    return open.map(t => ({ title: t.title, sessions: t.session_count }));
+    return open.map(t => ({ title: t.title, branch: t.branchName }));
   `
 })
 ```
@@ -32,27 +34,27 @@ execute({
 
 | Namespace | Functions |
 |---|---|
-| `api.tasks` | `list(status?, projectId?)`, `get(taskId)`, `current()`, `create(title, description, branchName?, projectId?)`, `update(taskId, updates)`, `close(taskId)`, `reopen(taskId)` |
-| `api.sessions` | `list(options?)`, `get(sessionId)`, `current()`, `entries(sessionId, options?)`, `setModel(sessionId, provider, modelId, thinkingLevel?)`, `compact(sessionId, instructions?)`, `setName(sessionId, name)`, `setPinned(sessionId, pinned)`, `setArchived(sessionId, archived)`, `start(prompt, options)`, `send(sessionId, message)`, `wait(sessionId, timeoutMs?)` |
-| `api.projects` | `list()`, `get(projectId)`, `current()` |
-| `api.models` | `list()`, `listProviders()` |
-| `api.reviews` | `current()`, `addComment(path, line, body, options?)` |
-| `api.ui` | `openFile(path, options?)` (options `{ node?, startLine?, endLine? }`) |
-| `api.nodes` | `list()`, `get(node?)`, `reload(node?, force?)`, `readFile(node, path, options?)`, `writeFile(node, path, content)`, `copy(fromNode, fromPath, toNode, toPath)`, `run(node, command, options?)` |
-| `api.tools` | `search(query, filters?)`, `call(id, args?, timeoutMs?)` |
-| `api.images` | `list()`, `generate(prompt, { model?, images?, size?, count?, parameters? }?)` ([images.md](images.md)) |
-| `api.mcp` | `list()`, `get(server)`, `add(server)`, `update(server, changes)`, `remove(server)`, `test(server)`, `signIn(server, callbackOrigin?)`, `finishSignIn(callbackUrl)`, `signOut(server)` |
-| `api.automations` | `create({ trigger, message?, target?, once?, name?, source?, model?, compactAboveTokens?, background?, project? })` (target `"this"`, `"own"` or `"new"`) (a `{ schedule, timezone? }` or `{ command, every, node?, cwd?, timeoutMs? }` trigger), `cancel(id)`, `list({ all?, includeCancelled? }?)`, `runs(id, limit?)`, `replaceSession(id)` ([automations.md](automations.md)) |
+| `reins.tasks` | `list(status?, projectId?)`, `get(taskId)`, `current()`, `create(title, description, branchName?, projectId?)`, `update(taskId, updates)`, `close(taskId)`, `reopen(taskId)` |
+| `reins.sessions` | `list(options?)`, `get(sessionId)`, `current()`, `entries(sessionId, options?)`, `setModel(sessionId, provider, modelId, thinkingLevel?)`, `compact(sessionId, { instructions? }?)`, `contextUsage(sessionId)`, `setName(sessionId, name)`, `setPinned(sessionId, pinned)`, `setArchived(sessionId, archived)`, `start(prompt, options)`, `send(sessionId, message)`, `wait(sessionId, timeoutMs?)` |
+| `reins.projects` | `list()`, `get(projectId)`, `current()`, `create(name, path, baseBranch?, nodeId?)` |
+| `reins.models` | `list()`, `listProviders()` |
+| `reins.reviews` | `current()`, `addComment(path, line, body, options?)` |
+| `reins.ui` | `openFile(path, options?)` (options `{ node?, startLine?, endLine? }`) |
+| `reins.nodes` | `list()`, `get(node?)`, `reload(node?, force?)`, `readFile(node, path, options?)`, `writeFile(node, path, content)`, `copy(fromNode, fromPath, toNode, toPath)`, `run(node, command, options?)` |
+| `reins.tools` | `search(query, { filters? }?)`, `call(id, args?, { timeoutMs? }?)` |
+| `reins.images` | `list()`, `generate(prompt, { model?, images?, size?, count?, parameters? }?)` ([images.md](images.md)) |
+| `reins.mcp` | `list()`, `get(server)`, `add(server)`, `update(server, changes)`, `remove(server)`, `test(server)`, `signIn(server, callbackOrigin?)`, `finishSignIn(callbackUrl)`, `signOut(server)` |
+| `reins.automations` | `create({ trigger, message?, target?, once?, name?, source?, model?, compactAboveTokens?, background?, project? })` (target `"this"`, `"own"` or `"new"`) (a `{ schedule, timezone? }` or `{ command, every, node?, cwd?, timeoutMs? }` trigger), `cancel(id)`, `list({ all?, includeCancelled? }?)`, `runs(id, limit?)`, `replaceSession(id)` ([automations.md](automations.md)) |
 
 ### Script output: `text()` and `image()`
 
 A script can give the agent more than its return value. Two globals add content blocks to the tool result, in call order; the return value comes last, as text:
 
 - **`text(value)`** adds a text block (a string as it is, another value as JSON).
-- **`image(...items)`** adds images. It takes `{ data, mimeType }` (`data` is base64 or a `Uint8Array`; MCP's image blocks have this shape), a result of `api.tools.call` (its images only), a result of `api.images.generate`, and arrays of these. It throws for something that is not an image, for a call that holds no image, and over 10 images in a script.
+- **`image(...items)`** adds images. It takes `{ data, mimeType }` (`data` is base64 or a `Uint8Array`; MCP's image blocks have this shape), a result of `reins.tools.call` (its images only), a result of `reins.images.generate`, and arrays of these. It throws for something that is not an image, for a call that holds no image, and over 10 images in a script.
 
 ```javascript
-const shot = await api.tools.call("mcp__browser__screenshot", { url: "https://example.com" });
+const shot = await reins.tools.call("mcp__browser__screenshot", { url: "https://example.com" });
 text("The page now:");
 image(shot);
 return "Check the header.";
@@ -62,40 +64,42 @@ A script that returns nothing and adds blocks gives only its blocks; one that gi
 
 ### Behavior
 
-- **Opening a file for the user** — `ui.openFile(path, options?)` opens the file browser of whoever views the calling session at the file, highlighting `startLine`–`endLine` when given. `path` is absolute or relative to the caller's checkout; `node` (an ID, a name or `"current"`, as in `api.nodes`; the caller's by default) is the node the file is on. A file in the caller's checkout opens in it; any other file opens in its own directory on that node, and the browser names that node when it is not the viewed session's. It throws `File not found on <node>: <path>` when the file is not there, and opens nothing.
+- **Async** — every function returns a promise, reads included (`await reins.tasks.list()`).
+- **Arguments are checked** — before a call, each argument is checked against its documented type, and an object takes only the fields `search` documents. A wrong type, a missing argument, an extra one or an unknown field throws and names it (`reins.sessions.list: options has no field "project_id" (its fields: projectId, …)`), so a misspelt or renamed option is never silently ignored.
+- **Opening a file for the user** — `ui.openFile(path, options?)` opens the file browser of whoever views the calling session at the file, highlighting `startLine`–`endLine` when given. `path` is absolute or relative to the caller's checkout; `node` (an ID, a name or `"current"`, as in `reins.nodes`; the caller's by default) is the node the file is on. A file in the caller's checkout opens in it; any other file opens in its own directory on that node, and the browser names that node when it is not the viewed session's. It throws `File not found on <node>: <path>` when the file is not there, and opens nothing.
 - **Read-heavy** — most operations are reads. Writes go through the app's normal task/session/review flows.
 - **Code review comments** — `reviews.addComment()` anchors a comment to the current branch diff and atomically creates the pending project/task review when needed. It defaults to one new-side line and author `Agent`; `options` can set `endLine`, `side`, or `author`. Reins derives the structured anchor and retains the exact Git-native per-file patch server-side rather than requiring scripts to construct either value.
 - **Scoped by default, across projects when asked** — `tasks.list()`, `tasks.create()`, `sessions.list()`, `sessions.start()` and `projects.current()` default to the session's project. `tasks.list(status, projectId)`, `tasks.create(title, description, branchName, projectId)`, `sessions.list({ projectId })` and `sessions.start(prompt, { projectId })` target another project (`projectId: "current"` is the caller's). `tasks.get`, `update`, `close` and `reopen` take the ID of a task of any project, and the session functions that take a `sessionId` reach a session of any project. Code reviews (`reviews.*`) stay in the caller's project and task.
 - **Sessions of no project** — Reins features (extensions) can start a session that has a source (a node and a path) but no project, and so no task. Its `sessions.list()` lists **the sessions of no project on its source**, and `start` starts another of them (on its source unless `options.source` names another; a `taskId` is refused). `projects.current()` returns `null`; `tasks.list()` and `tasks.create()` without a `projectId`, `tasks.current()`, `reviews.*` and the `create_task` tool throw ("This session has no project, and tasks belong to projects"). With a `projectId` it lists and creates tasks of that project, and `tasks.get/update/close/reopen` work by task ID; `sessions.start(prompt, { projectId })` starts a session in a project. The other session functions work as for any session. Its system prompt has no project section (neither a task nor the project assistant's role): its work comes from its prompt, and its context from its source (AGENTS.md, skills, the environment).
 - **Incremental session queries** — `sessions.list()` returns all sessions for the current project; `sessions.list(options?)` supports `projectId`, `taskId`, `since`, `limit`, `search`, `minMessages`, and `background` (`"exclude"` by default, `"only"`, or `"include"`). Use `taskId: "current"` from a task session to list that task's sessions; `projectId: "current"` refers to the script's project.
-- **Unread session activity** — session results expose `unread: true/false`. Find unread sessions with `api.sessions.list().filter(s => s.unread)`. This is derived from `activity_state`: `"finished"` (stored until read) means unread; `"running"` (the session's run is in progress now) and `null` mean not unread. The activity field remains available for distinguishing active work from no pending activity. API reads do not mark sessions read. Child sessions participate in activity tracking independently of their parents.
-- **Where a session comes from** — session results expose `source_id` (where it works), `project_id` (null for a session of no project) and `source_extension`, the backend extension that started it (null otherwise).
+- **Unread session activity** — session results expose `unread` and `running`. Find unread sessions with `(await reins.sessions.list()).filter(s => s.unread)`. A session is unread when its last run ended with something the user has not opened, and is not running now; `running` is true while its run is in progress. API reads do not mark sessions read. Child sessions participate in activity tracking independently of their parents.
+- **Where a session comes from** — session results expose `source` (where it works: `{ id, nodeId, path }`), `projectId` (null for a session of no project), `taskId`, `parentSessionId`, `model` (`{ provider, modelId, thinkingLevel }`) and `startedBy`, the backend extension that started it (null otherwise).
 - **Session metadata** — session results expose the explicit `name` plus `pinned` and `archived` booleans rather than persistence timestamps. `sessions.setName(sessionId, name)` renames a session of any project, trimming surrounding whitespace; pass `null` to clear the explicit name and restore its fallback label. Names must contain non-whitespace text. `sessions.setPinned(sessionId, pinned)` and `sessions.setArchived(sessionId, archived)` update the same metadata. Pin and archive state remain independent and do not cascade through parent/child relationships; archived sessions are omitted from normal `sessions.list()` results.
 - **Session entry extraction** — `sessions.entries(sessionId, options?)` returns a mixed timeline of persisted message entries (`user`, `assistant`, `compactionSummary`) and derived `toolCall` entries. Tool call entries include joined result previews when available. It supports `types`, `toolName`, `isError`, `search`, sequence cursors, `since`, `limit`, and `order`; raw joined result `content` is only included when `includeContent: true` is passed.
 - **30-second synchronous execution limit** — the VM limits synchronous computation, not arbitrary async promises. Session waits have their own bounded timeout.
-- **No imports** — only the `api` object is available. No `require`, `import`, or filesystem access of its own: files and commands on the nodes go through `api.nodes` (*Files and commands on any node*).
+- **No imports** — only the `reins` object is available. No `require`, `import`, or filesystem access of its own: files and commands on the nodes go through `reins.nodes` (*Files and commands on any node*).
 
 ### Start, message, and wait for sessions
 
-When asked to delegate or run parallel sessions, an agent uses `api.sessions` through `execute`, rather than a blocking delegate tool:
+When asked to delegate or run parallel sessions, an agent uses `reins.sessions` through `execute`, rather than a blocking delegate tool:
 
 ```javascript
-const child = await api.sessions.start("Investigate the failing tests. Report findings without editing.", {
+const child = await reins.sessions.start("Investigate the failing tests. Report findings without editing.", {
   parentSessionId: "current",
   title: "Test investigation",
 });
 return child; // { sessionId }; does not wait for the response
 ```
 
-`options.parentSessionId` is required: `"current"` creates a child of the caller; `null` creates an independent session. Both start with a fresh conversation in the caller's project unless `options.projectId` names another, in the caller's task unless `options.taskId` names another task of that project (`null` starts a scratch session), and in the caller's checkout unless `options.source` names another location (`{ nodeId, path }`: any directory on a node, checked there when no session used it yet). In another project, a session without `taskId` is a scratch session there, a `taskId` must be a task of that project (else it is refused), and without `source` it works where that project's sessions work: its task's latest session's source, else the project's home (default) source, not the caller's checkout. A child may be in another project and reports back as any child does. A session started in another task or project reports back only when `parentSessionId` is `"current"`. Child nesting is limited to three levels. Optional `title` reuses the existing session name; omitting it preserves normal first-message naming. `modelProvider` and `modelId` can override the inherited model together; `thinkingLevel` can override inherited thinking.
+`options.parentSessionId` is required: `"current"` creates a child of the caller; `null` creates an independent session. Both start with a fresh conversation in the caller's project unless `options.projectId` names another, in the caller's task unless `options.taskId` names another task of that project (`null` starts a scratch session), and in the caller's checkout unless `options.source` names another location (`{ nodeId, path }`: any directory on a node, checked there when no session used it yet). In another project, a session without `taskId` is a scratch session there, a `taskId` must be a task of that project (else it is refused), and without `source` it works where that project's sessions work: its task's latest session's source, else the project's home (default) source, not the caller's checkout. A child may be in another project and reports back as any child does. A session started in another task or project reports back only when `parentSessionId` is `"current"`. Child nesting is limited to three levels. Optional `title` reuses the existing session name; omitting it preserves normal first-message naming. `model: { provider, modelId, thinkingLevel? }` overrides the inherited model.
 
 ```javascript
 // Start work in task 42 without reporting back to this session.
-return await api.sessions.start("Implement the plan in the task description.", { parentSessionId: null, taskId: 42 });
+return await reins.sessions.start("Implement the plan in the task description.", { parentSessionId: null, taskId: 42 });
 
 // Make a task in project 7 and start a child there, which reports back to this session.
-const task = await api.tasks.create("Fix the build", "The CI build fails on master.", undefined, 7);
-return await api.sessions.start("Fix the build.", { parentSessionId: "current", projectId: 7, taskId: task.id });
+const task = await reins.tasks.create("Fix the build", "The CI build fails on master.", undefined, 7);
+return await reins.sessions.start("Fix the build.", { parentSessionId: "current", projectId: 7, taskId: task.id });
 ```
 
 Scripts cannot start **background sessions**: sessions that Reins features start, which run, settle and report like any other but never appear in the browser (session lists, the palette, task session counts and activity/unread badges). Session results expose `background: true/false`, and `sessions.list()` omits background sessions unless `options.background` asks for them.
@@ -103,8 +107,8 @@ Scripts cannot start **background sessions**: sessions that Reins features start
 Follow up in a later script using only the session ID:
 
 ```javascript
-await api.sessions.send(sessionId, "Also check the cancellation case.");
-return await api.sessions.wait(sessionId, 10000);
+await reins.sessions.send(sessionId, "Also check the cancellation case.");
+return await reins.sessions.wait(sessionId, 10000);
 ```
 
 - **send** accepts any session, of any task or project. The message is submitted to the session on the server through native AgentHarness steering—there is no activity-state check, delivery mode parameter, or Reins-managed follow-up queue. AgentHarness joins an active operation or starts an idle run from the durable steering input. Sending and starting return without waiting for a response.
@@ -122,7 +126,7 @@ return await api.sessions.wait(sessionId, 10000);
 This `execute` script creates the review implicitly with its first comment and adds a same-side range comment:
 
 ```javascript
-const review = await api.reviews.addComment(
+const review = await reins.reviews.addComment(
   "src/example.ts",
   12,
   "This branch can return the wrong value.",
@@ -135,28 +139,28 @@ The path and line range must exist in the current Git diff. Additional calls add
 
 ### List the nodes
 
-`api.nodes.list()` lists the nodes, the machines that run sessions' tools: each one's ID, name and hostname, whether it is connected or revoked, whether the calling session runs on it (`current`), and how many sources (directories sessions work in) are in use on it. Removed nodes are not listed. `api.nodes.get(node?)` (by default the calling session's node; named as in *Files and commands on any node*) adds those sources: each one's path on the node and the projects whose sessions work there or whose default source it is. `api.projects.create(name, path, base_branch?, nodeId?)` creates a project with its default source in `path` on a node (by default the calling session's), a directory there; two projects may share one.
+`reins.nodes.list()` lists the nodes, the machines that run sessions' tools: each one's ID, name and hostname, whether it is connected or revoked, whether the calling session runs on it (`current`), and how many sources (directories sessions work in) are in use on it. Removed nodes are not listed. `reins.nodes.get(node?)` (by default the calling session's node; named as in *Files and commands on any node*) adds those sources: each one's path on the node and the projects whose sessions work there or whose default source it is. `reins.projects.create(name, path, baseBranch?, nodeId?)` creates a project with its default source in `path` on a node (by default the calling session's), a directory there; two projects may share one.
 
 ### Reload the node
 
-After changing node code (`packages/node`), `api.nodes.reload()` restarts the calling session's node on it (`api.nodes.reload(node)` another, named by its ID or name). It returns as soon as the reload is scheduled, without waiting for it: the node finishes the commands running on it (a command started meanwhile waits for the restarted node), restarts, and every later tool call runs on the new code. Sessions run on the server, so no run is paused. It fails at once when the node's new code does not build, or when nothing would restart the node (it is not run by `bun run start`/`dev`). A long command in another session can hold the reload up for up to 60 seconds; then it is cancelled, unless `force` (`api.nodes.reload(undefined, true)`) cuts that command off (the agent is told its outcome is unknown). See [ADR-021](../adr/021-explicit-node-reload.md).
+After changing node code (`packages/node`), `reins.nodes.reload()` restarts the calling session's node on it (`reins.nodes.reload(node)` another, named by its ID or name). It returns as soon as the reload is scheduled, without waiting for it: the node finishes the commands running on it (a command started meanwhile waits for the restarted node), restarts, and every later tool call runs on the new code. Sessions run on the server, so no run is paused. It fails at once when the node's new code does not build, or when nothing would restart the node (it is not run by `bun run start`/`dev`). A long command in another session can hold the reload up for up to 60 seconds; then it is cancelled, unless `force` (`reins.nodes.reload(undefined, true)`) cuts that command off (the agent is told its outcome is unknown). See [ADR-021](../adr/021-explicit-node-reload.md).
 
 ### Tools from extensions
 
-Extensions give agents tools (today: the tools of MCP servers). `api.tools.search(query, filters?)` returns the documentation of those whose ID, name, title, argument names or description match the query's words, best first (a query that is a tool's ID or name finds it first), as a TypeScript interface keyed by the tools' IDs (each starts with its extension's name and `__`, such as `mcp__`), grouped by where they come from (as `search` documents the API). In each group it documents 10 and names the other matches; without a query, a group with more than 10 tools only names them. `filters` is given to each extension as it is; the system prompt says which filters an extension takes. `api.tools.call(id, args?, timeoutMs?)` calls a tool by its ID and returns its result (`content` blocks, `structuredContent`, and `isError` when the tool reports a failure). `search` does not list these tools.
+Extensions give agents tools (today: the tools of MCP servers). `reins.tools.search(query, { filters? })` returns the documentation of those whose ID, name, title, argument names or description match the query's words, best first (a query that is a tool's ID or name finds it first), as a TypeScript interface keyed by the tools' IDs (each starts with its extension's name and `__`, such as `mcp__`), grouped by where they come from (as `search` documents the API). In each group it documents 10 and names the other matches; without a query, a group with more than 10 tools only names them. `options.filters` is given to each extension as it is; the system prompt says which filters an extension takes. `reins.tools.call(id, args?, { timeoutMs? })` calls a tool by its ID and returns its result (`content` blocks, `structuredContent`, and `isError` when the tool reports a failure). `search` does not list these tools.
 
 ### Manage MCP servers
 
-`api.mcp` manages the remote MCP servers of **Settings → MCP** ([mcp-servers.md](mcp-servers.md)), named by their name or ID: `list()` and `get(server)` give each one's settings, and its `status`: whether agents can use it (`{ state }`, one of `ready`, `needs_sign_in`, `disabled`, or `{ state: "error", message }`, as Settings shows it); `add({ name, url, authKind, … })` adds one, with its header value or OAuth client secret when it has one, and `transport: "sse"` for a legacy HTTP+SSE server (the default is `"http"`, streamable HTTP); `update(server, changes)` changes it (what is left out is kept, a secret given as `null` is removed, `enabled: false` disables it); `remove(server)` removes it; `test(server)` connects afresh and lists its tools: `{ server, toolCount }` (`toolCount` is null when it failed, and `server.status` says why); `signOut(server)` forgets its OAuth tokens. Secrets are stored encrypted and never returned, but a script's code, secrets included, stays in the session's transcript.
+`reins.mcp` manages the remote MCP servers of **Settings → MCP** ([mcp-servers.md](mcp-servers.md)), named by their name or ID: `list()` and `get(server)` give each one's settings, and its `status`: whether agents can use it (`{ state }`, one of `ready`, `needs_sign_in`, `disabled`, or `{ state: "error", message }`, as Settings shows it); `add({ name, url, authKind, … })` adds one, with its header value or OAuth client secret when it has one, and `transport: "sse"` for a legacy HTTP+SSE server (the default is `"http"`, streamable HTTP); `update(server, changes)` changes it (what is left out is kept, a secret given as `null` is removed, `enabled: false` disables it); `remove(server)` removes it; `test(server)` connects afresh and lists its tools: `{ server, toolCount }` (`toolCount` is null when it failed, and `server.status` says why); `signOut(server)` forgets its OAuth tokens. Secrets are stored encrypted and never returned, but a script's code, secrets included, stays in the session's transcript.
 
-The system prompt names the enabled servers, each with its `instructions` (set by `add` and `update` as any other field). Their tools are found and called with `api.tools` (*Tools from extensions*): a tool's ID is `mcp__<server>__<tool>`, and the filter `{ server: "<name>" }` limits a search to one server. A search with that filter, and a call, connect first if needed, and throw when the server is disabled, needs sign-in or is down. A search of all servers leaves out those that fail, and says which when it finds nothing.
+The system prompt names the enabled servers, each with its `instructions` (set by `add` and `update` as any other field). Their tools are found and called with `reins.tools` (*Tools from extensions*): a tool's ID is `mcp__<server>__<tool>`, and the option `{ filters: { server: "<name>" } }` limits a search to one server. A search with that filter, and a call, connect first if needed, and throw when the server is disabled, needs sign-in or is down. A search of all servers leaves out those that fail, and says which when it finds nothing.
 
 ```js
-return await api.tools.search("list deployments", { server: "vercel" });
+return await reins.tools.search("list deployments", { filters: { server: "vercel" } });
 ```
 
 ```js
-const result = await api.tools.call("mcp__vercel__list_teams");
+const result = await reins.tools.call("mcp__vercel__list_teams");
 return result.content[0].text;
 ```
 
@@ -166,18 +170,18 @@ To sign in to an OAuth server, `signIn(server, callbackOrigin?)` returns `{ auth
 
 From any session, a script can copy, read and write files and run short commands on any connected node: a video to copy from one machine to another, another machine's notes, a quick `df` or `git status` somewhere else. These are node-level, not project-scoped: any path on the node, not just a project's checkout. The node is named by its ID, its name (any case; two nodes of one name must be named by ID) or `"current"`, the calling session's node.
 
-- **`api.nodes.copy(fromNode, fromPath, toNode, toPath)`** copies a file of any size from one node to another (or to another path on the same node), byte for byte, and returns `{ bytes }`, its size. Its directories are created and a file there is replaced once the whole file has arrived; nothing of it enters the script.
-- **`api.nodes.readFile(node, path, { binary? })`** returns the whole file into the script, to use its content: text (UTF-8) by default, its bytes (a `Uint8Array`) with `binary: true`. Unlike the `read` tool there are no line limits or notes. A file over 16 MiB fails, and its error says to copy it with `api.nodes.copy` (the call written out), so an agent that copies with `readFile` and `writeFile` turns to `copy` for a large file by itself.
-- **`api.nodes.writeFile(node, path, content)`** writes a whole file from text or bytes, as the `write` tool does: its directories are created and a file there is replaced.
-- **`api.nodes.run(node, command, { cwd?, timeoutMs? })`** runs a bash command as the bash tool runs it there, starting in the node's home unless `cwd` is given, and returns `{ exitCode, output, truncated }`: stdout and stderr together, the first 16 MiB of them (`truncated` when there was more). A command that fails is not an error; its exit code says so. It is killed, and the call fails, after `timeoutMs` (1 to 30 000, by default 30 000): there are no background jobs, so longer work belongs in a session.
+- **`reins.nodes.copy(fromNode, fromPath, toNode, toPath)`** copies a file of any size from one node to another (or to another path on the same node), byte for byte, and returns `{ bytes }`, its size. Its directories are created and a file there is replaced once the whole file has arrived; nothing of it enters the script.
+- **`reins.nodes.readFile(node, path, { binary? })`** returns the whole file into the script, to use its content: text (UTF-8) by default, its bytes (a `Uint8Array`) with `binary: true`. Unlike the `read` tool there are no line limits or notes. A file over 16 MiB fails, and its error says to copy it with `reins.nodes.copy` (the call written out), so an agent that copies with `readFile` and `writeFile` turns to `copy` for a large file by itself.
+- **`reins.nodes.writeFile(node, path, content)`** writes a whole file from text or bytes, as the `write` tool does: its directories are created and a file there is replaced.
+- **`reins.nodes.run(node, command, { cwd?, timeoutMs? })`** runs a bash command as the bash tool runs it there, starting in the node's home unless `cwd` is given, and returns `{ exitCode, output, truncated }`: stdout and stderr together, the first 16 MiB of them (`truncated` when there was more). A command that fails is not an error; its exit code says so. It is killed, and the call fails, after `timeoutMs` (1 to 30 000, by default 30 000): there are no background jobs, so longer work belongs in a session.
 
 `~` is that node's home, and relative paths start in it. Nothing is confined: the server can already run anything on a node. A node that is not connected fails the call at once ("Node unavailable: …"), and an unknown one too ("Node not found: …", naming the nodes there are); nothing waits for it, unlike a session's own tools.
 
 What a script holds never reaches the agent's context unless the script returns it, so a script can move files between nodes, or boil a note down to what the agent needs, without the model seeing the rest:
 
 ```javascript
-const { bytes } = await api.nodes.copy("Mac mini", "~/Movies/demo.mov", "current", "~/Downloads/demo.mov");
-const note = await api.nodes.readFile("Mac mini", "~/Obsidian/Notes/Plans.md");
+const { bytes } = await reins.nodes.copy("Mac mini", "~/Movies/demo.mov", "current", "~/Downloads/demo.mov");
+const note = await reins.nodes.readFile("Mac mini", "~/Obsidian/Notes/Plans.md");
 return { copied: bytes, headings: note.split("\n").filter(line => line.startsWith("#")) };
 ```
 

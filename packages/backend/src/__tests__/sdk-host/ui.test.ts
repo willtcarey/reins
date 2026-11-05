@@ -49,7 +49,7 @@ describe("ui.openFile", () => {
     try {
       writeFileSync(join(elsewhere, "report.html"), "<p>hi</p>");
 
-      const result = await script(`return await api.ui.openFile(${JSON.stringify(join(elsewhere, "report.html"))}, { node: "mac mini", startLine: 1, endLine: 1 });`);
+      const result = await script(`return await reins.ui.openFile(${JSON.stringify(join(elsewhere, "report.html"))}, { node: "mac mini", startLine: 1, endLine: 1 });`);
 
       expect(result).toEqual({ ok: true, text: "File opened" });
       expect(opened).toEqual([{
@@ -70,8 +70,8 @@ describe("ui.openFile", () => {
       mkdirSync(join(checkout, "src"));
       writeFileSync(join(checkout, "src", "app.ts"), "export {}");
 
-      await script(`await api.ui.openFile(${JSON.stringify(join(checkout, "src", "app.ts"))});`);
-      await script(`await api.ui.openFile("src/app.ts", { node: "current" });`);
+      await script(`await reins.ui.openFile(${JSON.stringify(join(checkout, "src", "app.ts"))});`);
+      await script(`await reins.ui.openFile("src/app.ts", { node: "current" });`);
 
       const shown = { source: { nodeId: SEEDED_NODE_ID, path: checkout }, path: "src/app.ts" };
       expect(opened).toEqual([expect.objectContaining(shown), expect.objectContaining(shown)]);
@@ -83,7 +83,7 @@ describe("ui.openFile", () => {
     try {
       const missing = join(elsewhere, "missing.html");
 
-      const result = await script(`return await api.ui.openFile(${JSON.stringify(missing)}, { node: "mini" });`);
+      const result = await script(`return await reins.ui.openFile(${JSON.stringify(missing)}, { node: "mini" });`);
 
       expect(result).toEqual({ ok: false, error: expect.stringContaining(`File not found on Mac mini: ${missing}`) });
       expect(opened).toEqual([]);

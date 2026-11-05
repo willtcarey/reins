@@ -551,6 +551,11 @@ export class Sessions {
     return listSessions({ taskId, archived }).map(this.listView);
   }
 
+  /** Whether the session's run is in progress now (`sessionActivity`). */
+  running(row: SessionRow): boolean {
+    return sessionActivity(row, this.state.process.sessions) === "running";
+  }
+
   /** Sessions with activity (running, or unread), for initial activity snapshots
    * (`listSessionsWithActivity`). */
   activeSessions() {

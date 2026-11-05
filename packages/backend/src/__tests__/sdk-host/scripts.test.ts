@@ -4,12 +4,13 @@
 
 import { describe, test, expect } from "bun:test";
 import type { TSchema } from "@sinclair/typebox";
-import { API_FUNCTIONS, DOMAIN_TYPES, fnNamespace } from "../../scripting/api-registry.js";
+import { API_FUNCTIONS, DOMAIN_TYPES, fnNamespace } from "../../sdk-host/scripts.js";
 import {
   schemaItems,
   schemaAnyOf,
   schemaProperties,
-} from "../../scripting/schema-utils.js";
+  sameSchema,
+} from "../../sdk-host/schema-utils.js";
 
 describe("API registry schema constraints", () => {
   /**
@@ -97,7 +98,7 @@ function findNonDomainObjects(
     const isTopLevel = depth === 0 && opts?.allowTopLevelObject;
     const isEmpty = Object.keys(props).length === 0;
 
-    if (!isTopLevel && !isEmpty && !domainSchemas.has(schema)) {
+    if (!isTopLevel && !isEmpty && ![...domainSchemas].some(domain => sameSchema(schema, domain))) {
       violations.push(schema);
     }
 

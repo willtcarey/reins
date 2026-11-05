@@ -100,3 +100,24 @@ export function schemaPropertyKeys(schema: TSchema): string[] {
   if (!props) return [];
   return Object.keys(props);
 }
+
+/**
+ * Whether `a` is the schema `b`, or a copy of it that modifiers make (`Type.Optional(b)` copies `b` and keeps
+ * its `properties` or `anyOf`), so that a named type used as an optional field keeps its name.
+ */
+export function sameSchema(a: TSchema, b: TSchema): boolean {
+  if (a === b) return true;
+  const properties = schemaField(a, "properties");
+  if (properties !== undefined && properties === schemaField(b, "properties")) return true;
+  const anyOf = schemaField(a, "anyOf");
+  return anyOf !== undefined && anyOf === schemaField(b, "anyOf");
+}
+
+/** The name `names` gives `schema` (`sameSchema`), or undefined. */
+export function schemaName(names: ReadonlyMap<TSchema, string> | undefined, schema: TSchema): string | undefined {
+  if (!names) return undefined;
+  const own = names.get(schema);
+  if (own !== undefined) return own;
+  for (const [named, name] of names) if (sameSchema(schema, named)) return name;
+  return undefined;
+}

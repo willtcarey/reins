@@ -20,8 +20,8 @@ const MAX_READ = 500;
 /** What it reads of the server SDK. */
 export interface RecentReads {
   readonly sessions: Pick<Sessions, "list">;
-  readonly projects: Projects;
-  readonly tasks: Tasks;
+  readonly projects: Pick<Projects, "get">;
+  readonly tasks: Pick<Tasks, "get">;
 }
 
 /** Reads each project and task once per answer. */

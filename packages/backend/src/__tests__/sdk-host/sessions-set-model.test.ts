@@ -8,10 +8,10 @@ import { getDb } from "../../app-globals.js";
 import { type Project } from "../../project-store.js";
 import { createProject } from "../project-fixture.js";
 import { createSession, getSession } from "../session-fixture.js";
-import { SESSION_FUNCTIONS, sessionsSetModelFunction } from "../../scripting/sessions.js";
-import type { ApiContext } from "../../scripting/define-function.js";
+import { Value } from "@sinclair/typebox/value";
+import { buildApiObject } from "../../sdk-host/scripts.js";
+import { SessionSchema } from "../../sdk-host/sessions.js";
 import type { ServerMessage } from "../../models/broadcast.js";
-import { SessionInstance } from "../../sessions/session-instance.js";
 import { Models } from "../../models/models.js";
 import { createAppState } from "../helpers/app-state.js";
 import { PiStorageAdapter } from "../../pi-storage.js";
@@ -39,9 +39,11 @@ describe("sessions.setModel", () => {
     return { state, models };
   }
 
-  function makeCtx(): ApiContext {
+  /** `reins.sessions.setModel` of a script of a session of the project, its result checked as a session. */
+  function makeCtx() {
     const { state } = contextState();
-    return scriptContext(state, { sessionId: "ctx-session", projectId: project.id, instance: new SessionInstance(new Models(state), "ctx-session") });
+    const reins = buildApiObject(scriptContext(state, { sessionId: "ctx-session", projectId: project.id }));
+    return async (...args: unknown[]) => Value.Parse(SessionSchema, await reins.sessions.setModel(...args));
   }
 
   test("updates DB row with new model", async () => {
@@ -52,10 +54,7 @@ describe("sessions.setModel", () => {
     });
 
     const ctx = makeCtx();
-    const result = await sessionsSetModelFunction.execute(
-      { sessionId: "sess-1", provider: "anthropic", modelId: "claude-sonnet-4-5" },
-      ctx,
-    );
+    const result = await ctx("sess-1", "anthropic", "claude-sonnet-4-5");
 
     // Check DB was updated
     const updated = getSession("sess-1");
@@ -63,18 +62,14 @@ describe("sessions.setModel", () => {
     expect(updated!.model_id).toBe("claude-sonnet-4-5");
 
     // Check return value matches DB
-    expect(result.model_provider).toBe("anthropic");
-    expect(result.model_id).toBe("claude-sonnet-4-5");
+    expect(result.model).toMatchObject({ provider: "anthropic", modelId: "claude-sonnet-4-5" });
   });
 
   test("sets the model through the session's runtime, on Pi's lane", async () => {
     createSession("sess-2", project.id, { agentRuntimeType: "pi" });
 
     const ctx = makeCtx();
-    await sessionsSetModelFunction.execute(
-      { sessionId: "sess-2", provider: "anthropic", modelId: "claude-sonnet-4-5" },
-      ctx,
-    );
+    await ctx("sess-2", "anthropic", "claude-sonnet-4-5");
 
     expect(await lane("sess-2")).toMatchObject({ provider: "anthropic", modelId: "claude-sonnet-4-5" });
   });
@@ -83,10 +78,7 @@ describe("sessions.setModel", () => {
     createSession("sess-3", project.id, { agentRuntimeType: "pi" });
 
     const ctx = makeCtx();
-    await sessionsSetModelFunction.execute(
-      { sessionId: "sess-3", provider: "anthropic", modelId: "claude-sonnet-4-5", thinkingLevel: "high" },
-      ctx,
-    );
+    await ctx("sess-3", "anthropic", "claude-sonnet-4-5", "high");
 
     expect(await lane("sess-3")).toEqual({ provider: "anthropic", modelId: "claude-sonnet-4-5", thinkingLevel: "high" });
 
@@ -98,10 +90,7 @@ describe("sessions.setModel", () => {
     createSession("sess-4", project.id, { agentRuntimeType: "pi", modelProvider: "anthropic", modelId: "claude-haiku-4-5", thinkingLevel: "medium" });
 
     const ctx = makeCtx();
-    await sessionsSetModelFunction.execute(
-      { sessionId: "sess-4", provider: "anthropic", modelId: "claude-sonnet-4-5" },
-      ctx,
-    );
+    await ctx("sess-4", "anthropic", "claude-sonnet-4-5");
 
     // No level given: Pi's lane keeps its level (seeded from the row's).
     expect(await lane("sess-4")).toEqual({ provider: "anthropic", modelId: "claude-sonnet-4-5", thinkingLevel: "medium" });
@@ -115,10 +104,7 @@ describe("sessions.setModel", () => {
     createSession("sess-5", project.id, { agentRuntimeType: "pi" });
 
     const ctx = makeCtx();
-    await sessionsSetModelFunction.execute(
-      { sessionId: "sess-5", provider: "anthropic", modelId: "claude-sonnet-4-5", thinkingLevel: "high" },
-      ctx,
-    );
+    await ctx("sess-5", "anthropic", "claude-sonnet-4-5", "high");
 
     expect(broadcastMessages.length).toBe(1);
     const msg = broadcastMessages[0];
@@ -133,18 +119,13 @@ describe("sessions.setModel", () => {
     createSession("sess-5b", project.id, {  agentRuntimeType: "pi",thinkingLevel: "low" });
 
     const ctx = makeCtx();
-    const result = await sessionsSetModelFunction.execute(
-      { sessionId: "sess-5b", provider: "anthropic", modelId: "claude-sonnet-4-5" },
-      ctx,
-    );
+    const result = await ctx("sess-5b", "anthropic", "claude-sonnet-4-5");
 
     const updated = getSession("sess-5b");
     expect(updated!.model_provider).toBe("anthropic");
     expect(updated!.model_id).toBe("claude-sonnet-4-5");
     expect(updated!.thinking_level).toBe("low");
-    expect(result.model_provider).toBe("anthropic");
-    expect(result.model_id).toBe("claude-sonnet-4-5");
-    expect(result.thinking_level).toBe("low");
+    expect(result.model).toMatchObject({ provider: "anthropic", modelId: "claude-sonnet-4-5", thinkingLevel: "low" });
     expect(broadcastMessages).toEqual([
       {
         type: "session_updated",
@@ -159,10 +140,7 @@ describe("sessions.setModel", () => {
 
     const ctx = makeCtx();
     await expect(
-      sessionsSetModelFunction.execute(
-        { sessionId: "sess-6", provider: "nonexistent", modelId: "some-model" },
-        ctx,
-      ),
+      ctx("sess-6", "nonexistent", "some-model"),
     ).rejects.toThrow("Model 'some-model' not found for provider 'nonexistent'");
   });
 
@@ -171,10 +149,7 @@ describe("sessions.setModel", () => {
 
     const ctx = makeCtx();
     await expect(
-      sessionsSetModelFunction.execute(
-        { sessionId: "sess-7", provider: "anthropic", modelId: "nonexistent-model" },
-        ctx,
-      ),
+      ctx("sess-7", "anthropic", "nonexistent-model"),
     ).rejects.toThrow(/not found for provider/);
   });
 
@@ -182,12 +157,9 @@ describe("sessions.setModel", () => {
     const otherProject = createProject("Other Project", "/tmp/other-project", "main");
     createSession("sess-8", otherProject.id, { agentRuntimeType: "pi" });
 
-    const result = await sessionsSetModelFunction.execute(
-      { sessionId: "sess-8", provider: "anthropic", modelId: "claude-sonnet-4-5" },
-      makeCtx(),
-    );
+    const result = await makeCtx()("sess-8", "anthropic", "claude-sonnet-4-5");
 
-    expect(result).toMatchObject({ id: "sess-8", model_id: "claude-sonnet-4-5" });
+    expect(result).toMatchObject({ id: "sess-8", model: { modelId: "claude-sonnet-4-5" } });
   });
 
   test("updates inactive sessions without calling the pi SDK", async () => {
@@ -196,10 +168,7 @@ describe("sessions.setModel", () => {
 
     const ctx = makeCtx();
     await expect(
-      sessionsSetModelFunction.execute(
-        { sessionId: "sess-9", provider: "anthropic", modelId: "claude-sonnet-4-5" },
-        ctx,
-      ),
+      ctx("sess-9", "anthropic", "claude-sonnet-4-5"),
     ).resolves.toBeDefined();
 
     const updated = getSession("sess-9");
@@ -218,15 +187,7 @@ describe("sessions.setModel", () => {
   test("throws for invalid thinking level", async () => {
     createSession("sess-10", project.id, { agentRuntimeType: "pi" });
 
-    const rawSetModelFunction = SESSION_FUNCTIONS.find((fn) => fn.name === "sessions.setModel");
-    expect(rawSetModelFunction).toBeDefined();
-
     const ctx = makeCtx();
-    await expect(
-      rawSetModelFunction!.execute(
-        { sessionId: "sess-10", provider: "anthropic", modelId: "claude-sonnet-4-5", thinkingLevel: "invalid-level" },
-        ctx,
-      ),
-    ).rejects.toThrow(/Invalid thinking level/);
+    await expect(ctx("sess-10", "anthropic", "claude-sonnet-4-5", "invalid-level")).rejects.toThrow("reins.sessions.setModel: thinkingLevel");
   });
 });

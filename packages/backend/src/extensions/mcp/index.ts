@@ -1,6 +1,6 @@
 /**
  * The MCP extension (docs/dev/mcp-servers.md): remote MCP servers the user adds in Settings, their
- * connections, OAuth and `api.mcp`. It uses only the server SDK (`@reins/sdk/server`) and its own modules.
+ * connections, OAuth and `reins.mcp`. It uses only the server SDK (`@reins/sdk/server`) and its own modules.
  */
 
 import type { Disposer, ServerExtension, ServerSdk } from "@reins/sdk/server";
@@ -19,7 +19,7 @@ export interface Mcp {
   dispose: Disposer;
 }
 
-/** Starts MCP for one app: its connections (closed when it is disposed), routes, `api.mcp`, tool provider and
+/** Starts MCP for one app: its connections (closed when it is disposed), routes, `reins.mcp`, tool provider and
  * prompt section. */
 export function startMcp(reins: ServerSdk, options: McpConnectionOptions = {}): Mcp {
   const store = new McpStore(reins.db, reins.secrets);

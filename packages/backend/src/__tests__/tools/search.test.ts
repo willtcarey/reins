@@ -1,6 +1,6 @@
 import { describe, test, expect } from "bun:test";
 import * as ts from "typescript";
-import { searchFunctions, API_FUNCTIONS, referencedTypes } from "../../scripting/api-registry.js";
+import { searchFunctions, API_FUNCTIONS, referencedTypes } from "../../sdk-host/scripts.js";
 import { executeTool, reinsTool } from "../helpers/execute-tool.js";
 
 
@@ -27,7 +27,7 @@ describe("searchFunctions", () => {
   });
 
   test("normalizes api-prefixed function queries", () => {
-    const results = searchFunctions("api.tasks");
+    const results = searchFunctions("reins.tasks");
     expect(results.length).toBeGreaterThan(0);
     expect(results[0].name).toBe("tasks.list");
   });
@@ -134,12 +134,12 @@ describe("search tool", () => {
     const text = result.content[0].type === "text" ? result.content[0].text : "";
     expect(text).toContain("## API documentation");
     expect(text).toContain("Documentation only");
-    expect(text).toContain("existing `api` object");
+    expect(text).toContain("existing `reins` object");
     expect(text).toContain("positionally");
-    expect(text).toContain("interface Api {");
+    expect(text).toContain("interface Reins {");
     expect(text).toContain("tasks: TasksApi;");
     expect(text).toContain("interface TasksApi {");
-    expect(text).toContain("list(status?: \"open\" | \"closed\", projectId?: number | \"current\"): Task[];");
+    expect(text).toContain("list(status?: \"open\" | \"closed\", projectId?: number | \"current\"): Promise<Task[]>;");
     expect(text).not.toContain("tasks.list(");
     expectGeneratedTypeScriptToBeValid(text);
   });
@@ -171,7 +171,7 @@ describe("search tool", () => {
 
     const text = result.content[0].type === "text" ? result.content[0].text : "";
     expect(text).toContain("sessions: SessionsApi;");
-    expect(text).toContain("setName(sessionId: string, name: string | null): Session;");
+    expect(text).toContain("setName(sessionId: string, name: string | null): Promise<Session>;");
     expectGeneratedTypeScriptToBeValid(text);
   });
 
@@ -213,7 +213,7 @@ describe("search tool", () => {
 
     const text = result.content[0].type === "text" ? result.content[0].text : "";
     expect(text).toContain("ui: UiApi;");
-    expect(text).toContain("broadcast(message: unknown): string;");
+    expect(text).toContain("broadcast(message: unknown): Promise<string>;");
     expectGeneratedTypeScriptToBeValid(text);
   });
 

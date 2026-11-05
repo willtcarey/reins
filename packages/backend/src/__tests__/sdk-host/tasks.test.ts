@@ -1,0 +1,56 @@
+import { describe, expect, test } from "bun:test";
+import { Type } from "@sinclair/typebox";
+import { Value } from "@sinclair/typebox/value";
+import { buildApiObject } from "../../sdk-host/scripts.js";
+import { TaskSchema } from "../../sdk-host/projects.js";
+import { createProject } from "../project-fixture.js";
+import { createTask, getTask } from "../../task-store.js";
+import { useTestDb } from "../helpers/test-db.js";
+import { useTestRepo } from "../helpers/test-repo.js";
+import { useLoopbackState } from "../helpers/app-state.js";
+import { scriptContext } from "../helpers/script-context.js";
+
+describe("reins.tasks across projects", () => {
+  useTestDb();
+  const repo = useTestRepo();
+  const loopback = useLoopbackState();
+
+  test("creates and lists tasks in another project, and in the caller's by default", async () => {
+    const home = createProject("Home", repo.dir, "main");
+    const other = createProject("Other", `${repo.dir}-other`, "main");
+    const reins = buildApiObject(scriptContext(loopback.state, { projectId: home.id }));
+
+    const created = Value.Parse(TaskSchema, await reins.tasks.create("Elsewhere", "Work there", "task/elsewhere", other.id));
+    const local = Value.Parse(TaskSchema, await reins.tasks.create("Here", "Work here"));
+
+    expect(created).toMatchObject({ projectId: other.id, title: "Elsewhere", branchName: "task/elsewhere" });
+    expect(local).toMatchObject({ projectId: home.id, title: "Here" });
+    const ids = async (...args: unknown[]) => Value.Parse(Type.Array(TaskSchema), await reins.tasks.list(...args)).map(task => task.id);
+    expect(await ids(undefined, other.id)).toEqual([created.id]);
+    expect(await ids()).toEqual([local.id]);
+  });
+
+  test("gets, updates, closes and reopens a task of another project by its ID", async () => {
+    const home = createProject("Home", repo.dir, "main");
+    const other = createProject("Other", `${repo.dir}-other`, "main");
+    const task = createTask(other.id, "Foreign", null, "task/foreign");
+    const reins = buildApiObject(scriptContext(loopback.state, { projectId: home.id }));
+
+    expect(await reins.tasks.get(task.id)).toMatchObject({ id: task.id, projectId: other.id });
+    expect(await reins.tasks.update(task.id, { title: "Renamed" })).toMatchObject({ title: "Renamed" });
+    expect(await reins.tasks.close(task.id)).toMatchObject({ status: "closed" });
+    expect(await reins.tasks.reopen(task.id)).toMatchObject({ status: "open" });
+    expect(getTask(task.id)).toMatchObject({ project_id: other.id, title: "Renamed", status: "open" });
+  });
+
+  test("a session of no project uses tasks by naming a project", async () => {
+    const other = createProject("Other", `${repo.dir}-other`, "main");
+    const reins = buildApiObject(scriptContext(loopback.state));
+
+    const created = Value.Parse(TaskSchema, await reins.tasks.create("From nowhere", "Work", undefined, other.id));
+
+    expect(created).toMatchObject({ projectId: other.id });
+    expect(await reins.tasks.get(created.id)).toMatchObject({ id: created.id });
+    await expect(reins.tasks.list()).rejects.toThrow("This session has no project, and tasks belong to projects");
+  });
+});

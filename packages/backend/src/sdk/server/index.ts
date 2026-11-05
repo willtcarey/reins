@@ -53,7 +53,7 @@ export interface ServerSdk {
    * is under `/api/extensions/<name>/` and its pages under `/extensions/<name>/`. */
   readonly name: string;
   readonly tools: Tools;
-  /** Image models for agents' `api.images`. */
+  /** Image models: list and use them, and register a provider of them. */
   readonly images: Images;
   readonly prompt: Prompt;
   readonly scripting: Scripting;
@@ -62,11 +62,16 @@ export interface ServerSdk {
   /** Sessions: start them, message them, read them, and hear when the runs of those it started end. Call its
    * methods on it (`reins.sessions.send(…)`): taken off it, they lose it. */
   readonly sessions: Sessions;
-  /** Nodes: the machines sessions work on. Run a command on one. Call `run` on it, as for `sessions`. */
+  /** Nodes: the machines sessions work on, and files and commands on them. Call its methods on it, as for `sessions`. */
   readonly nodes: Nodes;
-  /** Projects, to read. Call `get` on it, as for `sessions`. */
+  readonly ui: Ui;
+  /** The AI providers and their models. */
+  readonly models: Models;
+  /** Code reviews: a calling session's only, so an extension is refused (`Reviews`). */
+  readonly reviews: Reviews;
+  /** Projects. Call its methods on it, as for `sessions`. */
   readonly projects: Projects;
-  /** Tasks, to read. Call `get` on it, as for `sessions`. */
+  /** Tasks, of any project. Call its methods on it, as for `sessions`. */
   readonly tasks: Tasks;
   /**
    * The extension's own directory, `<data dir>/extensions/<name>/` (absolute), which the host creates before
@@ -198,16 +203,23 @@ export interface SessionInfo {
   readonly name: string | null;
   /** The text of its first message (the user's, or what started it); null before it has one. */
   readonly firstMessage: string | null;
-  /** Never shown in the browser (`SessionStart.background`). */
+  /** How many messages its transcript has. */
+  readonly messageCount: number;
+  /** The model it runs; null before it has one. */
+  readonly model: { readonly provider: string; readonly modelId: string; readonly thinkingLevel: ThinkingLevel | "off" } | null;
+  /** Never shown in the browser (`SessionStartOptions.background`). */
   readonly background: boolean;
   /** Its run is in progress now (or input it was given is being admitted). */
   readonly running: boolean;
-  /** Its last run ended with something the user has not opened yet (the browser's amber dot). */
+  /** Its last run ended with something the user has not opened yet (the browser's amber dot). Reading a
+   * session does not mark it read. */
   readonly unread: boolean;
-  /** The extension that started it (`SessionStart`), or null. */
+  /** Pinned above the unpinned sessions of its lists. */
+  readonly pinned: boolean;
+  /** Archived: left out of the session lists. */
+  readonly archived: boolean;
+  /** The extension that started it, or null. */
   readonly startedBy: string | null;
-  /** When it was archived (hidden from the session lists), or null. */
-  readonly archivedAt: string | null;
   /** When its latest run started: the one running now, else the latest that ended; null before its first. A
    * message sent to a running session joins that run, so it does not change this. */
   readonly lastRunStartedAt: string | null;
@@ -240,28 +252,43 @@ export type MessageBlock = string | {
 
 /** What a message carries beside its content, for the extension's own use: any plain JSON object of at most
  * 64 KiB, kept with it in the session's transcript. The model does not get it. The keys Reins sets itself
- * (`sourceExtension`, `sourceSessionId`, `details`) are refused. */
+ * (`sourceExtension`, `sourceSessionId`, `details`) are refused. Extensions only. */
 export type MessageMetadata = Readonly<Record<string, unknown>>;
 
-/** A session to start, with its first prompt. It needs a `source` or a `projectId` (or both). */
-export interface SessionStart {
+/** A model to run a session with. */
+export interface ModelChoice {
+  readonly provider: string;
+  readonly modelId: string;
+  readonly thinkingLevel?: ThinkingLevel;
+}
+
+/**
+ * Where a session starts and how. From an agent's session (a script), what it leaves out is the caller's: its
+ * project, its task (in its own project), its source and its model. An extension has no session: a session it
+ * starts needs a `source` or a `projectId` (or both), and is of no project without one.
+ */
+export interface SessionStartOptions {
+  /** `"current"`: a child of the calling session, which reports its outcome back to it (scripts only); null or
+   * left out: an independent session. A script must give it. */
+  readonly parentSessionId?: "current" | null;
+  /** Its project (`"current"`: the calling session's). In another project than the caller's, it has no task
+   * unless `taskId` names one of it, and works where that project's sessions work. */
+  readonly projectId?: number | "current";
+  /** A task of its project; `"current"` the calling session's; null for a session of no task. */
+  readonly taskId?: number | null | "current";
   /** Where it works: a source's ID, or a node and path (a directory no session used yet is checked on its
-   * node). Without it, the project's: its task's latest session's source, else its default source. */
-  readonly source?: number | Location;
-  /** Its project; without it, the session has none (then `source` is required, and there is no task). */
-  readonly projectId?: number;
-  /** A task of the project. */
-  readonly taskId?: number;
-  readonly prompt: MessageContent;
-  /** The prompt's metadata (`MessageMetadata`). */
-  readonly metadata?: MessageMetadata;
-  /** Its model; without it, the `default_model` setting's. */
-  readonly model?: { readonly provider: string; readonly modelId: string; readonly thinkingLevel?: ThinkingLevel };
-  /** A background session: one the browser never shows (not listed, counted or badged); it runs, settles and
-   * can be read like any other. */
-  readonly background?: boolean;
+   * node). Without it, the caller's (in its project), else the project's: its task's latest session's source,
+   * else its default source. */
+  readonly source?: number | Location | null;
+  /** Its model; without it, the caller's, else the `default_model` setting's. */
+  readonly model?: ModelChoice;
   /** Its name; without it, it is named as any session is. */
   readonly title?: string;
+  /** A background session: one the browser never shows (not listed, counted or badged); it runs, settles and
+   * can be read like any other. Extensions only. */
+  readonly background?: boolean;
+  /** The prompt's metadata (`MessageMetadata`). Extensions only. */
+  readonly metadata?: MessageMetadata;
 }
 
 /** How much of a session's context window its context takes now. */
@@ -282,58 +309,136 @@ export interface SessionSettlement {
   readonly error: string | null;
 }
 
-/**
- * Sessions, as the agents' `api.sessions` has them, for the extension: it acts as no session, so it names
- * where a session works. What it starts and what it sends record the extension as their origin (the
- * session's `startedBy`; its messages' `metadata.sourceExtension`), which the chat shows ("from <name>").
- * Its messages reach the model as they are, like a user's: an extension is trusted code of the server.
- */
-/** Which sessions `Sessions.list` gives: from `offset` on (0 by default), at most `limit` (1 to 200, 50 by default). */
-export interface SessionListQuery {
-  readonly limit?: number;
-  readonly offset?: number;
+/** What `Sessions.wait` saw: a run's end (`completed`, `failed`, `cancelled`), a session at rest with no reply
+ * (`idle`), or its time running out (`timeout`). */
+export interface SessionWaitResult {
+  readonly sessionId: string;
+  readonly status: "idle" | "completed" | "failed" | "cancelled" | "timeout";
+  readonly result: string | null;
+  readonly error: string | null;
 }
 
+/**
+ * Which sessions `Sessions.list` gives. By default those the browser lists (not archived, not background): of
+ * the calling session's project (a session of no project: those of no project on its source), pinned first,
+ * then the latest change; for an extension, of every project and of none, the latest change first, 50 at a time.
+ */
+export interface SessionListQuery {
+  /** A project's sessions; `"current"`: the calling session's project. */
+  readonly projectId?: number | "current";
+  /** One task's sessions (`"current"`: the calling session's), or null for the project's sessions of no task. */
+  readonly taskId?: number | null | "current";
+  /** Only those changed since then (an ISO time). */
+  readonly since?: string;
+  /** 1 to 200. */
+  readonly limit?: number;
+  readonly offset?: number;
+  /** Words in its ID, name, task's title or messages. */
+  readonly search?: string;
+  /** Only those with at least this many messages. */
+  readonly minMessages?: number;
+  /** `"exclude"` (the default), `"only"` or `"include"` background sessions. */
+  readonly background?: "exclude" | "only" | "include";
+}
+
+/** Which entries of a session's transcript `Sessions.entries` gives. */
+export interface SessionEntryQuery {
+  readonly types?: readonly ("user" | "assistant" | "compactionSummary" | "toolCall")[];
+  readonly toolName?: string;
+  readonly isError?: boolean;
+  readonly since?: string;
+  readonly afterSeq?: number;
+  readonly beforeSeq?: number;
+  readonly limit?: number;
+  readonly search?: string;
+  readonly order?: "asc" | "desc";
+  /** Give tool results' whole content, not only a preview. */
+  readonly includeContent?: boolean;
+}
+
+/** An entry of a session's transcript: a message, or a tool call with its result joined. */
+export type SessionEntry =
+  | {
+    readonly sessionId: string;
+    readonly seq: number;
+    readonly createdAt: string;
+    readonly type: "user" | "assistant" | "compactionSummary";
+    readonly role: string;
+    readonly content?: unknown;
+    readonly summary?: string;
+  }
+  | {
+    readonly sessionId: string;
+    readonly seq: number;
+    readonly createdAt: string;
+    readonly type: "toolCall";
+    readonly id: string;
+    readonly name: string;
+    readonly arguments: unknown;
+    readonly result: { readonly seq: number; readonly createdAt: string; readonly isError: boolean; readonly contentPreview: string; readonly content?: unknown } | null;
+  };
+
+/**
+ * Sessions, as agents' `reins.sessions` has them: any session can be read, messaged, waited for and changed. The
+ * caller decides the defaults (`SessionStartOptions`, `SessionListQuery`) and the origin of what it starts and
+ * sends: an extension's sessions and messages record it (the session's `startedBy`; its messages'
+ * `metadata.sourceExtension`), which the chat shows ("from <name>"); its messages reach the model as they are,
+ * like a user's, as an extension is trusted code of the server. `"current"` names the calling session, its
+ * project or its task, and an extension, which has none, is refused it.
+ */
 export interface Sessions {
-  /** The session; rejects for one the server does not have. */
+  /** The session; rejects for one the server does not have ("Session not found: <id>"). */
   get(sessionId: string): Promise<SessionInfo>;
-  /**
-   * The sessions the browser lists (not archived, not background), of every project and of none, the latest
-   * change first (`updatedAt`: a run ending, a rename). Page through them with `offset`. Rejects a `limit` or
-   * `offset` out of range.
-   */
+  /** The calling session; an extension has none, and is refused. */
+  current(): Promise<SessionInfo>;
+  /** The sessions `query` asks for (`SessionListQuery`). Rejects a `limit` or `offset` out of range. */
   list(query?: SessionListQuery): Promise<SessionInfo[]>;
+  /** The entries of its transcript (`SessionEntryQuery`). */
+  entries(sessionId: string, query?: SessionEntryQuery): Promise<SessionEntry[]>;
   /**
    * Creates a session and submits its prompt; resolves with its ID once Pi admitted the prompt, without
-   * waiting for the run. Rejects, keeping nothing, with neither a source nor a project, an unknown
-   * project, task (or a task of another project), source or node, a path that is not a directory on its
-   * node, a model the server does not have, a blank prompt or title, and a prompt the session refuses.
+   * waiting for the run. Rejects, keeping nothing, for a place it cannot be (no source and no project from an
+   * extension, an unknown project, task (or a task of another project), source or node, a path that is not a
+   * directory on its node), a model the server does not have, a blank prompt or title, a child more than 3
+   * deep; a prompt the session refuses rejects and leaves the session, to be sent to again or moved.
    */
-  start(session: SessionStart): Promise<string>;
+  start(prompt: MessageContent, options?: SessionStartOptions): Promise<{ sessionId: string }>;
   /**
-   * Submits `message` to the session, as the agents' `api.sessions.send` does: it steers it, so a running
-   * session takes it into its work and an idle one starts a run with it; resolves once Pi admitted it, not
-   * when the work ends. It does not look at whether the session is busy: `get` tells. Rejects for an unknown
-   * session, content or metadata their rules refuse (`MessageContent`, `MessageMetadata`), and one the session
-   * refuses (its node was removed).
+   * Submits `message` to the session: it steers it, so a running session takes it into its work and an idle
+   * one starts a run with it; resolves once Pi admitted it, not when the work ends. It does not look at whether
+   * the session is busy: `get` tells. From a script it reaches the model as a session update from the caller.
+   * Rejects for an unknown session, content or metadata their rules refuse (`MessageContent`,
+   * `MessageMetadata`), and one the session refuses (its node was removed).
    */
-  send(sessionId: string, message: MessageContent, options?: { metadata?: MessageMetadata }): Promise<void>;
+  send(sessionId: string, message: MessageContent, options?: { readonly metadata?: MessageMetadata }): Promise<void>;
+  /**
+   * Waits for the session to be at rest, at most `timeoutMs` (0 to 30 000; 10 000 by default), and gives its
+   * latest outcome. A session at rest answers at once. Rejects for an unknown session, and for a script's own.
+   */
+  wait(sessionId: string, timeoutMs?: number): Promise<SessionWaitResult>;
   /**
    * Compacts the session's context now (a summary replaces its history; `instructions` focus the summary),
    * as the composer's `/compact` does, in order with what was submitted to it before. Resolves once the
    * compaction started, not when it ends: the session reads `running` until then. Rejects for an unknown
    * session, a running one ("compact it once it is idle") and one with nothing to compact. The model already
-   * compacts by itself near the context limit: this is for a lower limit of the extension's own.
+   * compacts by itself near the context limit: this is for a lower limit of the caller's own.
    */
-  compact(sessionId: string, options?: { instructions?: string }): Promise<void>;
+  compact(sessionId: string, options?: { readonly instructions?: string }): Promise<void>;
   /** How full the session's context is (`ContextUsage`); null when it is not known (no model yet, or one the
    * server no longer has). Rejects for an unknown session. */
   contextUsage(sessionId: string): Promise<ContextUsage | null>;
+  /** Sets its model from its next turn on; `thinkingLevel` defaults to its own. Rejects for a model the server
+   * does not have. */
+  setModel(sessionId: string, provider: string, modelId: string, thinkingLevel?: ThinkingLevel): Promise<SessionInfo>;
+  /** Renames it (trimmed, not blank), or with null gives it back its fallback label. */
+  setName(sessionId: string, name: string | null): Promise<SessionInfo>;
+  setPinned(sessionId: string, pinned: boolean): Promise<SessionInfo>;
+  setArchived(sessionId: string, archived: boolean): Promise<SessionInfo>;
   /**
    * Tells `listener` each time a run of a session this extension started ends, once its end is recorded,
    * with its outcome and final reply. Only the extension's own sessions (`startedBy`), and only while the
    * listener is registered: a run that ends while no app runs (during a dev reload's gap) is not told, so
-   * read what a listener missed with `get`. A throw or rejection is the extension's error, logged.
+   * read what a listener missed with `get`. A throw or rejection is the extension's error, logged. Extensions only.
    */
   onSettled(listener: (settlement: SessionSettlement) => void | Promise<void>): Disposer;
 }
@@ -345,26 +450,63 @@ export interface Sessions {
 export interface ProjectInfo {
   readonly id: number;
   readonly name: string;
+  /** The branch its tasks' branches start from and its diffs compare with. */
+  readonly baseBranch: string;
+  /** Its default source: where it was created, where a new session of it works unless told otherwise. */
+  readonly defaultSourceId: number | null;
+  readonly createdAt: string;
+  readonly lastOpenedAt: string;
 }
 
+/** Projects. Any project can be read; `"current"` and `current()` are the calling session's (scripts only). */
 export interface Projects {
+  list(): Promise<ProjectInfo[]>;
   /** The project; rejects for one the server does not have ("Project not found: <id>"). */
   get(projectId: number): Promise<ProjectInfo>;
+  /** The calling session's project, or null for a session of no project; an extension has none, and is refused. */
+  current(): Promise<ProjectInfo | null>;
+  /** Creates a project whose default source is `path` on node `nodeId` (by default the calling session's node;
+   * an extension must name it), a directory there; detects its base branch there unless given. */
+  create(name: string, path: string, baseBranch?: string, nodeId?: string): Promise<ProjectInfo>;
 }
 
 export interface TaskInfo {
   readonly id: number;
   readonly projectId: number;
   readonly title: string;
+  readonly description: string | null;
+  /** The git branch its sessions work on. */
+  readonly branchName: string;
+  /** What its diffs compare with, when not its project's base branch. */
+  readonly baseCommit: string | null;
+  readonly status: "open" | "closed";
   /** When it was closed; null while it is open. Reopening it clears this. */
   readonly closedAt: string | null;
   readonly createdAt: string;
   readonly updatedAt: string;
 }
 
+/** What `Tasks.update` changes; what it leaves out is kept. */
+export interface TaskChanges {
+  readonly title?: string;
+  readonly description?: string;
+  readonly baseCommit?: string;
+}
+
+/** Tasks, of any project; a project left out (or `"current"`) is the calling session's, which an extension
+ * must name, and a session of no project too (tasks belong to projects). */
 export interface Tasks {
+  /** The project's tasks, open ones first; only those of `status` when given. */
+  list(status?: "open" | "closed", projectId?: number | "current"): Promise<TaskInfo[]>;
   /** The task; rejects for one the server does not have ("Task not found: <id>"). */
   get(taskId: number): Promise<TaskInfo>;
+  /** The calling session's task, or null for a session of no task; an extension has none, and is refused. */
+  current(): Promise<TaskInfo | null>;
+  /** Creates a task and names its branch (from the title unless `branchName` is given); no checkout is touched. */
+  create(title: string, description: string, branchName?: string, projectId?: number | "current"): Promise<TaskInfo>;
+  update(taskId: number, changes: TaskChanges): Promise<TaskInfo>;
+  close(taskId: number): Promise<TaskInfo>;
+  reopen(taskId: number): Promise<TaskInfo>;
 }
 
 // ---------------------------------------------------------------------------
@@ -390,15 +532,100 @@ export interface CommandOptions {
   readonly signal?: AbortSignal;
 }
 
+/** A node as `Nodes.list` gives it. */
+export interface NodeInfo {
+  readonly id: string;
+  readonly name: string;
+  /** The machine's hostname, as it said when it paired; null for a node never paired (the local one). */
+  readonly hostname: string | null;
+  readonly connected: boolean;
+  /** Revoked: it may not connect. */
+  readonly revoked: boolean;
+  /** The calling session runs its tools on it (never, for an extension). */
+  readonly current: boolean;
+  /** How many sources (directories sessions work in) are in use on it. */
+  readonly sourceCount: number;
+}
+
+export interface NodeDetail extends NodeInfo {
+  /** The sources in use on it, by path, each with the projects whose sessions work there or whose default source it is. */
+  readonly sources: readonly { readonly sourceId: number; readonly path: string; readonly projects: readonly { readonly id: number; readonly name: string }[] }[];
+}
+
+/**
+ * Nodes: the machines sessions work on, and files and commands on any of them. A node is named by its ID (stable:
+ * prefer it to keep) or its name (any case); `"current"` is the calling session's (scripts only), also the default
+ * where a node may be left out, so an extension names it. Nothing is confined: files and commands are the node's
+ * user's, as a session's are. An unknown or removed node rejects ("Node not found: <node> (the nodes: …)"), and one
+ * that is not connected now too ("Node unavailable: …"): nothing waits for it. What a call reads is held in the
+ * server's memory: at most 16 MiB.
+ */
 export interface Nodes {
+  /** The nodes not removed, in name order. */
+  list(): Promise<NodeInfo[]>;
+  /** A node with the sources in use on it. */
+  get(node?: string): Promise<NodeDetail>;
+  /** Restarts a node on its current code; resolves once the reload is scheduled. `force`: after 60 s, cut off the
+   * calls still in flight instead of giving up. */
+  reload(node?: string, force?: boolean): Promise<{ nodeId: string; scheduled: true }>;
+  /** A whole file, as text (UTF-8) or with `binary` as bytes; a file over 16 MiB rejects (copy it with `copy`). */
+  readFile(node: string, path: string, options?: { readonly binary?: boolean; readonly signal?: AbortSignal }): Promise<string | Uint8Array>;
+  /** Writes a whole file, making its directories and replacing a file there. */
+  writeFile(node: string, path: string, content: string | Uint8Array, options?: { readonly signal?: AbortSignal }): Promise<void>;
+  /** Copies a file of any size from one node to another (or within one); the file there is replaced once the whole
+   * file has arrived. */
+  copy(fromNode: string, fromPath: string, toNode: string, toPath: string, options?: { readonly signal?: AbortSignal }): Promise<{ bytes: number }>;
   /**
-   * Runs a bash command on a node, named by its ID (stable: prefer it to keep) or its name (any case). It runs as
-   * the node's user, with nothing confined: as a session's commands do. A command that fails resolves with its
-   * exit code; `run` rejects for a blank command, a timeout out of range, an unknown or removed node, one that is
-   * not connected now (it does not wait for the node), the timeout and the signal. The output is held in the
-   * server's memory until it resolves.
+   * Runs a bash command on a node. A command that fails resolves with its exit code; `run` rejects for a blank
+   * command, a timeout out of range (an extension's: 1 to 600 000), the timeout and the signal.
    */
   run(node: string, command: string, options?: CommandOptions): Promise<CommandResult>;
+}
+
+// ---------------------------------------------------------------------------
+// UI, models and code reviews
+// ---------------------------------------------------------------------------
+
+/** What browsers show. */
+export interface Ui {
+  /** Sends any frontend message to every browser (debugging; `ServerSdk.broadcast` is the extension's own channel). */
+  broadcast(message: unknown): Promise<string>;
+  /** Opens a file in the file browser of the users viewing a session (a script's own; an extension names it with
+   * `sessionId`), highlighting `startLine`–`endLine`; rejects when the file is not on the node. */
+  openFile(path: string, options?: { readonly node?: string; readonly startLine?: number; readonly endLine?: number; readonly sessionId?: string }): Promise<string>;
+}
+
+/** An AI provider and its models. */
+export interface ProviderInfo {
+  readonly runtimeType: string;
+  readonly provider: string;
+  readonly isAvailable: boolean;
+  readonly availabilitySource: "db" | "env" | "oauth" | "local" | null;
+  readonly availabilitySources: readonly ("db" | "env" | "oauth" | "local")[];
+  readonly models: readonly { readonly id: string; readonly name: string; readonly reasoning: boolean; readonly contextWindow: number; readonly maxTokens: number }[];
+}
+
+export interface Models {
+  list(): Promise<ProviderInfo[]>;
+  listProviders(): Promise<string[]>;
+}
+
+/** A pending code review: its annotations (comments anchored in a diff, with their threads). */
+export interface CodeReview {
+  readonly id: string;
+  readonly projectId: number;
+  readonly taskId: number | null;
+  readonly revision: number;
+  readonly annotations: readonly unknown[];
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+/** The pending code review of the calling session's project and task. It is about that session's branch diff, so
+ * an extension, which has none, is refused. */
+export interface Reviews {
+  current(): Promise<CodeReview | null>;
+  addComment(path: string, line: number, body: string, options?: { readonly endLine?: number; readonly side?: "old" | "new"; readonly author?: string }): Promise<CodeReview>;
 }
 
 /** A JSON Schema object, as JSON Schema defines it (a TypeBox schema is one). */
@@ -437,6 +664,10 @@ export interface ImagesProvider {
 }
 
 export interface Images {
+  /** Every provider's model IDs, `<extension>__<model>` (a provider's throw rejects the list). */
+  list(options?: { readonly signal?: AbortSignal }): Promise<string[]>;
+  /** Makes images with `model` (by default the first listed); `images` takes what a script's `image()` takes. */
+  generate(prompt: string, options?: { readonly model?: string; readonly images?: unknown; readonly size?: string; readonly count?: number; readonly parameters?: Readonly<Record<string, unknown>>; readonly signal?: AbortSignal }): Promise<{ model: string; images: ImageBlock[] }>;
   /** One per extension: a second throws while the first is registered. */
   registerProvider(provider: ImagesProvider): Disposer;
 }
@@ -453,7 +684,7 @@ export interface ToolAnnotations {
   openWorldHint?: boolean;
 }
 
-/** A tool an agent can call through `api.tools.call(id, args)`. */
+/** A tool an agent can call through `reins.tools.call(id, args)`. */
 export interface Tool {
   /**
    * Its local ID: unique among the extension's tools, and stable, as an agent may call it from an earlier
@@ -484,7 +715,7 @@ export interface ToolResult {
   isError?: boolean;
 }
 
-/** What an agent gives `api.tools.search` to narrow it, given to every provider as it is. Each provider decides
+/** What an agent gives `reins.tools.search` to narrow it, given to every provider as it is. Each provider decides
  * what its keys mean, and what it does with keys it does not know: the core makes no rule. A provider tells
  * agents its filters in its prompt section. */
 export type ToolFilters = Readonly<Record<string, unknown>>;
@@ -512,7 +743,34 @@ export interface ToolProvider {
   call(localId: string, args: Record<string, unknown>, options: { signal: AbortSignal; timeoutMs?: number }): Promise<ToolResult>;
 }
 
+/** What one provider answered a search: its matching tools (by their final IDs, best first), or why it could not. */
+export type ToolSearchGroup = { readonly title: string; readonly tools: readonly Tool[] } | { readonly title: string; readonly error: string };
+
+export interface ToolSearchOptions {
+  /** Given to every provider as they are (`ToolFilters`). */
+  readonly filters?: ToolFilters;
+  readonly signal?: AbortSignal;
+}
+
+export interface ToolCallOptions {
+  /** How long to wait for it; the provider's default otherwise. */
+  readonly timeoutMs?: number;
+  readonly signal?: AbortSignal;
+}
+
 export interface Tools {
+  /**
+   * The tools of every extension (its own too) that match `query` and `options.filters`, as agents' `reins.tools.search`
+   * finds them: each provider asked at the same time, in the order of registration, its tools by their final IDs
+   * (`<extension>__<local ID>`). A provider that throws is a group with its `error`, and the others still answer.
+   */
+  search(query: string, options?: ToolSearchOptions): Promise<ToolSearchGroup[]>;
+  /**
+   * Runs a tool by its final ID, as agents' `reins.tools.call` does, on the provider of the extension its prefix names.
+   * A failure the tool reports is a result with `isError`; an unknown ID ("Unknown tool: …") and a tool that cannot
+   * be run reject.
+   */
+  call(id: string, args?: Record<string, unknown>, options?: ToolCallOptions): Promise<ToolResult>;
   /** Registers the extension's tool provider. An extension has one at a time: registering a second while it
    * has one throws. */
   register(provider: ToolProvider): Disposer;
@@ -550,10 +808,45 @@ export interface Prompt {
 }
 
 // ---------------------------------------------------------------------------
-// Scripting: an extension's own `api.<namespace>` in `execute`
+// Scripting: an extension's own `reins.<namespace>` in `execute`
 // ---------------------------------------------------------------------------
 
-/** What a scripting function runs for: the agent's session, and its script's signal. */
+/**
+ * A positional argument of a method that agents' scripts call (`reins.<namespace>.<method>(…)`): its name, as `search`
+ * documents it, and its schema, which the host checks a script's argument against before the call. Only the last
+ * arguments may be `optional`. A property of an object schema with `scripts: false` (an `AbortSignal`, an option only
+ * an extension may set) is not for scripts: `search` leaves it out, and a script that gives it is refused.
+ */
+export interface ScriptParam {
+  readonly name: string;
+  readonly schema: JsonSchema;
+  readonly optional?: boolean;
+}
+
+/** The arguments that `params` declare, in order: each its schema's type, the optional ones possibly left out. */
+export type ScriptArgs<P extends readonly ScriptParam[]> = P extends readonly [infer Head extends ScriptParam, ...infer Rest extends readonly ScriptParam[]]
+  ? Head extends { readonly optional: true }
+    ? [arg?: SchemaType<Head["schema"]>, ...rest: ScriptArgs<Rest>]
+    : [arg: SchemaType<Head["schema"]>, ...rest: ScriptArgs<Rest>]
+  : [];
+
+/**
+ * A method callable from agents' scripts, declared once: its documentation (`search` shows `description`, the
+ * params and `returns`, and matches `tags`), the schemas a script's arguments are checked against, and `run`,
+ * its implementation, whose arguments are the params' types. `context` says who calls it. A script gets what `run`
+ * resolves to, or `toScript` of it when `returns` documents another form (what an agent reads best).
+ */
+export interface ScriptMethod<C, P extends readonly ScriptParam[], R extends JsonSchema, T = SchemaType<R>> {
+  readonly description: string;
+  readonly params: P;
+  readonly returns: R;
+  /** Lowercase words `search` also matches. */
+  readonly tags: readonly string[];
+  run(context: C, ...args: ScriptArgs<P>): Promise<T>;
+  toScript?(result: T, ...args: ScriptArgs<P>): SchemaType<R>;
+}
+
+/** What an extension's script method runs for: the agent's session (its script's caller), and its script's signal. */
 export interface ScriptContext {
   sessionId: string;
   /** Null when the agent's session has no project. */
@@ -562,32 +855,35 @@ export interface ScriptContext {
   signal?: AbortSignal;
 }
 
-/**
- * A function of `api` in `execute`, which `search` documents. A script calls it with positional
- * arguments, in the order of the parameters' properties: `api.mcp.get(server)` for
- * `{ server: … }`. Its result reaches the script as it is; a throw reaches it as an error.
- */
-export interface ScriptFunction {
-  /** `<namespace>.<method>`, e.g. `mcp.list`. */
-  name: string;
-  description: string;
-  /** An object schema: its properties are the arguments, in order. */
-  parameters: JsonSchema;
-  returns: JsonSchema;
-  /** It returns a promise. */
-  async?: boolean;
-  /** Lowercase words `search` also matches. */
-  tags: string[];
-  execute(params: Record<string, unknown>, context: ScriptContext): unknown;
+/** A `ScriptMethod` of any arguments, as a namespace holds them. */
+export interface AnyScriptMethod<C> {
+  readonly description: string;
+  readonly params: readonly ScriptParam[];
+  readonly returns: JsonSchema;
+  readonly tags: readonly string[];
+  run(context: C, ...args: any[]): Promise<unknown>;
+  toScript?(result: any, ...args: any[]): unknown;
 }
 
-/** A schema that `search` shows by its name where a function's parameters or result use it (by identity). */
-export interface ScriptType { name: string; schema: JsonSchema }
+/**
+ * A namespace of `reins` in `execute`, which `search` documents: the core's (`reins.sessions`, the SDK's own methods)
+ * and an extension's (`reins.mcp`). A script calls `reins.<namespace>.<method>(…)` with positional arguments, in the
+ * order of the method's `params`, checked against their schemas before `run`. Its result reaches the script as it
+ * is; a throw reaches it as an error.
+ */
+export interface ScriptNamespace<C = ScriptContext> {
+  /** Lowercase letters and digits, starting with a letter: `mcp` for `reins.mcp`. */
+  readonly namespace: string;
+  /** By name (`[a-z][A-Za-z0-9]*`): `list` for `reins.mcp.list(…)`. */
+  readonly methods: Readonly<Record<string, AnyScriptMethod<C>>>;
+  /** Schemas that `search` shows by their name where a method's params or result use them (by identity). */
+  readonly types?: Readonly<Record<string, JsonSchema>>;
+}
 
 export interface Scripting {
-  /** Adds functions to `api`. Their namespaces must not be the core's or another registration's: that
-   * throws. */
-  register(functions: { functions: readonly ScriptFunction[]; types?: readonly ScriptType[] }): Disposer;
+  /** Adds a namespace to scripts' `reins`. It must not be the core's or another registration's, and its params' schemas must be
+   * TypeBox schemas (the host checks a script's arguments with them): else it throws. */
+  register(namespace: ScriptNamespace): Disposer;
 }
 
 // ---------------------------------------------------------------------------

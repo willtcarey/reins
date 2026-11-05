@@ -22,7 +22,7 @@ export function formatValue(value: unknown): string {
 
 /**
  * The images in `value`: `{ data, mimeType }` (data base64 or bytes; an image block is one), an object with
- * `images` (`api.images.generate`'s result) or `content` (a tool's result), or an array of these. Values come
+ * `images` (`reins.images.generate`'s result) or `content` (a tool's result), or an array of these. Values come
  * from the script's vm, so nothing is checked with `instanceof`.
  */
 export function collectImages(value: unknown): ScriptImageBlock[] {
@@ -38,7 +38,7 @@ export function collectImages(value: unknown): ScriptImageBlock[] {
   }
   if ("images" in value && Array.isArray(value.images)) return collectImages(value.images);
   if ("content" in value && Array.isArray(value.content)) return collectImages(value.content.filter(block => block?.type === "image"));
-  throw new Error("not an image: give { data, mimeType }, an api.images.generate result or a tool result");
+  throw new Error("not an image: give { data, mimeType }, an reins.images.generate result or a tool result");
 }
 
 /** Scaled down as `read` does, with Pi's note when it was; a note in its place when it cannot fit. */

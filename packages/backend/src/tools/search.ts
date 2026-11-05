@@ -9,10 +9,10 @@
  * the full API spec on every call.
  */
 
-import { searchFunctions, referencedTypes, scriptingApi, type NamedType } from "../scripting/api-registry.js";
+import { searchFunctions, referencedTypes, scriptingApi, type NamedType } from "../sdk-host/scripts.js";
 import type { ExtensionHost } from "../extensions/host.js";
-import type { ApiFunctionDef } from "../scripting/define-function.js";
-import { formatApiInterfaces, formatTypeDeclaration, type SchemaNameMap } from "../scripting/api-schema-formatter.js";
+import type { ScriptFunction } from "../sdk-host/projection.js";
+import { formatApiInterfaces, formatTypeDeclaration, type SchemaNameMap } from "../sdk-host/schema-formatter.js";
 
 /** Build a map from schema identity → display name for all domain types. */
 function buildNameMap(types: readonly NamedType[]): SchemaNameMap {
@@ -27,7 +27,7 @@ function buildNameMap(types: readonly NamedType[]): SchemaNameMap {
  * Format search results into a readable text block for the agent.
  * Includes function signatures, descriptions, and referenced type definitions.
  */
-function formatResults(fns: ApiFunctionDef[], types: readonly NamedType[]): string {
+function formatResults(fns: ScriptFunction[], types: readonly NamedType[]): string {
   if (fns.length === 0) {
     return "No matching API functions found. Try a broader query, or use an empty string to see the full API surface.";
   }
@@ -42,10 +42,10 @@ function formatResults(fns: ApiFunctionDef[], types: readonly NamedType[]): stri
   return [
     "## API documentation",
     "",
-    "Documentation only: these TypeScript interfaces describe the existing `api` object " +
+    "Documentation only: these TypeScript interfaces describe the existing `reins` object " +
       "available inside `execute` scripts. They may be partial: only functions matched by " +
-      "this search are shown. Do not construct or import `Api`; call methods positionally " +
-      "on the provided `api`, e.g. `api.tasks.update(taskId, updates)`.",
+      "this search are shown. Do not construct or import `Reins`; call methods positionally " +
+      "on the provided `reins`, e.g. `reins.tasks.update(taskId, updates)`.",
     "",
     "```typescript",
     code,

@@ -10,14 +10,14 @@ Automations wake sessions up. They come from the built-in **automations** extens
   - **Its own session**: a hidden session that the automation starts at its first delivery and keeps, so each run can see what earlier runs found.
   - **A new session each time**: each delivery starts a fresh session, for work that should start clean each time.
 
-There is no Automations tab yet. You ask an agent, and the agent uses `api.automations.create` (in `execute`). Agents are told about automations in their system prompt: when you ask one to watch for something or to tell you later ("tell me when this deploys", "let me know when CI passes"), it makes an automation and ends its turn, rather than waiting. If it can do the work itself with a command that ends within a few minutes, it runs the command instead. Settings → Extensions shows the extension, its functions and its **scheduler** service.
+There is no Automations tab yet. You ask an agent, and the agent uses `reins.automations.create` (in `execute`). Agents are told about automations in their system prompt: when you ask one to watch for something or to tell you later ("tell me when this deploys", "let me know when CI passes"), it makes an automation and ends its turn, rather than waiting. If it can do the work itself with a command that ends within a few minutes, it runs the command instead. Settings → Extensions shows the extension, its functions and its **scheduler** service.
 
 ## "Tell me when this PR merges"
 
 Ask the agent in the session: *"Tell me when PR 42 merges."* The agent makes a command automation:
 
 ```js
-await api.automations.create({
+await reins.automations.create({
   trigger: { command: "gh pr view 42 --json state -q .state | grep -x MERGED", every: "2m" },
   message: "PR 42 has merged: tell the user.",
   once: true,
@@ -51,7 +51,7 @@ The message comes into the chat as it was written, with **sent from automations 
 Ask any agent: *"Every day at 09:00 London time, list my new GitHub notifications."* The agent makes an automation with its own session:
 
 ```js
-await api.automations.create({
+await reins.automations.create({
   trigger: { schedule: "daily 09:00", timezone: "Europe/London" },
   target: "own",
   name: "GitHub notifications",
@@ -61,9 +61,9 @@ await api.automations.create({
 
 - At its first delivery the automation starts its **hidden session**. Later deliveries go to the **same** session. The browser does not show hidden sessions.
 - By default the session works in the directory of the session that asked, with no project. The agent can give another location (`source`) and a model (`model`).
-- **Each run's output is its final reply.** The agent reads them with `api.automations.runs(id)`: when each run started and ended, its outcome (`completed`, `failed`, `skipped`, `lost` when Reins restarted during the run), and its output or error. An automation also shows how many of its latest runs failed in a row (`consecutiveFailures`).
+- **Each run's output is its final reply.** The agent reads them with `reins.automations.runs(id)`: when each run started and ended, its outcome (`completed`, `failed`, `skipped`, `lost` when Reins restarted during the run), and its output or error. An automation also shows how many of its latest runs failed in a row (`consecutiveFailures`).
 - **Compaction.** The model compacts the session by itself near its context limit. The automation can set a lower limit (`compactAboveTokens`): after a run that ends above it, Reins compacts the session, and the summary keeps what later runs need.
-- **A broken session.** If the session goes wrong, ask the agent to replace it (`api.automations.replaceSession(id)`): the next delivery starts a new hidden session. If the hidden session is deleted, the next delivery also starts a new one.
+- **A broken session.** If the session goes wrong, ask the agent to replace it (`reins.automations.replaceSession(id)`): the next delivery starts a new hidden session. If the hidden session is deleted, the next delivery also starts a new one.
 
 A command trigger works with its own session too: the session runs only when the command fires.
 
@@ -76,7 +76,7 @@ For work that should start clean each time, use `target: "new"`. Each delivery s
 - If the project is deleted, each delivery fails and is recorded in the runs. The automation is not cancelled.
 
 ```js
-await api.automations.create({
+await reins.automations.create({
   trigger: { command: "gh pr list --search 'author:app/dependabot -label:agent-reviewed' --limit 1 --json number,title,url -q '.[] | \"#\\(.number) \\(.title) \\(.url)\"' | grep .", every: "30m" },
   target: "new",
   name: "Dependabot review",
@@ -88,7 +88,7 @@ await api.automations.create({
 - The PR's line goes to the new session in the message's details.
 - **A delivery is skipped while the session that the previous one started is still running**, so two sessions do not take the same PR.
 - `--limit 1` gives one PR per session. Without it, one session gets all the waiting PRs.
-- Each run records its session and final reply (`api.automations.runs(id)`).
+- Each run records its session and final reply (`reins.automations.runs(id)`).
 
 ## Schedules
 
@@ -105,11 +105,11 @@ Times are in a `timezone` (an IANA name such as `Europe/London`; by default the 
 
 ## Cancel
 
-- **Ask the agent:** *"Stop watching the PR."* It calls `api.automations.cancel(id)`. To find the ID, it calls `api.automations.list()` (the automations that message this session or that it made) or `api.automations.list({ all: true })`.
+- **Ask the agent:** *"Stop watching the PR."* It calls `reins.automations.cancel(id)`. To find the ID, it calls `reins.automations.list()` (the automations that message this session or that it made) or `reins.automations.list({ all: true })`.
 - **Archive or delete the session.** This cancels the automations that message it. (It does not cancel those with their own session that it made.)
 - **Over HTTP:** `POST /api/extensions/automations/cancel` with `{ "id": … }` (the later Automations tab uses this).
 
-A cancelled automation never fires again. Its run history stays: `api.automations.list({ all: true, includeCancelled: true })` shows who or what cancelled it.
+A cancelled automation never fires again. Its run history stays: `reins.automations.list({ all: true, includeCancelled: true })` shows who or what cancelled it.
 
 ## Limits
 

@@ -49,4 +49,18 @@ describe("reins.nodes", () => {
     await expect(reins.nodes.run("away", "true")).rejects.toThrow('Node unavailable: "Away" (away) is not connected');
     await expect(reins.nodes.run("nowhere", "true")).rejects.toThrow("Node not found: nowhere");
   });
+
+  test("reads, writes and copies files on a node and lists the nodes, as scripts do; it names the node, as it has no \"current\"", async () => {
+    await reins.nodes.writeFile("mini", join(dir, "notes/plan.md"), "# Plan\n");
+    const copied = await reins.nodes.copy("Mac mini", join(dir, "notes/plan.md"), "mini", join(dir, "copy/plan.md"));
+
+    expect(await reins.nodes.readFile("mini", join(dir, "copy/plan.md"))).toBe("# Plan\n");
+    expect(copied).toEqual({ bytes: 7 });
+    expect((await reins.nodes.list()).map(({ id, connected, current }) => ({ id, connected, current }))).toEqual([
+      { id: "away", connected: false, current: false },
+      { id: "internal", connected: false, current: false },
+      { id: "mini", connected: true, current: false },
+    ]);
+    await expect(reins.nodes.get()).rejects.toThrow("\"current\" names the calling session's node, and an extension has none: name the node");
+  });
 });

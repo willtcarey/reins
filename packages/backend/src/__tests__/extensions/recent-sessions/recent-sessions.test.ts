@@ -13,8 +13,8 @@ import { buildRouter } from "../../../routes/index.js";
 const router = buildRouter();
 /** A session as the SDK gives it, of task 5 of project 1 unless `taskId` says otherwise. */
 const session = (id: string, lastRunStartedAt: string | null, updatedAt: string, taskId: number | null = 5): SessionInfo => ({
-  id, source: { id: 1, nodeId: "internal", path: "/tmp/api" }, projectId: 1, taskId, parentSessionId: null, name: id, firstMessage: null,
-  background: false, running: false, unread: false, startedBy: null, archivedAt: null, lastRunStartedAt, lastRunId: null, createdAt: updatedAt, updatedAt,
+  id, source: { id: 1, nodeId: "internal", path: "/tmp/api" }, projectId: 1, taskId, parentSessionId: null, name: id, firstMessage: null, messageCount: 0, model: null,
+  background: false, running: false, unread: false, pinned: false, archived: false, startedBy: null, lastRunStartedAt, lastRunId: null, createdAt: updatedAt, updatedAt,
 });
 const setUpdated = (id: string, at: string) => getDb().query("UPDATE sessions SET updated_at = ? WHERE id = ?").run(at, id);
 
@@ -59,10 +59,12 @@ describe("the Recent sessions extension", () => {
       session("never-ran", null, "2026-01-02T00:00:00.000Z"),
       session("no-task", null, "2026-01-01T00:00:00.000Z", null),
     ];
-    const task: TaskInfo = { id: 5, projectId: 1, title: "Ship it", closedAt, createdAt: closedAt, updatedAt: closedAt };
+    const task: TaskInfo = {
+      id: 5, projectId: 1, title: "Ship it", description: null, branchName: "task/ship-it", baseCommit: null, status: "closed", closedAt, createdAt: closedAt, updatedAt: closedAt,
+    };
     const reads: RecentReads = {
       sessions: { list: async ({ offset = 0 } = {}) => offset === 0 ? sessions : [] },
-      projects: { get: async () => ({ id: 1, name: "Api" }) },
+      projects: { get: async () => ({ id: 1, name: "Api", baseBranch: "main", defaultSourceId: 1, createdAt: closedAt, lastOpenedAt: closedAt }) },
       tasks: { get: async () => task },
     };
 

@@ -3,7 +3,7 @@ import { Type } from "@sinclair/typebox";
 import type { Database } from "bun:sqlite";
 import { statSync } from "fs";
 import { join } from "path";
-import type { HttpApi, ServerSdk, ToolResult } from "@reins/sdk/server";
+import type { HttpApi, ScriptNamespace, ServerSdk, ToolResult } from "@reins/sdk/server";
 import { runScript } from "../../tools/execute.js";
 import { searchScriptApi } from "../../tools/search.js";
 import { buildRouter } from "../../routes/index.js";
@@ -22,7 +22,8 @@ const router = buildRouter();
 const firstId = (text: string) => /^ {2}(\w+)\(/m.exec(text)?.[1];
 /** A value of any type, as an extension without TypeScript can give one. */
 const untyped = (value: unknown) => JSON.parse(JSON.stringify({ value })).value;
-const fn = (name: string) => ({ name, description: "", parameters: { type: "object", properties: {} }, returns: {}, tags: [], execute: () => null });
+/** A namespace of one method, `one`, that takes nothing and gives null. */
+const namespace = (name: string): ScriptNamespace => ({ namespace: name, methods: { one: { description: "", params: [], returns: {}, tags: [], run: async () => null } } });
 
 function script(state: TestAppState, signal?: AbortSignal, caller: ScriptCaller = {}) {
   return async (code: string) => {
@@ -35,17 +36,17 @@ function script(state: TestAppState, signal?: AbortSignal, caller: ScriptCaller 
 describe("the server SDK's host", () => {
   useTestDb();
 
-  describe("api.tools", () => {
+  describe("reins.tools", () => {
     test("search asks every provider with the query and the filters as they are, and documents the matches by their final IDs, <extension>__<local ID>", async () => {
       const first = testExtension({ title: "Deploys", tools: [testTool("vercel__list_deployments", "Lists the deployments"), testTool("vercel__get_project")] });
       const second = testExtension({ title: "Issues", tools: [testTool("github__list_issues")] });
       const state = createAppState(undefined, { extensions: [{ name: "first", register: first.register }, { name: "second", register: second.register }] });
 
-      const text = await script(state)(`return await api.tools.search("list deployments", { group: "vercel", other: [1] })`);
+      const text = await script(state)(`return await reins.tools.search("list deployments", { filters: { group: "vercel", other: [1] } })`);
 
       expect(first.searches).toEqual([{ query: "list deployments", filters: { group: "vercel", other: [1] } }]);
       expect(second.searches).toEqual([{ query: "list deployments", filters: { group: "vercel", other: [1] } }]);
-      expect(text).toContain("api.tools.call(id, args)");
+      expect(text).toContain("reins.tools.call(id, args)");
       expect(text).toContain("Deploys: 1 tool matches \"list deployments\".");
       expect(text).toContain("/** Lists the deployments */\n  first__vercel__list_deployments(args: {\n    text: string;\n  }): Promise<ToolResult>;");
       expect(text).not.toContain("get_project");
@@ -62,7 +63,7 @@ describe("the server SDK's host", () => {
         ],
       });
 
-      const text = await script(state)(`return await api.tools.search("one")`);
+      const text = await script(state)(`return await reins.tools.search("one")`);
 
       expect(working.searches).toEqual([{ query: "one", filters: {} }]);
       expect(text).toContain("Working: 1 tool matches \"one\".");
@@ -75,9 +76,9 @@ describe("the server SDK's host", () => {
       const state = createAppState(undefined, { extensions: [{ name: "first", register: first.register }, { name: "second", register: second.register }] });
       const run = script(state);
 
-      expect(firstId(await run(`return await api.tools.search("first__vercel__list_deployments")`))).toBe("first__vercel__list_deployments");
-      expect(firstId(await run(`return await api.tools.search("vercel__list_deployments")`))).toBe("first__vercel__list_deployments");
-      expect(firstId(await run(`return await api.tools.search("list_deployments")`))).toBe("first__vercel__list_deployments");
+      expect(firstId(await run(`return await reins.tools.search("first__vercel__list_deployments")`))).toBe("first__vercel__list_deployments");
+      expect(firstId(await run(`return await reins.tools.search("vercel__list_deployments")`))).toBe("first__vercel__list_deployments");
+      expect(firstId(await run(`return await reins.tools.search("list_deployments")`))).toBe("first__vercel__list_deployments");
       expect(first.searches[0]!.query).toBe("vercel__list_deployments");
       expect(second.searches[0]!.query).toBe("first__vercel__list_deployments");
     });
@@ -88,8 +89,8 @@ describe("the server SDK's host", () => {
       const state = createAppState(undefined, { extensions: [{ name: "first", register: first.register }, { name: "second", register: second.register }] });
       const run = script(state);
 
-      const one: ToolResult = JSON.parse(await run(`return await api.tools.call("second__a__one", { text: "hi" }, 5000)`));
-      const two: ToolResult = JSON.parse(await run(`return await api.tools.call("second__b__two")`));
+      const one: ToolResult = JSON.parse(await run(`return await reins.tools.call("second__a__one", { text: "hi" }, { timeoutMs: 5000 })`));
+      const two: ToolResult = JSON.parse(await run(`return await reins.tools.call("second__b__two")`));
 
       expect(one).toEqual({ content: [{ type: "text", text: "Second: a__one {\"text\":\"hi\"}" }] });
       expect(two).toEqual({ content: [{ type: "text", text: "Second: b__two {}" }] });
@@ -105,10 +106,41 @@ describe("the server SDK's host", () => {
       const run = script(state);
 
       for (const id of ["a__one", "nope__a__one", "quiet__a__one", "only__", "only__a.one", "__only"]) {
-        expect(run(`return await api.tools.call(${JSON.stringify(id)}, {})`)).rejects.toThrow(`Unknown tool: ${id}. Find tools with api.tools.search(query).`);
+        expect(run(`return await reins.tools.call(${JSON.stringify(id)}, {})`)).rejects.toThrow(`Unknown tool: ${id}. Find tools with reins.tools.search(query).`);
       }
-      expect(run(`return await api.tools.call("only__a__two", {})`)).rejects.toThrow("No such tool: a__two");
+      expect(run(`return await reins.tools.call("only__a__two", {})`)).rejects.toThrow("No such tool: a__two");
       expect(only.calls).toEqual([]);
+    });
+
+    test("a script's arguments are checked against the declared schemas before the call: a field a method does not have, a wrong type, a missing or an extra argument", async () => {
+      const only = testExtension({ tools: [testTool("a__one")] });
+      const run = script(createAppState(undefined, { extensions: [{ name: "only", register: only.register }] }));
+
+      await expect(run(`return await reins.tools.search("one", { server: "x" })`)).rejects.toThrow(`reins.tools.search: options has no field "server" (its fields: filters)`);
+      await expect(run(`return await reins.tools.call("only__a__one", {}, 5000)`)).rejects.toThrow("reins.tools.call: options: Expected object");
+      await expect(run(`return await reins.tools.call()`)).rejects.toThrow("reins.tools.call: id is required");
+      await expect(run(`return await reins.tools.call("only__a__one", {}, {}, 1)`)).rejects.toThrow("reins.tools.call takes at most 3 arguments (id, args, options)");
+      await expect(run(`return await reins.tools.call("only__a__one", {}, { signal: null })`)).rejects.toThrow(`reins.tools.call: options has no field "signal" (its fields: timeoutMs)`);
+      expect(only.calls).toEqual([]);
+      expect(only.searches).toEqual([]);
+    });
+
+    test("an extension searches and calls every extension's tools, its own too, as scripts do", async () => {
+      let reins: ServerSdk | undefined;
+      const first = testExtension({ title: "First", tools: [testTool("a__one")], setup: sdk => { reins = sdk; } });
+      const second = testExtension({ title: "Second", tools: [testTool("b__two"), testTool("b__three")] });
+      createAppState(undefined, { extensions: [{ name: "first", register: first.register }, { name: "second", register: second.register }] });
+
+      const groups = await reins!.tools.search("two", { filters: { group: "b" } });
+      const result = await reins!.tools.call("second__b__two", { text: "hi" }, { timeoutMs: 100 });
+      const own = await reins!.tools.call("first__a__one");
+
+      expect(groups).toEqual([{ title: "First", tools: [] }, { title: "Second", tools: [{ ...testTool("b__two"), id: "second__b__two" }] }]);
+      expect(second.searches).toEqual([{ query: "two", filters: { group: "b" } }]);
+      expect(result).toEqual({ content: [{ type: "text", text: "Second: b__two {\"text\":\"hi\"}" }] });
+      expect(own).toEqual({ content: [{ type: "text", text: "First: a__one {}" }] });
+      expect(second.calls).toEqual([{ id: "b__two", args: { text: "hi" }, timeoutMs: 100 }]);
+      await expect(reins!.tools.call("nope__x")).rejects.toThrow("Unknown tool: nope__x");
     });
 
     test("an extension has one tool provider at a time, and is told how long its local IDs may be", () => {
@@ -143,7 +175,7 @@ describe("the server SDK's host", () => {
         onExtensionError: (name, error) => errors.push(`${name}: ${error instanceof Error ? error.message : String(error)}`),
       });
 
-      const text = await script(state)(`return await api.tools.search("")`);
+      const text = await script(state)(`return await reins.tools.search("")`);
 
       expect(text).toContain("ext__good_one(");
       expect(text).toContain(`ext__${"x".repeat(59)}(`);
@@ -162,35 +194,38 @@ describe("the server SDK's host", () => {
   });
 
   describe("scripting", () => {
-    test("an extension's functions join api, get the session, and search documents them with their types", async () => {
+    test("an extension's namespace joins api: its methods get the script's checked arguments and session, and search documents them with their types", async () => {
       const seen: unknown[] = [];
-      const itemSchema = { type: "object", properties: { label: { type: "string" } }, required: ["label"] };
+      const NoteSchema = Type.Object({ label: Type.String() });
       const state = createAppState(undefined, {
         extensions: [{
           name: "notes",
           register: reins => reins.scripting.register({
-            functions: [{
-              name: "notes.find",
-              description: "Find a note by its label.",
-              parameters: { type: "object", properties: { label: { type: "string" }, limit: { type: "number" } }, required: ["label"] },
-              returns: itemSchema,
-              async: true,
-              tags: ["note", "find"],
-              execute: async (params, context) => {
-                seen.push({ params, context: { ...context, signal: context.signal instanceof AbortSignal } });
-                return { label: `found ${String(params.label)}` };
+            namespace: "notes",
+            methods: {
+              find: {
+                description: "Find a note by its label.",
+                params: [{ name: "label", schema: Type.String() }, { name: "limit", schema: Type.Number(), optional: true }],
+                returns: NoteSchema,
+                tags: ["note", "find"],
+                run: async (context, label, limit) => {
+                  seen.push({ args: [label, limit], context: { ...context, signal: context.signal instanceof AbortSignal } });
+                  return { label: `found ${String(label)}` };
+                },
               },
-            }],
-            types: [{ name: "Note", schema: itemSchema }],
+            },
+            types: { Note: NoteSchema },
           }),
         }],
       });
       const signal = new AbortController().signal;
       const project = createProject("Notes", "/tmp/notes");
       const task = createTask(project.id, "Notes", null, "task/notes");
+      const run = script(state, signal, { projectId: project.id, taskId: task.id });
 
-      expect(JSON.parse(await script(state, signal, { projectId: project.id, taskId: task.id })(`return await api.notes.find("x", 2)`))).toEqual({ label: "found x" });
-      expect(seen).toEqual([{ params: { label: "x", limit: 2 }, context: { sessionId: "caller", projectId: project.id, taskId: task.id, signal: true } }]);
+      expect(JSON.parse(await run(`return await reins.notes.find("x", 2)`))).toEqual({ label: "found x" });
+      await expect(run(`return await reins.notes.find(7)`)).rejects.toThrow("reins.notes.find: label: Expected string");
+      expect(seen).toEqual([{ args: ["x", 2], context: { sessionId: "caller", projectId: project.id, taskId: task.id, signal: true } }]);
       const docs = searchScriptApi("notes find", state.extensions).text;
       expect(docs).toContain("find(label: string, limit?: number): Promise<Note>;");
       expect(docs).toContain("interface Note {");
@@ -200,34 +235,37 @@ describe("the server SDK's host", () => {
       const errors: unknown[] = [];
       createAppState(undefined, {
         extensions: [
-          { name: "a", register: reins => reins.scripting.register({ functions: [fn("tasks.mine")] }) },
-          { name: "b", register: reins => reins.scripting.register({ functions: [fn("shared.one")] }) },
-          { name: "c", register: reins => { try { return reins.scripting.register({ functions: [fn("shared.two")] }); } catch (error) { errors.push(error); return () => {}; } } },
+          { name: "a", register: reins => reins.scripting.register(namespace("tasks")) },
+          { name: "b", register: reins => reins.scripting.register(namespace("shared")) },
+          { name: "c", register: reins => { try { return reins.scripting.register(namespace("shared")); } catch (error) { errors.push(error); return () => {}; } } },
         ],
         onExtensionError: (name, error) => errors.push(`${name}: ${error instanceof Error ? error.message : String(error)}`),
       });
 
       expect(errors).toEqual([
-        "a: The api namespace tasks is taken",
-        expect.objectContaining({ message: "The api namespace shared is taken" }),
+        "a: The script namespace tasks is taken",
+        expect.objectContaining({ message: "The script namespace shared is taken" }),
       ]);
     });
 
-    test("a function whose parameters are not an object schema, or a result or type that is not a schema, refuses the registration", () => {
+    test("a method whose param is not a TypeBox schema, or whose result or type is not a schema, or a name that is not one, refuses the registration", () => {
       const errors: string[] = [];
+      const method = namespace("x").methods.one!;
       createAppState(undefined, {
         extensions: [
-          { name: "a", register: reins => reins.scripting.register({ functions: [{ ...fn("a.one"), parameters: { type: "string" } }] }) },
-          { name: "b", register: reins => reins.scripting.register({ functions: [{ ...fn("b.one"), returns: untyped("string") }] }) },
-          { name: "c", register: reins => reins.scripting.register({ functions: [fn("c.one")], types: [{ name: "Bad", schema: untyped(null) }] }) },
+          { name: "a", register: reins => reins.scripting.register({ namespace: "a", methods: { one: { ...method, params: [{ name: "text", schema: { type: "string" } }] } } }) },
+          { name: "b", register: reins => reins.scripting.register({ namespace: "b", methods: { one: { ...method, returns: untyped("string") } } }) },
+          { name: "c", register: reins => reins.scripting.register({ ...namespace("c"), types: { Bad: untyped(null) } }) },
+          { name: "d", register: reins => reins.scripting.register({ namespace: "d", methods: { "two words": method } }) },
         ],
         onExtensionError: (name, error) => errors.push(`${name}: ${error instanceof Error ? error.message : String(error)}`),
       });
 
       expect(errors).toEqual([
-        "a: a.one: its parameters must be an object schema",
+        "a: a.one: text must be a TypeBox schema, which the host checks",
         "b: b.one: not a JSON Schema object",
         "c: Bad: not a JSON Schema object",
+        "d: Not a script method name: d.two words",
       ]);
     });
   });
@@ -500,7 +538,7 @@ describe("the server SDK's host", () => {
         setup: reins => {
           reins.prompt.register(() => "Notes");
           reins.prompt.register(() => null);
-          reins.scripting.register({ functions: [fn("notes.list"), fn("notes.add")] });
+          reins.scripting.register({ namespace: "notes", methods: { list: namespace("x").methods.one!, add: namespace("x").methods.one! } });
           reins.http.handle({ list: {}, add: {} }, { list: () => {}, add: () => {} });
           reins.http.page("/callback", () => new Response("ok"));
           return () => {};
@@ -648,7 +686,7 @@ describe("the server SDK's host", () => {
       expect(disposed).toEqual(["forgetful"]);
       expect(await state.extensions.promptSections({ session: { id: "s", projectId: 1, taskId: null }, task: null, tools: null })).toEqual([]);
       expect((await router.handle(makeRequest("POST", "/api/extensions/forgetful/x"), state))!.status).toBe(404);
-      expect(script(state)(`return await api.tools.call("kept__a__one", {})`)).rejects.toThrow("Unknown tool");
+      expect(script(state)(`return await reins.tools.call("kept__a__one", {})`)).rejects.toThrow("Unknown tool");
     });
 
     test("an extension whose register function throws is logged, and what it registered before is removed", async () => {

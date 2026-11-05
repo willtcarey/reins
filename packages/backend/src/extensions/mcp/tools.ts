@@ -86,7 +86,7 @@ export function mcpToolProvider(servers: McpServers, tools: Pick<Tools, "match" 
       if (!model) throw new Error(`Unknown tool ${id}: there is no MCP server ${server}`);
       const listed = await model.listTools({ signal });
       const name = [...mcpToolIds(model.name, listed, tools.maxLocalIdLength)].find(([, toolId]) => toolId === localId)?.[0];
-      if (name === undefined) throw new Error(`Unknown tool ${id}: ${model.name} has no such tool. Find its tools with api.tools.search(query, { server: ${JSON.stringify(model.name)} }).`);
+      if (name === undefined) throw new Error(`Unknown tool ${id}: ${model.name} has no such tool. Find its tools with reins.tools.search(query, { filters: { server: ${JSON.stringify(model.name)} } }).`);
       return model.callTool(name, args, { signal, ...(timeoutMs === undefined ? {} : { timeoutMs }) });
     },
   };
