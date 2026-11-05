@@ -23,24 +23,15 @@ import {
   schemaItems,
   schemaAnyOf,
   schemaProperties,
+  sameSchema,
 } from "./schema-utils.js";
-import { TASK_FUNCTIONS, TaskSchema } from "./tasks.js";
-import {
-  SESSION_FUNCTIONS,
-  SessionSchema,
-  SessionWaitResultSchema,
-  SessionHandleSchema,
-  SessionEntrySchema,
-  MessageEntrySchema,
-  ToolCallEntrySchema,
-  ToolCallResultSchema,
-} from "./sessions.js";
-import { PROJECT_FUNCTIONS, ProjectSchema } from "./projects.js";
 import { UI_FUNCTIONS } from "./ui.js";
 import { MODEL_FUNCTIONS, ProviderInfoSchema, ModelInfoSchema } from "./models.js";
 import { REVIEW_FUNCTIONS } from "./reviews.js";
 import { NODE_FUNCTIONS, NodeCopyResultSchema, NodeDetailSchema, NodeReloadSchema, NodeRunResultSchema, NodeSchema, NodeSourceSchema, ProjectRefSchema, LocationSchema } from "./nodes.js";
 import { TOOLS } from "../sdk-host/tools.js";
+import { SESSIONS } from "../sdk-host/sessions.js";
+import { PROJECTS, TASKS } from "../sdk-host/projects.js";
 import { scriptFunctions, scriptTypes } from "../sdk-host/projection.js";
 import { IMAGES_FUNCTIONS, ImageBlockSchema, ImageGenerationSchema } from "./images.js";
 import { rankByTerms } from "./term-search.js";
@@ -77,18 +68,9 @@ export interface NamedType {
 }
 
 /** The SDK's namespaces that scripts call (`sdk-host/`), projected as `api`'s. */
-const SDK_NAMESPACES = [TOOLS];
+const SDK_NAMESPACES = [TASKS, SESSIONS, PROJECTS, TOOLS];
 
 export const DOMAIN_TYPES: NamedType[] = [
-  { name: "Task", schema: TaskSchema },
-  { name: "Session", schema: SessionSchema },
-  { name: "SessionWaitResult", schema: SessionWaitResultSchema },
-  { name: "SessionHandle", schema: SessionHandleSchema },
-  { name: "SessionEntry", schema: SessionEntrySchema },
-  { name: "MessageEntry", schema: MessageEntrySchema },
-  { name: "ToolCallEntry", schema: ToolCallEntrySchema },
-  { name: "ToolCallResult", schema: ToolCallResultSchema },
-  { name: "Project", schema: ProjectSchema },
   { name: "ProviderInfo", schema: ProviderInfoSchema },
   { name: "ModelInfo", schema: ModelInfoSchema },
   { name: "CodeReview", schema: CodeReviewStateSchema },
@@ -114,14 +96,12 @@ export const DOMAIN_TYPES: NamedType[] = [
 // ---------------------------------------------------------------------------
 
 export const API_FUNCTIONS: ApiFunctionDef[] = [
-  ...TASK_FUNCTIONS,
-  ...SESSION_FUNCTIONS,
-  ...PROJECT_FUNCTIONS,
+  ...[TASKS, SESSIONS, PROJECTS].flatMap(scriptFunctions),
   ...UI_FUNCTIONS,
   ...MODEL_FUNCTIONS,
   ...REVIEW_FUNCTIONS,
   ...NODE_FUNCTIONS,
-  ...SDK_NAMESPACES.flatMap(scriptFunctions),
+  ...scriptFunctions(TOOLS),
   ...IMAGES_FUNCTIONS,
 ];
 
@@ -196,7 +176,7 @@ export function referencedTypes(fns: ApiFunctionDef[], types: readonly NamedType
  * (by identity — same object reference).
  */
 function schemaReferences(schema: TSchema, target: TSchema): boolean {
-  if (schema === target) return true;
+  if (sameSchema(schema, target)) return true;
 
   // Array items
   const items = schemaItems(schema);

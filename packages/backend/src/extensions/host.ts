@@ -17,9 +17,7 @@ import type { ExtensionStorage } from "../database.js";
 import { namedArgs, type ApiFunctionDef } from "../scripting/define-function.js";
 import type { NamedType } from "../scripting/api-registry.js";
 import type { AppState, SessionSettledNotice } from "../state.js";
-import { ExtensionSessions } from "./sessions.js";
 import { ExtensionNodes } from "./nodes.js";
-import { ExtensionProjects, ExtensionTasks } from "./projects.js";
 import { createBroadcast } from "../models/broadcast.js";
 import { requestOrigin } from "../nodes/node-link.js";
 import { logger } from "../logger.js";
@@ -29,6 +27,8 @@ import { ServiceRunner, type ServiceView } from "./services.js";
 import { Models } from "../models/models.js";
 import { bind, type CallContext } from "../sdk-host/declaration.js";
 import { TOOLS } from "../sdk-host/tools.js";
+import { SESSIONS } from "../sdk-host/sessions.js";
+import { PROJECTS, TASKS } from "../sdk-host/projects.js";
 
 /** A backend extension as the server registers it: its name, its migrations and its register function. */
 export interface ExtensionRegistration extends ServerExtension { name: string }
@@ -436,13 +436,16 @@ export class ExtensionHost {
         },
       }),
       services: Object.freeze({ register: registerService }),
-      sessions: Object.freeze(new ExtensionSessions(this.app(), name, listener => {
-        if (typeof listener !== "function") throw new Error("A settlement listener is a function");
-        return add(this.settlementListeners, { extension: name, listener });
-      })),
+      sessions: Object.freeze({
+        ...bind(SESSIONS.methods, context),
+        onSettled: (listener: (settlement: SessionSettlement) => void | Promise<void>) => {
+          if (typeof listener !== "function") throw new Error("A settlement listener is a function");
+          return add(this.settlementListeners, { extension: name, listener });
+        },
+      }),
       nodes: Object.freeze(new ExtensionNodes(this.app())),
-      projects: Object.freeze(new ExtensionProjects()),
-      tasks: Object.freeze(new ExtensionTasks()),
+      projects: Object.freeze(bind(PROJECTS.methods, context)),
+      tasks: Object.freeze(bind(TASKS.methods, context)),
       prompt: Object.freeze({
         register: (contribution: PromptContribution) => add(this.contributions, { extension: name, contribution }),
       }),

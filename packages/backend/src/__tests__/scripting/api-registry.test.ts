@@ -9,6 +9,7 @@ import {
   schemaItems,
   schemaAnyOf,
   schemaProperties,
+  sameSchema,
 } from "../../scripting/schema-utils.js";
 
 describe("API registry schema constraints", () => {
@@ -97,7 +98,7 @@ function findNonDomainObjects(
     const isTopLevel = depth === 0 && opts?.allowTopLevelObject;
     const isEmpty = Object.keys(props).length === 0;
 
-    if (!isTopLevel && !isEmpty && !domainSchemas.has(schema)) {
+    if (!isTopLevel && !isEmpty && ![...domainSchemas].some(domain => sameSchema(schema, domain))) {
       violations.push(schema);
     }
 

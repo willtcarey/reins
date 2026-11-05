@@ -50,8 +50,9 @@ export interface SessionRow {
 }
 
 export interface SessionListOptions {
-  /** A project's sessions, or (null) those of no project. A project, a numeric taskId or a source is required. */
-  projectId?: number | null;
+  /** A project's sessions, (null) those of no project, or ("any") those of every project and of none. A project,
+   * a numeric taskId or a source is required. */
+  projectId?: number | null | "any";
   /** Only the sessions working in this source. */
   sourceId?: number;
   /**
@@ -66,7 +67,8 @@ export interface SessionListOptions {
   limit?: number;
   offset?: number;
   search?: string;
-  orderBy?: "updated" | "archived";
+  /** By default pinned first, then the latest change; `latest`: the latest change first. */
+  orderBy?: "updated" | "latest" | "archived";
   minMessages?: number;
   /** Archived rows are excluded by default; history requests can select only archived rows. */
   archived?: "exclude" | "only" | "include";
@@ -193,7 +195,7 @@ export function listSessions(options: SessionListOptions): SessionRow[] {
 
   if (options.projectId === null) {
     where.push("s.project_id IS NULL");
-  } else if (options.projectId !== undefined) {
+  } else if (options.projectId !== undefined && options.projectId !== "any") {
     where.push("s.project_id = ?");
     binds.push(options.projectId);
   }
@@ -263,7 +265,7 @@ export function listSessions(options: SessionListOptions): SessionRow[] {
            LIMIT 1
          ) AS first_message
        FROM sessions s
-       WHERE ${where.join(" AND ")}
+       ${where.length > 0 ? `WHERE ${where.join(" AND ")}` : ""}
      )
      SELECT * FROM listed_sessions`;
 
@@ -272,8 +274,8 @@ export function listSessions(options: SessionListOptions): SessionRow[] {
     binds.push(options.minMessages);
   }
 
-  sql += options.orderBy === "archived"
-    ? " ORDER BY archived_at DESC, updated_at DESC"
+  sql += options.orderBy === "archived" ? " ORDER BY archived_at DESC, updated_at DESC"
+    : options.orderBy === "latest" ? " ORDER BY updated_at DESC, created_at DESC, id DESC"
     : " ORDER BY (pinned_at IS NOT NULL) DESC, updated_at DESC";
 
   if (options.limit !== undefined) {
@@ -456,14 +458,6 @@ export function clearFinishedActivityForTasks(taskIds: number[]): string[] {
   ).run(...sessionIds);
 
   return sessionIds;
-}
-
-/** The IDs of the sessions the browser lists (not archived, not background), of any project, the latest change first. */
-export function latestSessionIds(limit: number, offset = 0): string[] {
-  return getDb()
-    .query<{ id: string }, [number, number]>("SELECT id FROM sessions WHERE archived_at IS NULL AND background = 0 ORDER BY updated_at DESC, rowid DESC LIMIT ? OFFSET ?")
-    .all(limit, offset)
-    .map((row) => row.id);
 }
 
 /** The text of the session's first input (as lists show it), or null before it has one. */

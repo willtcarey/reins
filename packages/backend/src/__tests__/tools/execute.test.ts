@@ -119,7 +119,7 @@ describe("execute tool", () => {
 
         const parsed = JSON.parse(textOf(result));
         expect(parsed.name).toBe("New Project");
-        expect(parsed.base_branch).toBe("main");
+        expect(parsed.baseBranch).toBe("main");
         // Its checkout is on the node the calling session runs on.
         expect(defaultSource(parsed.id)).toMatchObject({ node_id: defaultSource(project.id)!.node_id, path: secondRepo.dir });
       } finally {
@@ -146,7 +146,7 @@ describe("execute tool", () => {
       const tool = makeTool();
       // repo.dir is the home of the project created in beforeEach
       const result = await executeTool(tool, "c-dup", {
-        code: `return (await api.projects.create("Shared", ${JSON.stringify(repo.dir)})).default_source_id`,
+        code: `return (await api.projects.create("Shared", ${JSON.stringify(repo.dir)})).defaultSourceId`,
       }, undefined, undefined);
 
       expect(textOf(result)).toBe(String(project.default_source_id));
@@ -212,7 +212,7 @@ describe("execute tool", () => {
 
       const parsed = JSON.parse(textOf(result));
       expect(parsed.title).toBe("New Task");
-      expect(parsed.branch_name).toContain("task/");
+      expect(parsed.branchName).toContain("task/");
 
       // Verify in DB
       const dbTask = getTask(parsed.id);
@@ -358,14 +358,14 @@ describe("execute tool", () => {
       const tool = makeTool();
       const result = await executeTool(tool, "c-cross-project-session-reads", {
         code: `return {
-          session: api.sessions.get("other-read"),
-          messages: api.sessions.entries("other-read", { types: ["user", "assistant"], limit: 1 }),
-          trace: api.sessions.entries("other-read", { types: ["toolCall"] }),
+          session: await api.sessions.get("other-read"),
+          messages: await api.sessions.entries("other-read", { types: ["user", "assistant"], limit: 1 }),
+          trace: await api.sessions.entries("other-read", { types: ["toolCall"] }),
         }`,
       }, undefined, undefined);
 
       const parsed = JSON.parse(textOf(result));
-      expect(parsed.session.project_id).toBe(otherProject.id);
+      expect(parsed.session.projectId).toBe(otherProject.id);
       expect(parsed.messages[0].role).toBe("assistant");
       expect(parsed.trace).toHaveLength(1);
       expect(parsed.trace[0]).toMatchObject({
@@ -405,8 +405,8 @@ describe("execute tool", () => {
 
       const parsed = JSON.parse(textOf(result));
       expect(parsed.map((s: any) => s.id)).toEqual(["new-match"]);
-      expect(parsed[0].message_count).toBe(2);
-      expect(parsed[0].first_message).toBe("needle new prompt");
+      expect(parsed[0].messageCount).toBe(2);
+      expect(parsed[0].firstMessage).toBe("needle new prompt");
     });
 
     test("sessions.list(options) can list task sessions through taskId", async () => {
@@ -490,7 +490,7 @@ describe("execute tool", () => {
       expect(parsed).toHaveLength(1);
       expect(parsed[0]).toMatchObject({ role: "user", type: "user" });
       expect(parsed[0].seq).toBe(2);
-      expect(parsed[0].created_at).toBeString();
+      expect(parsed[0].createdAt).toBeString();
     });
 
     test("sessions.entries(sessionId, { limit }) returns the latest entries in chronological order", async () => {
@@ -503,7 +503,7 @@ describe("execute tool", () => {
 
       const tool = makeTool();
       const result = await executeTool(tool, "c-msg-limit", {
-        code: `return api.sessions.entries("sess-latest", { types: ["user", "assistant"], limit: 2 }).map((m) => ({ seq: m.seq, type: m.type }))`,
+        code: `return (await api.sessions.entries("sess-latest", { types: ["user", "assistant"], limit: 2 })).map((m) => ({ seq: m.seq, type: m.type }))`,
       }, undefined, undefined);
 
       expect(JSON.parse(textOf(result))).toEqual([

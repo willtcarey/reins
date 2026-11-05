@@ -9,7 +9,6 @@
 import type { TSchema, TObject, TProperties, Static } from "@sinclair/typebox";
 import type { Models } from "../models/models.js";
 import type { SessionModel } from "../models/session.js";
-import type { SessionInstance } from "../sessions/session-instance.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -22,7 +21,6 @@ export interface ApiContext {
   session: SessionModel;
   /** The call's models. */
   models: Models;
-  instance?: SessionInstance;
   signal?: AbortSignal;
 }
 

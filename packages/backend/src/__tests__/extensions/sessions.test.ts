@@ -61,10 +61,10 @@ describe("reins.sessions", () => {
   });
 
   test("starts a background session on a location of no project, its prompt from the extension, and tells it the run's outcome and final reply", async () => {
-    const sessionId = await automation.sessions.start({ source: { nodeId: "internal", path: dir }, prompt: "Morning heartbeat", background: true, model: model.model });
+    const { sessionId } = await automation.sessions.start("Morning heartbeat", { source: { nodeId: "internal", path: dir }, background: true, model: model.model });
 
     expect(await automation.sessions.get(sessionId)).toMatchObject({
-      id: sessionId, source: { nodeId: "internal", path: dir }, projectId: null, taskId: null, background: true, running: true, startedBy: "automation", archivedAt: null, lastRunId: null,
+      id: sessionId, source: { nodeId: "internal", path: dir }, projectId: null, taskId: null, background: true, running: true, startedBy: "automation", archived: false, lastRunId: null,
     });
     const startedWhileRunning = (await automation.sessions.get(sessionId)).lastRunStartedAt;
     expect(startedWhileRunning).toMatch(/^\d{4}-\d{2}-\d{2}T/);
@@ -80,7 +80,7 @@ describe("reins.sessions", () => {
 
   test("sends to an existing session as a steer from the extension, idle or running, and a failed run is told as failed", async () => {
     const project = createProject("Project", dir);
-    const sessionId = await automation.sessions.start({ projectId: project.id, prompt: "Watch the build", model: model.model });
+    const { sessionId } = await automation.sessions.start("Watch the build", { projectId: project.id, model: model.model });
     expect(await automation.sessions.get(sessionId)).toMatchObject({ projectId: project.id, source: { path: dir }, background: false });
 
     // Running: the message joins the run in progress.
@@ -114,7 +114,8 @@ describe("reins.sessions", () => {
     const project = createProject("Project", dir);
     const otherProject = createProject("Other", dir);
     const task = createTask(otherProject.id, "Elsewhere", null, "task/elsewhere");
-    const refusal = (start: Parameters<ServerSdk["sessions"]["start"]>[0]) => automation.sessions.start(start).then(() => "started", (error: Error) => error.message);
+    const refusal = ({ prompt, ...options }: { prompt: string } & NonNullable<Parameters<ServerSdk["sessions"]["start"]>[1]>) =>
+      automation.sessions.start(prompt, options).then(() => "started", (error: Error) => error.message);
 
     expect(await refusal({ prompt: "Hello" })).toBe("A session of no project needs a source");
     expect(await refusal({ projectId: 999, prompt: "Hello" })).toBe("Project not found: 999");
@@ -134,7 +135,7 @@ describe("reins.sessions", () => {
   });
 
   test("reads how full a session's context is, and compacts it with the given instructions", async () => {
-    const sessionId = await automation.sessions.start({ source: { nodeId: "internal", path: dir }, prompt: "Check the inbox", background: true, model: model.model });
+    const { sessionId } = await automation.sessions.start("Check the inbox", { source: { nodeId: "internal", path: dir }, background: true, model: model.model });
     (await model.nextTurn(sessionId)).finish({ reply: "Two new mails" });
     await until(() => settled.automation!.length > 0, "the run settled");
 
@@ -151,10 +152,8 @@ describe("reins.sessions", () => {
   });
 
   test("a message's hidden blocks reach the model after its text and the chat collapses them; its metadata is only kept", async () => {
-    const sessionId = await automation.sessions.start({
-      source: { nodeId: "internal", path: dir }, background: true, model: model.model,
-      prompt: ["The deploy finished", { text: "step 1 ok", hidden: true, label: "Deploy log" }, { text: "step 2 ok", hidden: true }],
-      metadata: { deployId: 18 },
+    const { sessionId } = await automation.sessions.start(["The deploy finished", { text: "step 1 ok", hidden: true, label: "Deploy log" }, { text: "step 2 ok", hidden: true }], {
+      source: { nodeId: "internal", path: dir }, background: true, model: model.model, metadata: { deployId: 18 },
     });
     const first = await model.nextTurn(sessionId);
     first.finish();
@@ -176,7 +175,7 @@ describe("reins.sessions", () => {
   });
 
   test("refuses blocks out of order, blank or without a visible one, and metadata that is not plain JSON or has Reins' keys", async () => {
-    const sessionId = await automation.sessions.start({ source: { nodeId: "internal", path: dir }, prompt: "Hello", background: true, model: model.model });
+    const { sessionId } = await automation.sessions.start("Hello", { source: { nodeId: "internal", path: dir }, background: true, model: model.model });
     (await model.nextTurn(sessionId)).finish();
     // As an extension without TypeScript could give them.
     const refusal = (message: unknown, metadata?: unknown) => Reflect.apply(automation.sessions.send, automation.sessions, [sessionId, message, { metadata }])
@@ -222,7 +221,7 @@ describe("reins.sessions", () => {
     const task = createTask(project.id, "Ship it", null, "task/ship-it");
     getDb().query("UPDATE tasks SET closed_at = '2026-01-03T00:00:00.000Z' WHERE id = ?").run(task.id);
 
-    expect(await automation.projects.get(project.id)).toEqual({ id: project.id, name: "Project" });
+    expect(await automation.projects.get(project.id)).toMatchObject({ id: project.id, name: "Project", defaultSourceId: project.default_source_id });
     expect(await automation.tasks.get(task.id)).toMatchObject({ id: task.id, projectId: project.id, title: "Ship it", closedAt: "2026-01-03T00:00:00.000Z" });
     await expect(automation.projects.get(999)).rejects.toThrow("Project not found: 999");
     await expect(automation.tasks.get(999)).rejects.toThrow("Task not found: 999");

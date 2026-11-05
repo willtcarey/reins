@@ -84,7 +84,7 @@ export interface SessionEntryOptions extends SessionWindowOptions {
 
 export interface SessionToolCallResult {
   seq: number;
-  created_at: string;
+  createdAt: string;
   isError: boolean;
   contentPreview: string;
   content?: PersistedContentBlock[];
@@ -93,7 +93,7 @@ export interface SessionToolCallResult {
 type SessionMessageEntryMetadata<Role extends Exclude<SessionEntryType, "toolCall">> = {
   sessionId: string;
   seq: number;
-  created_at: string;
+  createdAt: string;
   type: Role;
   role: Role;
 };
@@ -144,7 +144,7 @@ export type SessionMessageEntry =
 export interface SessionToolCallEntry {
   sessionId: string;
   seq: number;
-  created_at: string;
+  createdAt: string;
   type: "toolCall";
   id: string;
   name: string;
@@ -556,7 +556,7 @@ export function listSessionEntries(
 
     const result: SessionToolCallResult = {
       seq: row.seq,
-      created_at: row.created_at,
+      createdAt: row.created_at,
       isError: row.parsed.isError,
       contentPreview: contentPreview(row.parsed.content),
     };
@@ -577,17 +577,17 @@ export function listSessionEntries(
       switch (parsed.role) {
         case "user":
           if (requestedTypes.has("user")) {
-            entries.push({ ...parsed, sessionId, seq: row.seq, created_at: row.created_at, type: "user", role: "user" });
+            entries.push({ ...parsed, sessionId, seq: row.seq, createdAt: row.created_at, type: "user", role: "user" });
           }
           break;
         case "assistant":
           if (requestedTypes.has("assistant")) {
-            entries.push({ ...parsed, sessionId, seq: row.seq, created_at: row.created_at, type: "assistant", role: "assistant" });
+            entries.push({ ...parsed, sessionId, seq: row.seq, createdAt: row.created_at, type: "assistant", role: "assistant" });
           }
           break;
         case "compactionSummary":
           if (requestedTypes.has("compactionSummary")) {
-            entries.push({ ...parsed, sessionId, seq: row.seq, created_at: row.created_at, type: "compactionSummary", role: "compactionSummary" });
+            entries.push({ ...parsed, sessionId, seq: row.seq, createdAt: row.created_at, type: "compactionSummary", role: "compactionSummary" });
           }
           break;
         case "toolResult":
@@ -605,7 +605,7 @@ export function listSessionEntries(
         entries.push({
           sessionId,
           seq: row.seq,
-          created_at: row.created_at,
+          createdAt: row.created_at,
           ...block,
           result: result?.result ?? null,
         });

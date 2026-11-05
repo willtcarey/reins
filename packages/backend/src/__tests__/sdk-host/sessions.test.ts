@@ -3,17 +3,16 @@ import { writeFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { Value } from "@sinclair/typebox/value";
 import { Type } from "@sinclair/typebox";
-import { SessionHandleSchema, SessionSchema } from "../../scripting/sessions.js";
+import { SessionHandleSchema, SessionSchema } from "../../sdk-host/sessions.js";
 import { createProject } from "../project-fixture.js";
 import { upsertSource } from "../../node-store.js";
 import { createSession as insertSession } from "../../session-store.js";
 import { createTask } from "../../task-store.js";
 import { createSession, getSession, listSessions, updateActivityState, updateSessionMetadata } from "../session-fixture.js";
 import { loadMessages } from "../../messages-store.js";
-import { SessionInstance } from "../../sessions/session-instance.js";
+import { getDb } from "../../app-globals.js";
 import { createSession as createNewSession } from "../../sessions/create-session.js";
 import { Sessions } from "../../models/sessions.js";
-import { Models } from "../../models/models.js";
 import { buildApiObject, searchFunctions, referencedTypes } from "../../scripting/api-registry.js";
 import { useTestDb } from "../helpers/test-db.js";
 import { createTestRepo, useTestRepo } from "../helpers/test-repo.js";
@@ -25,6 +24,12 @@ import { executeTool, reinsTool } from "../helpers/execute-tool.js";
 import { scriptContext } from "../helpers/script-context.js";
 
 const text = (value: string) => [{ type: "text" as const, text: value }];
+
+/** The inputs Pi admitted for `sessionId` (transcript entries and queued steering). */
+const inputsOf = (sessionId: string) => [
+  ...getDb().query<{ json: string }, [string]>("SELECT json_extract(message_json, '$.message') json FROM session_messages WHERE session_id = ? AND role = 'reinsInput' ORDER BY seq").all(sessionId),
+  ...getDb().query<{ json: string }, [string]>("SELECT json_extract(value_json, '$.payload') json FROM pi_values WHERE session_id = ? AND namespace = 'pi.pending.entry' AND json_extract(value_json, '$.payload.role') = 'reinsInput' ORDER BY seq").all(sessionId),
+].map(({ json }): Record<string, unknown> => JSON.parse(json));
 
 async function admitted(turns: unknown[], count: number): Promise<void> {
   for (let i = 0; i < 200 && turns.length < count; i++) await Bun.sleep(10);
@@ -49,10 +54,9 @@ describe("api.sessions orchestration", () => {
     const broadcasts: unknown[] = [];
     // Node status and live session events are announced too.
     state.process.clients.add({ ws: { send: data => { const message = JSON.parse(data); if (message.type !== "node_updated" && message.type !== "event") broadcasts.push(message); return 0; } } });
-    const instanceFor = (sessionId: string) => new SessionInstance(new Models(state), sessionId);
     /** The script context of session `sessionId`, which exists. */
-    const contextFor = (sessionId: string) => scriptContext(state, { sessionId, instance: instanceFor(sessionId) });
-    return { state, project, turns, broadcasts, contextFor, instanceFor, api: buildApiObject(contextFor("parent")) };
+    const contextFor = (sessionId: string) => scriptContext(state, { sessionId });
+    return { state, project, turns, broadcasts, contextFor, api: buildApiObject(contextFor("parent")) };
   }
   /** Answers the session's model requests until it is idle. */
   async function answerUntilIdle(sessionId: string, reply?: string): Promise<void> {
@@ -73,7 +77,7 @@ describe("api.sessions orchestration", () => {
     for (const [id, sourceId] of [["loose", scratch.id], ["neighbour", scratch.id], ["far", elsewhere.id]] as const) {
       insertSession(id, null, { agentRuntimeType: "pi", modelProvider: provider(), modelId: "fake", sourceId, background: true });
     }
-    const api = buildApiObject(scriptContext(state, { sessionId: "loose", instance: new SessionInstance(new Models(state), "loose") }));
+    const api = buildApiObject(scriptContext(state, { sessionId: "loose" }));
 
     const listed = Value.Parse(Type.Array(SessionSchema), await api.sessions.list({ background: "include" }));
     expect(listed.map(session => session.id).toSorted()).toEqual(["loose", "neighbour"]);
@@ -83,14 +87,14 @@ describe("api.sessions orchestration", () => {
     const placed = Value.Parse(SessionHandleSchema, await api.sessions.start("Over there", { parentSessionId: null, source: { nodeId: "internal", path: "/tmp/elsewhere" } }));
     expect(getSession(placed.sessionId)).toMatchObject({ project_id: null, source_id: elsewhere.id });
     await answerUntilIdle(placed.sessionId);
-    await expect(api.sessions.send("neighbour", "Hello")).resolves.toEqual({ sessionId: "neighbour" });
+    await expect(api.sessions.send("neighbour", "Hello")).resolves.toBeUndefined();
     await answerUntilIdle("neighbour");
-    await expect(api.sessions.send("far", "Hello")).resolves.toEqual({ sessionId: "far" });
+    await expect(api.sessions.send("far", "Hello")).resolves.toBeUndefined();
     await answerUntilIdle("far");
     expect(await api.sessions.setName("parent", "Renamed")).toMatchObject({ id: "parent", name: "Renamed" });
     await expect(api.sessions.start("In a task", { parentSessionId: null, taskId: createTask(project.id, "T", null, "task/t").id })).rejects.toThrow("A session of no project has no task");
-    expect(() => api.tasks.list()).toThrow("This session has no project, and tasks belong to projects");
-    expect(api.projects.current()).toBeNull();
+    await expect(api.tasks.list()).rejects.toThrow("This session has no project, and tasks belong to projects");
+    expect(await api.projects.current()).toBeNull();
   });
 
   test("discovers unread activity and returns persisted status without marking sessions read", async () => {
@@ -196,7 +200,7 @@ describe("api.sessions orchestration", () => {
     });
     await new Sessions(state, () => {}).submit(child.id, { op: "prompt", content: text("Hidden work"), clientId: "hidden" });
 
-    expect(await api.sessions.get(child.id)).toMatchObject({ background: true, parent_session_id: "parent" });
+    expect(await api.sessions.get(child.id)).toMatchObject({ background: true, parentSessionId: "parent" });
     expect(await api.sessions.current()).toMatchObject({ background: false });
     // Session kinds are the server's: scripts do not see them.
     expect(await api.sessions.get(child.id)).not.toHaveProperty("kind");
@@ -216,7 +220,7 @@ describe("api.sessions orchestration", () => {
   test("independent sessions preserve unnamed display defaults and allow model overrides", async () => {
     const { api, turns, project } = setup();
     const session = Value.Decode(SessionHandleSchema, await api.sessions.start("Independent", {
-      parentSessionId: null, modelProvider: provider(), modelId: "other", thinkingLevel: "minimal",
+      parentSessionId: null, model: { provider: provider(), modelId: "other", thinkingLevel: "minimal" },
     }));
     expect(getSession(session.sessionId)).toMatchObject({ name: null, parent_session_id: null, model_id: "other", thinking_level: "minimal" });
     await admitted(turns, 1);
@@ -321,7 +325,7 @@ describe("api.sessions orchestration", () => {
     const before = listSessions({ projectId: project.id });
     await expect(Promise.resolve().then(() => api.sessions.start("bad", { parentSessionId: null, taskId: foreignTask.id }))).rejects.toThrow(`Task ${foreignTask.id} is not a task of project ${project.id}`);
     await expect(Promise.resolve().then(() => api.sessions.start("bad", { parentSessionId: null, taskId: 999_999 }))).rejects.toThrow("Task not found: 999999");
-    await expect(Promise.resolve().then(() => api.sessions.start("bad", { parentSessionId: null, modelProvider: provider(), modelId: "missing" }))).rejects.toThrow(`Model 'missing' not found for provider '${provider()}'`);
+    await expect(Promise.resolve().then(() => api.sessions.start("bad", { parentSessionId: null, model: { provider: provider(), modelId: "missing" } }))).rejects.toThrow(`Model 'missing' not found for provider '${provider()}'`);
     expect(listSessions({ projectId: project.id })).toEqual(before);
 
     const scratch = Value.Decode(SessionHandleSchema, await api.sessions.start("Scratch", { parentSessionId: null, taskId: null }));
@@ -423,10 +427,10 @@ describe("api.sessions orchestration", () => {
   });
 
   test("execute cancellation interrupts only its wait, not the target session", async () => {
-    const { api, turns, project, instanceFor, state } = setup();
+    const { api, turns, project, state } = setup();
     const child = Value.Decode(SessionHandleSchema, await api.sessions.start("Work", { parentSessionId: "current" }));
     const controller = new AbortController();
-    const tool = reinsTool("execute", { sessionId: "parent", projectId: project.id, instance: instanceFor("parent"), state });
+    const tool = reinsTool("execute", { sessionId: "parent", projectId: project.id, state });
     const waiting = executeTool(tool, "wait", { code: `return await api.sessions.wait(${JSON.stringify(child.sessionId)}, 1000)` }, controller.signal, undefined);
     controller.abort();
     expect((await waiting).details).toMatchObject({ success: false });
@@ -434,5 +438,45 @@ describe("api.sessions orchestration", () => {
     expect(getSession(child.sessionId)?.activity_state).toBe("running");
     turns[0].finish();
     expect(await api.sessions.wait(child.sessionId, 1000)).toMatchObject({ status: "completed" });
+  });
+});
+
+describe("sessions from a script: what it starts and sends is the calling session's", () => {
+  useTestDb();
+  const repo = useTestRepo();
+  const loopback = useLoopbackState();
+  const model = useFakeModel();
+  const withModel = () => ({ agentRuntimeType: "pi", modelProvider: model.model.provider, modelId: model.model.modelId });
+  const apiOf = (sessionId: string) => buildApiObject(scriptContext(loopback.state, { sessionId }));
+
+  test("a send is a steer from the sender to the target's runtime, admitted when it resolves, to any task and project", async () => {
+    const project = createProject("Messages", repo.dir);
+    createSession("source", project.id, withModel());
+    createSession("target", project.id, withModel());
+    const other = createProject("Target", `${repo.dir}/other`);
+    createSession("stranger", other.id, withModel());
+    const api = apiOf("source");
+
+    expect(await api.sessions.send("target", "First")).toBeUndefined();
+    await api.sessions.send("stranger", "Also this");
+
+    expect(inputsOf("target")).toEqual([{ role: "reinsInput", content: [{ type: "text", text: "First" }], reinsId: expect.any(String), metadata: { sourceSessionId: "source" }, timestamp: expect.any(Number) }]);
+    expect(inputsOf("stranger")).toEqual([expect.objectContaining({ content: [{ type: "text", text: "Also this" }], metadata: { sourceSessionId: "source" } })]);
+  });
+
+  test("a child is created on the caller's source and prompted there; waiting on it resolves once it reported to its parent", async () => {
+    const project = createProject("Children", repo.dir);
+    const caller = createSession("parent", project.id, withModel());
+    const api = apiOf("parent");
+
+    const { sessionId } = Value.Parse(SessionHandleSchema, await api.sessions.start("Child work", { parentSessionId: "current" }));
+    const waiting = api.sessions.wait(sessionId, 10_000);
+    (await model.nextTurn(sessionId)).finish({ reply: "Child result" });
+
+    expect(getSession(sessionId)).toMatchObject({ source_id: caller.source_id, parent_session_id: "parent" });
+    expect(await waiting).toEqual({ sessionId, status: "completed", result: "Child result", error: null });
+    expect(getSession(sessionId)?.activity_state).toBeNull();
+    expect(inputsOf(sessionId)).toEqual([expect.objectContaining({ content: [{ type: "text", text: "Child work" }] })]);
+    expect(inputsOf("parent")).toEqual([expect.objectContaining({ content: [{ type: "text", text: "Child result" }], metadata: { sourceSessionId: sessionId } })]);
   });
 });

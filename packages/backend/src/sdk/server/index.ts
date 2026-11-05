@@ -64,9 +64,9 @@ export interface ServerSdk {
   readonly sessions: Sessions;
   /** Nodes: the machines sessions work on. Run a command on one. Call `run` on it, as for `sessions`. */
   readonly nodes: Nodes;
-  /** Projects, to read. Call `get` on it, as for `sessions`. */
+  /** Projects. Call its methods on it, as for `sessions`. */
   readonly projects: Projects;
-  /** Tasks, to read. Call `get` on it, as for `sessions`. */
+  /** Tasks, of any project. Call its methods on it, as for `sessions`. */
   readonly tasks: Tasks;
   /**
    * The extension's own directory, `<data dir>/extensions/<name>/` (absolute), which the host creates before
@@ -198,16 +198,23 @@ export interface SessionInfo {
   readonly name: string | null;
   /** The text of its first message (the user's, or what started it); null before it has one. */
   readonly firstMessage: string | null;
-  /** Never shown in the browser (`SessionStart.background`). */
+  /** How many messages its transcript has. */
+  readonly messageCount: number;
+  /** The model it runs; null before it has one. */
+  readonly model: { readonly provider: string; readonly modelId: string; readonly thinkingLevel: ThinkingLevel | "off" } | null;
+  /** Never shown in the browser (`SessionStartOptions.background`). */
   readonly background: boolean;
   /** Its run is in progress now (or input it was given is being admitted). */
   readonly running: boolean;
-  /** Its last run ended with something the user has not opened yet (the browser's amber dot). */
+  /** Its last run ended with something the user has not opened yet (the browser's amber dot). Reading a
+   * session does not mark it read. */
   readonly unread: boolean;
-  /** The extension that started it (`SessionStart`), or null. */
+  /** Pinned above the unpinned sessions of its lists. */
+  readonly pinned: boolean;
+  /** Archived: left out of the session lists. */
+  readonly archived: boolean;
+  /** The extension that started it, or null. */
   readonly startedBy: string | null;
-  /** When it was archived (hidden from the session lists), or null. */
-  readonly archivedAt: string | null;
   /** When its latest run started: the one running now, else the latest that ended; null before its first. A
    * message sent to a running session joins that run, so it does not change this. */
   readonly lastRunStartedAt: string | null;
@@ -240,28 +247,43 @@ export type MessageBlock = string | {
 
 /** What a message carries beside its content, for the extension's own use: any plain JSON object of at most
  * 64 KiB, kept with it in the session's transcript. The model does not get it. The keys Reins sets itself
- * (`sourceExtension`, `sourceSessionId`, `details`) are refused. */
+ * (`sourceExtension`, `sourceSessionId`, `details`) are refused. Extensions only. */
 export type MessageMetadata = Readonly<Record<string, unknown>>;
 
-/** A session to start, with its first prompt. It needs a `source` or a `projectId` (or both). */
-export interface SessionStart {
+/** A model to run a session with. */
+export interface ModelChoice {
+  readonly provider: string;
+  readonly modelId: string;
+  readonly thinkingLevel?: ThinkingLevel;
+}
+
+/**
+ * Where a session starts and how. From an agent's session (a script), what it leaves out is the caller's: its
+ * project, its task (in its own project), its source and its model. An extension has no session: a session it
+ * starts needs a `source` or a `projectId` (or both), and is of no project without one.
+ */
+export interface SessionStartOptions {
+  /** `"current"`: a child of the calling session, which reports its outcome back to it (scripts only); null or
+   * left out: an independent session. A script must give it. */
+  readonly parentSessionId?: "current" | null;
+  /** Its project (`"current"`: the calling session's). In another project than the caller's, it has no task
+   * unless `taskId` names one of it, and works where that project's sessions work. */
+  readonly projectId?: number | "current";
+  /** A task of its project; `"current"` the calling session's; null for a session of no task. */
+  readonly taskId?: number | null | "current";
   /** Where it works: a source's ID, or a node and path (a directory no session used yet is checked on its
-   * node). Without it, the project's: its task's latest session's source, else its default source. */
-  readonly source?: number | Location;
-  /** Its project; without it, the session has none (then `source` is required, and there is no task). */
-  readonly projectId?: number;
-  /** A task of the project. */
-  readonly taskId?: number;
-  readonly prompt: MessageContent;
-  /** The prompt's metadata (`MessageMetadata`). */
-  readonly metadata?: MessageMetadata;
-  /** Its model; without it, the `default_model` setting's. */
-  readonly model?: { readonly provider: string; readonly modelId: string; readonly thinkingLevel?: ThinkingLevel };
-  /** A background session: one the browser never shows (not listed, counted or badged); it runs, settles and
-   * can be read like any other. */
-  readonly background?: boolean;
+   * node). Without it, the caller's (in its project), else the project's: its task's latest session's source,
+   * else its default source. */
+  readonly source?: number | Location | null;
+  /** Its model; without it, the caller's, else the `default_model` setting's. */
+  readonly model?: ModelChoice;
   /** Its name; without it, it is named as any session is. */
   readonly title?: string;
+  /** A background session: one the browser never shows (not listed, counted or badged); it runs, settles and
+   * can be read like any other. Extensions only. */
+  readonly background?: boolean;
+  /** The prompt's metadata (`MessageMetadata`). Extensions only. */
+  readonly metadata?: MessageMetadata;
 }
 
 /** How much of a session's context window its context takes now. */
@@ -282,58 +304,136 @@ export interface SessionSettlement {
   readonly error: string | null;
 }
 
-/**
- * Sessions, as the agents' `api.sessions` has them, for the extension: it acts as no session, so it names
- * where a session works. What it starts and what it sends record the extension as their origin (the
- * session's `startedBy`; its messages' `metadata.sourceExtension`), which the chat shows ("from <name>").
- * Its messages reach the model as they are, like a user's: an extension is trusted code of the server.
- */
-/** Which sessions `Sessions.list` gives: from `offset` on (0 by default), at most `limit` (1 to 200, 50 by default). */
-export interface SessionListQuery {
-  readonly limit?: number;
-  readonly offset?: number;
+/** What `Sessions.wait` saw: a run's end (`completed`, `failed`, `cancelled`), a session at rest with no reply
+ * (`idle`), or its time running out (`timeout`). */
+export interface SessionWaitResult {
+  readonly sessionId: string;
+  readonly status: "idle" | "completed" | "failed" | "cancelled" | "timeout";
+  readonly result: string | null;
+  readonly error: string | null;
 }
 
+/**
+ * Which sessions `Sessions.list` gives. By default those the browser lists (not archived, not background): of
+ * the calling session's project (a session of no project: those of no project on its source), pinned first,
+ * then the latest change; for an extension, of every project and of none, the latest change first, 50 at a time.
+ */
+export interface SessionListQuery {
+  /** A project's sessions; `"current"`: the calling session's project. */
+  readonly projectId?: number | "current";
+  /** One task's sessions (`"current"`: the calling session's), or null for the project's sessions of no task. */
+  readonly taskId?: number | null | "current";
+  /** Only those changed since then (an ISO time). */
+  readonly since?: string;
+  /** 1 to 200. */
+  readonly limit?: number;
+  readonly offset?: number;
+  /** Words in its ID, name, task's title or messages. */
+  readonly search?: string;
+  /** Only those with at least this many messages. */
+  readonly minMessages?: number;
+  /** `"exclude"` (the default), `"only"` or `"include"` background sessions. */
+  readonly background?: "exclude" | "only" | "include";
+}
+
+/** Which entries of a session's transcript `Sessions.entries` gives. */
+export interface SessionEntryQuery {
+  readonly types?: readonly ("user" | "assistant" | "compactionSummary" | "toolCall")[];
+  readonly toolName?: string;
+  readonly isError?: boolean;
+  readonly since?: string;
+  readonly afterSeq?: number;
+  readonly beforeSeq?: number;
+  readonly limit?: number;
+  readonly search?: string;
+  readonly order?: "asc" | "desc";
+  /** Give tool results' whole content, not only a preview. */
+  readonly includeContent?: boolean;
+}
+
+/** An entry of a session's transcript: a message, or a tool call with its result joined. */
+export type SessionEntry =
+  | {
+    readonly sessionId: string;
+    readonly seq: number;
+    readonly createdAt: string;
+    readonly type: "user" | "assistant" | "compactionSummary";
+    readonly role: string;
+    readonly content?: unknown;
+    readonly summary?: string;
+  }
+  | {
+    readonly sessionId: string;
+    readonly seq: number;
+    readonly createdAt: string;
+    readonly type: "toolCall";
+    readonly id: string;
+    readonly name: string;
+    readonly arguments: unknown;
+    readonly result: { readonly seq: number; readonly createdAt: string; readonly isError: boolean; readonly contentPreview: string; readonly content?: unknown } | null;
+  };
+
+/**
+ * Sessions, as agents' `api.sessions` has them: any session can be read, messaged, waited for and changed. The
+ * caller decides the defaults (`SessionStartOptions`, `SessionListQuery`) and the origin of what it starts and
+ * sends: an extension's sessions and messages record it (the session's `startedBy`; its messages'
+ * `metadata.sourceExtension`), which the chat shows ("from <name>"); its messages reach the model as they are,
+ * like a user's, as an extension is trusted code of the server. `"current"` names the calling session, its
+ * project or its task, and an extension, which has none, is refused it.
+ */
 export interface Sessions {
-  /** The session; rejects for one the server does not have. */
+  /** The session; rejects for one the server does not have ("Session not found: <id>"). */
   get(sessionId: string): Promise<SessionInfo>;
-  /**
-   * The sessions the browser lists (not archived, not background), of every project and of none, the latest
-   * change first (`updatedAt`: a run ending, a rename). Page through them with `offset`. Rejects a `limit` or
-   * `offset` out of range.
-   */
+  /** The calling session; an extension has none, and is refused. */
+  current(): Promise<SessionInfo>;
+  /** The sessions `query` asks for (`SessionListQuery`). Rejects a `limit` or `offset` out of range. */
   list(query?: SessionListQuery): Promise<SessionInfo[]>;
+  /** The entries of its transcript (`SessionEntryQuery`). */
+  entries(sessionId: string, query?: SessionEntryQuery): Promise<SessionEntry[]>;
   /**
    * Creates a session and submits its prompt; resolves with its ID once Pi admitted the prompt, without
-   * waiting for the run. Rejects, keeping nothing, with neither a source nor a project, an unknown
-   * project, task (or a task of another project), source or node, a path that is not a directory on its
-   * node, a model the server does not have, a blank prompt or title, and a prompt the session refuses.
+   * waiting for the run. Rejects, keeping nothing, for a place it cannot be (no source and no project from an
+   * extension, an unknown project, task (or a task of another project), source or node, a path that is not a
+   * directory on its node), a model the server does not have, a blank prompt or title, a child more than 3
+   * deep; a prompt the session refuses rejects and leaves the session, to be sent to again or moved.
    */
-  start(session: SessionStart): Promise<string>;
+  start(prompt: MessageContent, options?: SessionStartOptions): Promise<{ sessionId: string }>;
   /**
-   * Submits `message` to the session, as the agents' `api.sessions.send` does: it steers it, so a running
-   * session takes it into its work and an idle one starts a run with it; resolves once Pi admitted it, not
-   * when the work ends. It does not look at whether the session is busy: `get` tells. Rejects for an unknown
-   * session, content or metadata their rules refuse (`MessageContent`, `MessageMetadata`), and one the session
-   * refuses (its node was removed).
+   * Submits `message` to the session: it steers it, so a running session takes it into its work and an idle
+   * one starts a run with it; resolves once Pi admitted it, not when the work ends. It does not look at whether
+   * the session is busy: `get` tells. From a script it reaches the model as a session update from the caller.
+   * Rejects for an unknown session, content or metadata their rules refuse (`MessageContent`,
+   * `MessageMetadata`), and one the session refuses (its node was removed).
    */
-  send(sessionId: string, message: MessageContent, options?: { metadata?: MessageMetadata }): Promise<void>;
+  send(sessionId: string, message: MessageContent, options?: { readonly metadata?: MessageMetadata }): Promise<void>;
+  /**
+   * Waits for the session to be at rest, at most `timeoutMs` (0 to 30 000; 10 000 by default), and gives its
+   * latest outcome. A session at rest answers at once. Rejects for an unknown session, and for a script's own.
+   */
+  wait(sessionId: string, timeoutMs?: number): Promise<SessionWaitResult>;
   /**
    * Compacts the session's context now (a summary replaces its history; `instructions` focus the summary),
    * as the composer's `/compact` does, in order with what was submitted to it before. Resolves once the
    * compaction started, not when it ends: the session reads `running` until then. Rejects for an unknown
    * session, a running one ("compact it once it is idle") and one with nothing to compact. The model already
-   * compacts by itself near the context limit: this is for a lower limit of the extension's own.
+   * compacts by itself near the context limit: this is for a lower limit of the caller's own.
    */
-  compact(sessionId: string, options?: { instructions?: string }): Promise<void>;
+  compact(sessionId: string, options?: { readonly instructions?: string }): Promise<void>;
   /** How full the session's context is (`ContextUsage`); null when it is not known (no model yet, or one the
    * server no longer has). Rejects for an unknown session. */
   contextUsage(sessionId: string): Promise<ContextUsage | null>;
+  /** Sets its model from its next turn on; `thinkingLevel` defaults to its own. Rejects for a model the server
+   * does not have. */
+  setModel(sessionId: string, provider: string, modelId: string, thinkingLevel?: ThinkingLevel): Promise<SessionInfo>;
+  /** Renames it (trimmed, not blank), or with null gives it back its fallback label. */
+  setName(sessionId: string, name: string | null): Promise<SessionInfo>;
+  setPinned(sessionId: string, pinned: boolean): Promise<SessionInfo>;
+  setArchived(sessionId: string, archived: boolean): Promise<SessionInfo>;
   /**
    * Tells `listener` each time a run of a session this extension started ends, once its end is recorded,
    * with its outcome and final reply. Only the extension's own sessions (`startedBy`), and only while the
    * listener is registered: a run that ends while no app runs (during a dev reload's gap) is not told, so
-   * read what a listener missed with `get`. A throw or rejection is the extension's error, logged.
+   * read what a listener missed with `get`. A throw or rejection is the extension's error, logged. Extensions only.
    */
   onSettled(listener: (settlement: SessionSettlement) => void | Promise<void>): Disposer;
 }
@@ -345,26 +445,63 @@ export interface Sessions {
 export interface ProjectInfo {
   readonly id: number;
   readonly name: string;
+  /** The branch its tasks' branches start from and its diffs compare with. */
+  readonly baseBranch: string;
+  /** Its default source: where it was created, where a new session of it works unless told otherwise. */
+  readonly defaultSourceId: number | null;
+  readonly createdAt: string;
+  readonly lastOpenedAt: string;
 }
 
+/** Projects. Any project can be read; `"current"` and `current()` are the calling session's (scripts only). */
 export interface Projects {
+  list(): Promise<ProjectInfo[]>;
   /** The project; rejects for one the server does not have ("Project not found: <id>"). */
   get(projectId: number): Promise<ProjectInfo>;
+  /** The calling session's project, or null for a session of no project; an extension has none, and is refused. */
+  current(): Promise<ProjectInfo | null>;
+  /** Creates a project whose default source is `path` on node `nodeId` (by default the calling session's node;
+   * an extension must name it), a directory there; detects its base branch there unless given. */
+  create(name: string, path: string, baseBranch?: string, nodeId?: string): Promise<ProjectInfo>;
 }
 
 export interface TaskInfo {
   readonly id: number;
   readonly projectId: number;
   readonly title: string;
+  readonly description: string | null;
+  /** The git branch its sessions work on. */
+  readonly branchName: string;
+  /** What its diffs compare with, when not its project's base branch. */
+  readonly baseCommit: string | null;
+  readonly status: "open" | "closed";
   /** When it was closed; null while it is open. Reopening it clears this. */
   readonly closedAt: string | null;
   readonly createdAt: string;
   readonly updatedAt: string;
 }
 
+/** What `Tasks.update` changes; what it leaves out is kept. */
+export interface TaskChanges {
+  readonly title?: string;
+  readonly description?: string;
+  readonly baseCommit?: string;
+}
+
+/** Tasks, of any project; a project left out (or `"current"`) is the calling session's, which an extension
+ * must name, and a session of no project too (tasks belong to projects). */
 export interface Tasks {
+  /** The project's tasks, open ones first; only those of `status` when given. */
+  list(status?: "open" | "closed", projectId?: number | "current"): Promise<TaskInfo[]>;
   /** The task; rejects for one the server does not have ("Task not found: <id>"). */
   get(taskId: number): Promise<TaskInfo>;
+  /** The calling session's task, or null for a session of no task; an extension has none, and is refused. */
+  current(): Promise<TaskInfo | null>;
+  /** Creates a task and names its branch (from the title unless `branchName` is given); no checkout is touched. */
+  create(title: string, description: string, branchName?: string, projectId?: number | "current"): Promise<TaskInfo>;
+  update(taskId: number, changes: TaskChanges): Promise<TaskInfo>;
+  close(taskId: number): Promise<TaskInfo>;
+  reopen(taskId: number): Promise<TaskInfo>;
 }
 
 // ---------------------------------------------------------------------------

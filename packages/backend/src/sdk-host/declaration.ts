@@ -9,7 +9,6 @@ import { Type, type Static, type TSchema } from "@sinclair/typebox";
 import type { JsonSchema, ScriptArgs, ScriptMethod, ScriptParam } from "@reins/sdk/server";
 import type { Models } from "../models/models.js";
 import type { SessionModel } from "../models/session.js";
-import type { SessionInstance } from "../sessions/session-instance.js";
 
 /** Who calls an SDK method: an agent's session (its script: defaults are its own, and what it does is
  * attributed to it), or an extension (it acts as no session). */
@@ -18,7 +17,6 @@ export type Caller =
     kind: "session";
     /** As its row was when the script began. */
     session: SessionModel;
-    instance?: SessionInstance;
     /** The script's: aborts when the script ends. */
     signal?: AbortSignal;
   }

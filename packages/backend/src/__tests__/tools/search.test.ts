@@ -139,7 +139,7 @@ describe("search tool", () => {
     expect(text).toContain("interface Api {");
     expect(text).toContain("tasks: TasksApi;");
     expect(text).toContain("interface TasksApi {");
-    expect(text).toContain("list(status?: \"open\" | \"closed\", projectId?: number | \"current\"): Task[];");
+    expect(text).toContain("list(status?: \"open\" | \"closed\", projectId?: number | \"current\"): Promise<Task[]>;");
     expect(text).not.toContain("tasks.list(");
     expectGeneratedTypeScriptToBeValid(text);
   });
@@ -171,7 +171,7 @@ describe("search tool", () => {
 
     const text = result.content[0].type === "text" ? result.content[0].text : "";
     expect(text).toContain("sessions: SessionsApi;");
-    expect(text).toContain("setName(sessionId: string, name: string | null): Session;");
+    expect(text).toContain("setName(sessionId: string, name: string | null): Promise<Session>;");
     expectGeneratedTypeScriptToBeValid(text);
   });
 

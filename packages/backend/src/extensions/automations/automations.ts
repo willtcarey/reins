@@ -266,7 +266,7 @@ export class Automations {
   private async target(row: AutomationRow, now: Date): Promise<SessionInfo | null | undefined> {
     if (row.session_id === null) return null;
     const session = await this.session(row.session_id);
-    if (session && session.archivedAt === null) return session;
+    if (session && !session.archived) return session;
     if (row.target === "session") {
       this.store.cancel(row.id, session ? "Its session was archived" : "Its session was deleted", now);
       return undefined;
@@ -367,10 +367,9 @@ export class Automations {
 
   /** Starts a session of the automation: its own (kept as its session) or a new one (in its run only). */
   private async startSession(row: AutomationRow, text: string, details: { text: string; hidden: true }): Promise<string> {
-    const sessionId = await this.sessions.start({
+    const { sessionId } = await this.sessions.start([text, details], {
       source: JSON.parse(row.source_json!),
       ...(row.project_id === null ? {} : { projectId: row.project_id }),
-      prompt: [text, details],
       background: row.background === 1,
       title: row.name ?? "Automation",
       ...(row.model_json === null ? {} : { model: JSON.parse(row.model_json) }),

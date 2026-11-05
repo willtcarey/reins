@@ -16,7 +16,7 @@ import type { CallContext, SdkMethod, SdkNamespace } from "./declaration.js";
 export function scriptCallContext(ctx: ApiContext): CallContext {
   return {
     models: ctx.models,
-    caller: { kind: "session", session: ctx.session, ...(ctx.instance ? { instance: ctx.instance } : {}), ...(ctx.signal ? { signal: ctx.signal } : {}) },
+    caller: { kind: "session", session: ctx.session, ...(ctx.signal ? { signal: ctx.signal } : {}) },
   };
 }
 
@@ -31,10 +31,11 @@ export function scriptTypes({ types: named = {} }: SdkNamespace): { name: string
 }
 
 function scriptFunction(name: string, method: SdkMethod): ApiFunctionDef {
-  const params = method.params.flatMap(param => {
-    const schema = forScripts(schemaOf(name, param.schema));
-    return schema ? [{ ...param, schema }] : [];
-  });
+  const own = method.params.map(param => ({ ...param, schema: forScripts(schemaOf(name, param.schema)) }));
+  const kept = own.findLastIndex(param => param.schema !== null) + 1;
+  // Only trailing arguments can be an extension's: a script's arguments are positional.
+  if (own.slice(0, kept).some(param => param.schema === null)) throw new Error(`${name}: an argument before a script's last is not for scripts`);
+  const params = own.slice(0, kept).flatMap(param => param.schema ? [{ ...param, schema: param.schema }] : []);
   return {
     name,
     description: method.description,
@@ -69,7 +70,7 @@ function schemaOf(name: string, schema: unknown): TSchema {
 }
 
 /** `schema` without what is not for scripts (`scripts: false`), the same object when it has none; null when it
- * is not for scripts itself. */
+ * is not for scripts itself, or an object all of whose fields are not. */
 function forScripts(schema: TSchema): TSchema | null {
   if (schemaField(schema, "scripts") === false) return null;
   const properties = schemaProperties(schema);
@@ -82,6 +83,7 @@ function forScripts(schema: TSchema): TSchema | null {
       if (own) kept[key] = own;
     }
     if (!changed) return schema;
+    if (Object.keys(kept).length === 0) return null;
     const required = schemaField(schema, "required");
     return { ...schema, properties: kept, ...(Array.isArray(required) ? { required: required.filter(key => key in kept) } : {}) };
   }

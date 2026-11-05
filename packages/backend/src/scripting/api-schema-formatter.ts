@@ -22,6 +22,7 @@ import {
   schemaRequiredSet,
   schemaConst,
   schemaField,
+  schemaName,
 } from "./schema-utils.js";
 
 /**
@@ -151,11 +152,9 @@ function namesWithoutSelfAlias(
   schema: TSchema,
   name: string,
 ): SchemaNameMap | undefined {
-  if (!names || names.get(schema) !== name) return names;
+  if (!names || schemaName(names, schema) !== name) return names;
 
-  const next = new Map(names);
-  next.delete(schema);
-  return next;
+  return new Map([...names].filter(([, other]) => other !== name));
 }
 
 function splitApiName(name: string): { namespace: string; method: string } {
@@ -181,7 +180,7 @@ function renderJSDoc(text: string, indent: string): string {
 
 function renderType(schema: TSchema, names?: SchemaNameMap): string {
   // Check for a named type first (by identity)
-  const knownName = names?.get(schema);
+  const knownName = schemaName(names, schema);
   if (knownName) return knownName;
 
   // Primitives
@@ -285,7 +284,7 @@ function paramDescriptions(schema: TSchema, names?: SchemaNameMap, prefix = ""):
     const path = `${prefix}${key}`;
     const description = schemaDescription(propSchema);
     const own: [string, string][] = description ? [[path, description]] : [];
-    const nested = propSchema.type === "object" && !names?.has(propSchema)
+    const nested = propSchema.type === "object" && schemaName(names, propSchema) === undefined
       ? paramDescriptions(propSchema, names, `${path}.`)
       : [];
     return [...own, ...nested];
