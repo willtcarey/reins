@@ -16,6 +16,7 @@ import { AppClient } from "../models/ws-client.js";
 import { mainViewOf, openSettings, renderRoutePage } from "../routing/app-router.js";
 import { RoutedMainArea } from "../routing/main-area.js";
 import type { Route } from "../routing/router.js";
+import type { View } from "@reins/sdk";
 import type { SourceDetail, OpenImageViewerDetail, OpenInBrowserDetail } from "./events.js";
 import type { AppWorkspace } from "./app-workspace.js";
 import type { ImageLightbox } from "./image-lightbox.js";
@@ -98,11 +99,15 @@ export class AppShell extends LitElement {
     this.appStore.dispose();
   }
 
-  /** The title of the view the main area shows as its page, if any, after the activity across sessions. */
+  /**
+   * The title of the view the main area shows alone, if any, after the activity across sessions. A tab's title
+   * names the tab, not the page, so a session's Chat and Changes leave it out.
+   */
   private updateDocumentTitle(): void {
     const { running, finished } = this.appStore.activitySummary;
     const view = mainViewOf(this.currentRoute);
-    const page = view && view.view !== "session" ? this.appStore.views.titleOf(view, { source: this.workspace?.store?.source ?? null, container: "main" }) : null;
+    const alone = view && !this.appStore.views.rendererFor(view)?.tabOf;
+    const page = alone ? this.appStore.views.titleOf(view, { source: this.workspace?.store?.source ?? null, container: "main" }) : null;
     const name = page ? `${page} · REINS` : "REINS";
     if (running > 0) document.title = `(${running} running) ${name}`;
     else if (finished > 0) document.title = `(${finished} new) ${name}`;
@@ -111,7 +116,7 @@ export class AppShell extends LitElement {
 
   private handleRouteChange(route: Route): void {
     this.currentRoute = route;
-    if (route.name === "session" && route.params.sessionId) {
+    if ((route.name === "session" || route.name === "session-changes") && route.params.sessionId) {
       this.quickOpenStore.recordVisit(route.params.sessionId);
     }
   }
@@ -144,6 +149,7 @@ export class AppShell extends LitElement {
         @open-image-viewer=${this.handleOpenImageViewer}
         @open-settings=${() => openSettings()}
         @main-view-change=${() => this.mainArea.changed()}
+        @open-main-view=${(event: CustomEvent<View>) => this.mainArea.open(event.detail)}
       >
         ${!store.connected ? html`
           <div class="bg-yellow-800 text-yellow-200 text-xs text-center py-1">

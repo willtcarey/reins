@@ -117,10 +117,11 @@ describe("FrontendRouter", () => {
 });
 
 describe("the main area's views", () => {
-  test("are the session and new session routes, as views", () => {
+  test("are the session's Chat and Changes, and the new session page, by their routes", () => {
     const router = createAppRouter();
 
     expect(mainViewOf(router.resolve("#/session/s1"))).toEqual({ view: "session", sessionId: "s1" });
+    expect(mainViewOf(router.resolve("#/session/s1/changes"))).toEqual({ view: "session-changes", sessionId: "s1" });
     expect(mainViewOf(router.resolve("#/new?project=7&task=3"))).toEqual({ view: "new-session", projectId: 7, taskId: 3 });
     expect(mainViewOf(router.resolve("#/new"))).toEqual({ view: "new-session", projectId: null, taskId: null });
     expect(mainViewOf(router.resolve("#/settings"))).toBeNull();
@@ -137,6 +138,7 @@ describe("the main area's views", () => {
 
   test("of the app keep their own routes, and one with parameters they cannot have has none", () => {
     expect(mainViewHash({ view: "session", sessionId: "s1" })).toBe("#/session/s1");
+    expect(mainViewHash({ view: "session-changes", sessionId: "s1" })).toBe("#/session/s1/changes");
     expect(mainViewHash({ view: "new-session", projectId: 7, taskId: 3 })).toBe("#/new?project=7&task=3");
     expect(mainViewHash({ view: "new-session", projectId: null, taskId: null })).toBe("#/new");
     expect(mainViewHash({ view: "project-history", projectId: 42 })).toBe("#/projects/42/history");

@@ -142,6 +142,12 @@ export interface MountedView<V extends View = View, C = WorkspaceContext> {
    * holds. Without it, the view is about nothing. Only the main area's view is asked, for now.
    */
   subject?(): readonly Subject[];
+  /**
+   * Told when its container hides it while it stays mounted (a main-area tab not shown, a page swiped away) and
+   * when it shows it again; one mounted hidden is told at once. Without it, or until told, it is shown. A hidden
+   * view may stop what only matters on screen (focusing, marking things read, loading).
+   */
+  setVisible?(visible: boolean): void;
 }
 
 /**
@@ -185,6 +191,17 @@ export interface PanePresentation<V extends View = View> extends ViewPresentatio
 }
 
 /**
+ * Says that a view is one of the tabs of a kind of subject: with the main area showing it, the host shows a tab for
+ * every view that is a tab of that kind, for the same subject (a session's Chat, its Changes, an extension's view
+ * of a session), the app's first, then extensions' in the order they registered.
+ */
+export interface TabOf {
+  readonly type: keyof SubjectTypes;
+  /** The name of the view's parameter that holds the subject's ID; the host makes the other tabs' views with it alone. */
+  readonly parameter: string;
+}
+
+/**
  * How the host can show a view, by presentation. Containers (the Inspector, the main area) show views
  * as a `pane`; message decorations show theirs `inline`. A view without the presentation a place
  * needs is unavailable there.
@@ -196,6 +213,8 @@ export interface ViewRenderer<V extends View = View> {
    * it, the name has one view.
    */
   key?(view: V): string;
+  /** The tabs it is one of in the main area; without it, the view shows there alone. */
+  tabOf?: TabOf;
   pane?: PanePresentation<V>;
   /**
    * In place of a piece of message text, which the view controls completely: it may draw the text

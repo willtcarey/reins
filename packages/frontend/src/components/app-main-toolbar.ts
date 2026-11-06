@@ -1,42 +1,72 @@
 import { LitElement, html } from "lit";
 import { customElement, property } from "lit/decorators.js";
-import { openFileBrowserEvent, paneSelectEvent, reloadRequestEvent } from "./events.js";
-import type { MainPaneSelectDetail } from "./events.js";
-import type { PaneContext, Source, View } from "@reins/sdk";
+import { openMainViewEvent, paneSelectEvent, reloadRequestEvent } from "./events.js";
+import type { PaneContext, View } from "@reins/sdk";
 import type { Mountable } from "./view-mount.js";
 import "./view-mount.js";
-import type { MainWorkspacePane } from "../models/workspace-pages.js";
 import { menuIcon } from "../ui/icons.js";
-import "./branch-indicator.js";
-import "./nav-icon.js";
 import "../ui/popover-menu.js";
 import { statusDot } from "../ui/status-dot.js";
 
+/** One of the main area's tabs (`ViewRenderer.tabOf`): its view and its title. */
+export interface MainTab {
+  readonly view: View;
+  readonly title: string;
+}
+
+/**
+ * The host's toolbar over the main area: the sidebar button on a phone, the main area's tabs, the shown view's own
+ * toolbar (or its title), then the connection status and the menu.
+ */
 @customElement("app-main-toolbar")
 export class AppMainToolbar extends LitElement {
   override createRenderRoot() {
     return this;
   }
 
-  @property({ attribute: false }) source: Source | null = null;
-  @property({ type: String }) activePane: MainWorkspacePane = "chat";
-  @property({ type: String }) currentBranch: string | null = null;
   @property({ type: Boolean }) isStandalone = false;
   @property({ type: Boolean }) connected = false;
   @property({ type: Boolean, attribute: "show-sidebar-button" }) showSidebarButton = false;
-  /** Whether a session is shown: without one (a page, such as the new session page) there are no files, panes or branch to show. */
-  @property({ type: Boolean }) sessionTools = true;
-  /** Without session tools, the title of the page shown (a phone's header shows it). */
+  /** The main area's tabs; none (or one) while it shows a view alone. */
+  @property({ attribute: false }) tabs: readonly MainTab[] = [];
+  /** The tab this toolbar is over: on a phone each tab's page has a toolbar, which marks its own. */
+  @property({ type: Number }) activeTab = 0;
+  /** The title of the view shown, without tabs or a toolbar of its own (a phone's header shows it). */
   @property({ attribute: false }) pageTitle: string | null = null;
-  /** Without session tools, the shown view's own toolbar (`PanePresentation.toolbar`), in place of its title. */
+  /** The shown view's own toolbar (`PanePresentation.toolbar`). */
   @property({ attribute: false }) viewToolbar: { presentation: Mountable; view: View; context: PaneContext } | null = null;
 
-  private selectPane(pane: MainPaneSelectDetail["pane"]) {
-    this.dispatchEvent(paneSelectEvent(pane));
+  private renderTabs() {
+    const count = this.tabs.length;
+    return html`
+      <div class="relative grid rounded-lg border border-zinc-800 bg-zinc-950/40 p-1 shrink-0 overflow-hidden" role="tablist" style=${`grid-template-columns: repeat(${count}, minmax(0, 1fr));`}>
+        <span
+          class="absolute inset-y-1 left-1 rounded-md bg-blue-500/20 shadow-sm transition-transform duration-200 ease-out will-change-transform"
+          style=${`width: calc((100% - 0.5rem) / ${count}); transform: translateX(${this.activeTab * 100}%);`}
+          aria-hidden="true"
+        ></span>
+        ${this.tabs.map((tab, index) => {
+          const active = index === this.activeTab;
+          return html`
+            <button
+              role="tab"
+              class="relative z-10 px-3 py-1 rounded-md text-sm font-semibold cursor-pointer shrink-0 ${active ? "text-blue-100" : "text-zinc-500 hover:text-zinc-300 transition-colors"}"
+              aria-selected=${active ? "true" : "false"}
+              @click=${() => { if (!active) this.dispatchEvent(openMainViewEvent(tab.view)); }}
+            >${tab.title}</button>
+          `;
+        })}
+      </div>
+    `;
   }
 
-  private renderMenuIcon() {
-    return menuIcon();
+  private renderViewTools() {
+    const toolbar = this.viewToolbar;
+    if (toolbar) {
+      return html`<reins-view-mount class="flex min-w-0 flex-1 items-center gap-1.5" .presentation=${toolbar.presentation} .view=${toolbar.view} .context=${toolbar.context}></reins-view-mount>`;
+    }
+    if (this.tabs.length > 1) return html`<div class="min-w-0 flex-1"></div>`;
+    return html`<h1 class="min-w-0 flex-1 truncate px-1 text-sm font-semibold text-zinc-200">${this.pageTitle ?? ""}</h1>`;
   }
 
   private renderOverflowActions() {
@@ -48,63 +78,20 @@ export class AppMainToolbar extends LitElement {
     `;
   }
 
-  /** The viewed session's files, its Chat and Changes panes, and its branch. */
-  private renderSessionTools() {
-    const chatActive = this.activePane === "chat";
-    const activeButtonClass = "text-blue-100";
-    const inactiveButtonClass = "text-zinc-500 hover:text-zinc-300 transition-colors";
-    return html`
-      <nav-icon icon="folder" label="Browse files" .size=${18}
-        @click=${() => {
-          if (this.source) this.dispatchEvent(openFileBrowserEvent(this.source));
-        }}></nav-icon>
-      <div class="relative grid grid-cols-2 rounded-lg border border-zinc-800 bg-zinc-950/40 p-1 shrink-0 overflow-hidden">
-        <span
-          class="absolute inset-y-1 left-1 w-[calc(50%-0.25rem)] rounded-md bg-blue-500/20 shadow-sm transition-transform duration-200 ease-out will-change-transform ${chatActive ? "translate-x-0" : "translate-x-full"}"
-          aria-hidden="true"
-        ></span>
-        <button
-          class="relative z-10 px-3 py-1 rounded-md text-sm font-semibold cursor-pointer shrink-0 ${chatActive ? activeButtonClass : inactiveButtonClass}"
-          aria-pressed=${chatActive}
-          @click=${() => this.selectPane("chat")}
-        >
-          Chat
-        </button>
-        <button
-          class="relative z-10 px-3 py-1 rounded-md text-sm font-semibold cursor-pointer shrink-0 ${chatActive ? inactiveButtonClass : activeButtonClass}"
-          aria-pressed=${!chatActive}
-          @click=${() => this.selectPane("changes")}
-        >
-          Changes
-        </button>
-      </div>
-      <div class="min-w-0 flex-1 overflow-hidden flex justify-end">
-        <branch-indicator class="block min-w-0 max-w-full" .currentBranch=${this.currentBranch}></branch-indicator>
-      </div>
-    `;
-  }
-
-  private renderViewTools() {
-    const toolbar = this.viewToolbar;
-    if (toolbar) {
-      return html`<reins-view-mount class="flex min-w-0 flex-1 items-center gap-1.5" .presentation=${toolbar.presentation} .view=${toolbar.view} .context=${toolbar.context}></reins-view-mount>`;
-    }
-    return html`<h1 class="min-w-0 flex-1 truncate px-1 text-sm font-semibold text-zinc-200">${this.pageTitle ?? ""}</h1>`;
-  }
-
   override render() {
     return html`
       <div class="h-[50px] flex items-center gap-1.5 border-b border-zinc-800/80 bg-zinc-900/80 px-2 py-1.5 overflow-hidden shrink-0">
         ${this.showSidebarButton ? html`
           <button
             class="p-2 rounded-md text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/70 cursor-pointer shrink-0 transition-colors md:hidden"
-            @click=${() => this.selectPane("sessions")}
+            @click=${() => this.dispatchEvent(paneSelectEvent("sessions"))}
             title="Open sidebar"
           >
-            ${this.renderMenuIcon()}
+            ${menuIcon()}
           </button>
         ` : ""}
-        ${this.sessionTools ? this.renderSessionTools() : this.renderViewTools()}
+        ${this.tabs.length > 1 ? this.renderTabs() : ""}
+        ${this.renderViewTools()}
         <div class="hidden md:flex items-center gap-1 shrink-0">
           ${this.connected ? statusDot("success", { label: "Connected" }) : statusDot("danger", { label: "Disconnected" })}
         </div>

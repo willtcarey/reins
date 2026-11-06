@@ -23,20 +23,18 @@ function renderOverflowContent(toolbar: AppMainToolbar) {
   return content();
 }
 
+const chat = { view: "session", sessionId: "s1" };
+const changes = { view: "session-changes", sessionId: "s1" };
+
 describe("AppMainToolbar", () => {
-  test("shows no overflow menu in the browser", () => {
+  test("shows the sidebar button and the connection, and no overflow menu in the browser", () => {
     const el = new AppMainToolbar();
-    el.activePane = "changes";
-    el.currentBranch = "feature/mobile-nav";
     el.showSidebarButton = true;
     el.connected = false;
 
     const output = templateToString(el.render());
 
     expect(output).toContain("Open sidebar");
-    expect(output).toContain("Browse files");
-    expect(output).toContain("translate-x-full");
-    expect(output).toContain("hidden md:flex");
     expect(output).toContain("Disconnected");
     expect(output).not.toContain("<popover-menu");
   });
@@ -44,7 +42,6 @@ describe("AppMainToolbar", () => {
   test("offers Reload as the only standalone overflow action", () => {
     const el = new AppMainToolbar();
     const reloadRequest = mock(() => {});
-    Reflect.set(el, "sessionId", "session-123");
     el.isStandalone = true;
     el.addEventListener("reload-request", reloadRequest);
 
@@ -58,44 +55,41 @@ describe("AppMainToolbar", () => {
     expect(reloadRequest).toHaveBeenCalledTimes(1);
   });
 
-  test("emits navigation events from toolbar controls", () => {
+  test("shows the main area's tabs, its own marked, and asks to open another's view, not its own", () => {
     const el = new AppMainToolbar();
     el.showSidebarButton = true;
-    const panes: string[] = [];
-    const openFileBrowserDetails: unknown[] = [];
-    const source = { projectId: 42, nodeId: "node", path: "/work/project", available: true };
-    el.source = source;
+    el.tabs = [{ view: chat, title: "Chat" }, { view: changes, title: "Changes" }];
+    el.activeTab = 0;
+    const opened: unknown[] = [];
+    const panes: unknown[] = [];
+    el.addEventListener("open-main-view", (event) => opened.push(event.detail));
+    el.addEventListener("pane-select", (event) => panes.push(event.detail.pane));
 
-    el.addEventListener("pane-select", (event) => {
-      if (event instanceof CustomEvent) panes.push(event.detail.pane);
-    });
-    el.addEventListener("open-file-browser", (event) => openFileBrowserDetails.push(event.detail));
+    const rendered = el.render();
+    for (const click of collectTemplateEventListeners(rendered, "click")) click(new Event("click"));
 
-    for (const click of collectTemplateEventListeners(el.render(), "click")) {
-      click(new Event("click"));
-    }
-
-    expect(panes).toEqual(["sessions", "chat", "changes"]);
-    expect(openFileBrowserDetails).toEqual([{ source }]);
+    expect(templateToString(rendered)).toContain("Chat");
+    expect(templateToString(rendered)).toContain("Changes");
+    expect(templateToString(rendered)).toContain('role="tab"');
+    expect(opened).toEqual([changes]);
+    expect(panes).toEqual(["sessions"]);
   });
 
-  test("without session tools, a page's toolbar shows its title in their place", () => {
+  test("for a view alone, shows its title", () => {
     const el = new AppMainToolbar();
-    el.sessionTools = false;
     el.pageTitle = "Inbox · reins";
 
     const output = templateToString(el.render());
 
     expect(output).toContain("Inbox · reins");
-    expect(output).not.toContain("Browse files");
+    expect(output).not.toContain('role="tab"');
   });
 
-  test("without session tools, a view's toolbar is mounted in place of its title", () => {
+  test("mounts the view's toolbar in place of its title", () => {
     const el = new AppMainToolbar();
     const toolbar = { mount: () => {} };
     const view = { view: "test-inbox", repository: "reins" };
     const context: PaneContext = { source: null, container: "main" };
-    el.sessionTools = false;
     el.pageTitle = "Inbox · reins";
     el.viewToolbar = { presentation: toolbar, view, context };
 
