@@ -17,6 +17,7 @@ import { LazyHighlightController } from "../../controllers/lazy-highlight-contro
 import { escapeHtml, shouldWrapLines } from "../../models/changes/diff-utils.js";
 import type { DiffLine } from "@backend/models/diff-parser.js";
 import { openInBrowserEvent } from "../events.js";
+import "./live-lines.js";
 import { isBrowsablePath, toRelativePath } from "../../models/path-utils.js";
 import type { ToolRenderer } from "./types.js";
 import type { Source } from "@reins/sdk";
@@ -35,7 +36,8 @@ export class EditToolBlock extends LitElement {
   }
 
   private _hl = new LazyHighlightController(this, () => {
-    if (!this.path || this.isError) return null;
+    // Text still being written would be highlighted again on every frame.
+    if (!this.path || this.isError || this.partialArgs) return null;
     if (this.diffLines.length === 0) return null;
     return { path: this.path, hunk: { header: "", lines: this.diffLines } };
   });
@@ -60,6 +62,10 @@ export class EditToolBlock extends LitElement {
 
   @property({ type: Boolean })
   autoExpand = false;
+
+  /** Its arguments are still being written: its path may be cut short, so it links nowhere yet. */
+  @property({ type: Boolean })
+  partialArgs = false;
 
   @property({ type: Boolean })
   showSpinner = false;
@@ -110,7 +116,7 @@ export class EditToolBlock extends LitElement {
   }
 
   override willUpdate(changed: Map<string, unknown>) {
-    if (changed.has("diffLines") || changed.has("path")) {
+    if (changed.has("diffLines") || changed.has("path") || changed.has("partialArgs")) {
       this._hl.update();
     }
     if (changed.has("autoExpand")) {
@@ -172,17 +178,17 @@ export class EditToolBlock extends LitElement {
         : "border-zinc-700";
 
     const wrap = shouldWrapLines(path || "");
-    const browsable = isBrowsablePath(path, this.source?.path ?? null);
+    const inProject = isBrowsablePath(path, this.source?.path ?? null);
+    const browsable = !this.partialArgs && inProject;
 
-    const showDiff = this.expanded && !showSpinner && !isError && diffLines.length > 0;
-    const hasDiff = showDiff && diffLines.length > 0;
-    // Auto-expanded small diffs get no height cap so wrapping doesn't cause nested scroll
-    const isAutoExpanded = hasDiff && diffLines.length <= SMALL_DIFF_THRESHOLD;
+    // Small diffs get no height cap so wrapping doesn't cause nested scroll; one being written grows.
+    const small = !this.partialArgs && diffLines.length <= SMALL_DIFF_THRESHOLD;
+    const clickable = diffLines.length > 0;
 
     return html`
       <div class="mt-1 mb-1 ml-2 rounded-lg bg-zinc-950 border ${borderColor} overflow-hidden">
         <!-- Header -->
-        <div class="px-3 py-2 flex items-center gap-2 ${!showSpinner ? "cursor-pointer" : ""}" @click=${!showSpinner ? this._handleToggle : nothing}>
+        <div class="px-3 py-2 flex items-center gap-2 ${clickable ? "cursor-pointer" : ""}" @click=${clickable ? this._handleToggle : nothing}>
           ${showSpinner
             ? ringSpinnerIcon("inline-block w-3 h-3 border-2 border-yellow-500 border-t-transparent rounded-full animate-spin flex-shrink-0")
             : html`<span class="flex-shrink-0 text-xs">✏️</span>`}
@@ -190,9 +196,9 @@ export class EditToolBlock extends LitElement {
           <span
             class="text-xs font-mono ${isError ? "text-red-400" : "text-zinc-300"} truncate ${browsable ? "hover:underline cursor-pointer" : ""}"
             @click=${browsable ? this._openInBrowser : nothing}
-            title=${browsable ? "Open in file browser" : "Outside project directory"}
+            title=${browsable ? "Open in file browser" : this.partialArgs ? nothing : "Outside project directory"}
           >${path || "…"}</span>
-          ${path && !browsable
+          ${path && !this.partialArgs && !inProject
             ? html`<span class="text-[10px] font-mono text-zinc-600 bg-zinc-800/60 px-1.5 py-0.5 rounded flex-shrink-0">external</span>`
             : nothing}
           ${isError
@@ -203,16 +209,16 @@ export class EditToolBlock extends LitElement {
             : nothing}
         </div>
 
-        <!-- Diff content (shown when expanded or auto-expanded for small diffs) -->
-        ${hasDiff
-          ? html`
-              <div class="border-t border-zinc-800 px-1 py-1 text-xs font-mono ${isAutoExpanded ? "" : "max-h-96 overflow-y-auto"} overflow-x-auto">
-                <div class="${wrap ? "" : "w-fit min-w-full"}">
-                ${diffLines.map((line, i) => this._renderDiffLine(line, i, wrap))}
-                </div>
-              </div>
-            `
-          : nothing}
+        <!-- Diff: its newest lines while it is written; all of it when expanded (or auto-expanded for small
+             diffs). A new renderLine each render, so lines highlighted since are drawn again. -->
+        ${isError ? nothing : html`<live-lines
+          .lines=${diffLines}
+          .renderLine=${(line: DiffLine, index: number, preview: boolean) => this._renderDiffLine(line, index, wrap && !preview)}
+          .preview=${this.partialArgs ? "newest" : null}
+          .expanded=${this.expanded}
+          .maxHeight=${small ? "" : "max-h-96"}
+          .wrap=${wrap}
+        ></live-lines>`}
       </div>
     `;
   }
@@ -231,6 +237,7 @@ declare global {
 function renderEditBlock(block: ToolBlockData, source: Source | null, showSpinner: boolean) {
   const path = toRelativePath(getEditSummary(block), source?.path ?? null);
   const isError = !!block.isError;
+  const partialArgs = !!block.partialArgs;
   const { additions, removals } = getEditStats(block);
   const diffLines = getEditDiffLines(block);
   const autoExpand = !showSpinner && block.status === "done" && shouldAutoExpand(block);
@@ -243,6 +250,7 @@ function renderEditBlock(block: ToolBlockData, source: Source | null, showSpinne
     .removals=${removals}
     .diffLines=${diffLines}
     .autoExpand=${autoExpand}
+    .partialArgs=${partialArgs}
     .showSpinner=${showSpinner}
   ></edit-tool-block>`;
 }

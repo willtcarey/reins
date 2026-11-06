@@ -48,6 +48,20 @@ describe("Edit tool model helpers", () => {
     expect(getEditStats(makeEditBlock({ args: undefined }))).toEqual({ additions: 0, removals: 0 });
   });
 
+  test("without a server diff, shows the edits being made", () => {
+    const block = makeEditBlock({ args: { path: "f.ts", edits: [{ oldText: "a", newText: "b\nc" }, { oldText: "d", newText: "e" }] } });
+
+    expect(getEditDiffLines(block)).toEqual([
+      { type: "remove", text: "a", oldLine: 1 },
+      { type: "add", text: "b", newLine: 1 },
+      { type: "add", text: "c", newLine: 2 },
+      { type: "context", text: "⋯", newLine: undefined },
+      { type: "remove", text: "d", oldLine: 1 },
+      { type: "add", text: "e", newLine: 1 },
+    ]);
+    expect(getEditStats(block)).toEqual({ additions: 3, removals: 2 });
+  });
+
   test("parses the SDK diff format used for rendered edit lines", () => {
     const diff = [
       "  1 before",

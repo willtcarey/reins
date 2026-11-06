@@ -18,6 +18,10 @@ export interface ToolBlockData {
   result?: { content: ({ type: "text"; text: string } | ChatImageBlock)[]; details?: Record<string, any> };
   isError?: boolean;
   sessionId?: string;
+  /** The model is still writing the call: `args` are those written so far and may be missing or cut
+   * short. Renderers handle such args anyway; they wait for complete ones only for work that would be
+   * wrong or costly on partial ones (a diff, highlighting, a link to a path). */
+  partialArgs?: true;
 }
 
 /**

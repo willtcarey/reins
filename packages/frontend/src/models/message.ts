@@ -1,3 +1,4 @@
+import { parse as parsePartialJson } from "partial-json";
 import { textFromClientContent } from "./chat-content.js";
 import type { StreamingAssistant, ToolBlockData, ToolExecution } from "./chat-state.js";
 import type {
@@ -123,7 +124,16 @@ export class AssistantToolCallBlock {
   get name(): string { return this.call.name; }
   get arguments(): Record<string, any> { return this.call.arguments; }
 
-  /** Rendering data is unavailable for partial streaming calls until execution starts. */
+  private parsedPartialArguments: Record<string, any> | undefined;
+
+  /** The arguments written so far, while the model is still writing them (`partialJson`, from
+   * `toolcall_start` until `toolcall_end`); parsed once per block, which is made once per frame. */
+  private get partialArguments(): Record<string, any> {
+    this.parsedPartialArguments ??= parsePartialArguments(this.call.partialJson ?? "");
+    return this.parsedPartialArguments;
+  }
+
+  /** A streaming call is running from its start, its arguments filling in; one with no name yet is not shown. */
   get renderData(): ToolBlockData | null {
     const base = { id: this.call.id, name: this.call.name, args: this.call.arguments };
     if (this.result) {
@@ -135,8 +145,23 @@ export class AssistantToolCallBlock {
       };
     }
     if (this.execution) return { ...base, ...this.execution };
-    if (this.streaming) return null;
+    if (this.streaming) {
+      if (!this.call.name) return null;
+      if (this.call.partialJson === undefined) return { ...base, status: "running" };
+      return { ...base, args: this.partialArguments, status: "running", partialArgs: true };
+    }
     return { ...base, status: this.awaitingResult ? "running" : "done" };
+  }
+}
+
+function parsePartialArguments(json: string): Record<string, any> {
+  if (!json.trim()) return {};
+  try {
+    const value: unknown = parsePartialJson(json);
+    return typeof value === "object" && value !== null && !Array.isArray(value) ? value : {};
+  } catch {
+    // Malformed until a later keyframe or toolcall_end replaces it.
+    return {};
   }
 }
 

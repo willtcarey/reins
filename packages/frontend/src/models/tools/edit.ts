@@ -10,7 +10,21 @@ export function getEditSummary(block: ToolBlockData): string {
   return block.args?.path ?? "";
 }
 
-/** Compute addition/removal line counts. Prefers details.diff when available, falls back to oldText/newText. */
+const text = (value: unknown) => typeof value === "string" ? value : "";
+
+/** The replacements an edit makes: Pi's `edits`, or one `oldText`/`newText` (older sessions). Either may be cut
+ * short or missing while the model writes them. */
+function editPairs(block: ToolBlockData): { oldText: string; newText: string }[] {
+  const edits: unknown = block.args?.edits;
+  if (Array.isArray(edits)) {
+    return edits.flatMap((edit: unknown) => typeof edit === "object" && edit !== null
+      ? [{ oldText: text(Reflect.get(edit, "oldText")), newText: text(Reflect.get(edit, "newText")) }]
+      : []);
+  }
+  return [{ oldText: text(block.args?.oldText), newText: text(block.args?.newText) }];
+}
+
+/** Compute addition/removal line counts. Prefers details.diff when available, falls back to the edits. */
 export function getEditStats(block: ToolBlockData): { additions: number; removals: number } {
   const rawDiff = block.result?.details?.diff;
   if (typeof rawDiff === "string" && rawDiff) {
@@ -21,12 +35,12 @@ export function getEditStats(block: ToolBlockData): { additions: number; removal
     };
   }
 
-  const oldText: string = block.args?.oldText ?? "";
-  const newText: string = block.args?.newText ?? "";
-
-  const removals = oldText ? oldText.split("\n").length : 0;
-  const additions = newText ? newText.split("\n").length : 0;
-
+  let removals = 0;
+  let additions = 0;
+  for (const { oldText, newText } of editPairs(block)) {
+    if (oldText) removals += oldText.split("\n").length;
+    if (newText) additions += newText.split("\n").length;
+  }
   return { additions, removals };
 }
 
@@ -106,14 +120,17 @@ export function parseDiffString(diff: string): DiffLine[] {
 
 /**
  * Get the diff lines for rendering. Prefers details.diff (server-computed with
- * context lines), falls back to naive oldText→newText diff.
+ * context lines), falls back to a naive diff of each edit, separated by `⋯`.
  */
 export function getEditDiffLines(block: ToolBlockData): DiffLine[] {
   const rawDiff = block.result?.details?.diff;
   if (typeof rawDiff === "string" && rawDiff) {
     return parseDiffString(rawDiff);
   }
-  return computeEditDiff(block.args?.oldText ?? "", block.args?.newText ?? "");
+  return editPairs(block).flatMap(({ oldText, newText }, index): DiffLine[] => [
+    ...(index > 0 ? [{ type: "context" as const, text: "⋯", newLine: undefined }] : []),
+    ...computeEditDiff(oldText, newText),
+  ]);
 }
 
 /** Threshold for auto-expanding small diffs inline (line count). */

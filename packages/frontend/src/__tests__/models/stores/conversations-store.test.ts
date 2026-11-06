@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, jest, test } from "bun:test";
 import { ConversationsStore } from "../../../models/stores/conversations-store.js";
 import { SessionCache } from "../../../models/stores/session-cache.js";
-import type { AgentMessage } from "../../../models/agent-message.js";
+import type { AgentMessage, ToolCall } from "../../../models/agent-message.js";
 import { conversationPage } from "../../helpers/conversations.js";
 import { mockFetch, restoreFetch } from "../../helpers/mock-fetch.js";
 
@@ -278,7 +278,7 @@ describe("ConversationsStore streaming notifications", () => {
 });
 
 const toolCall = (id: string, command: string) => ({ type: "toolCall" as const, id, name: "bash", arguments: { command } });
-const toolUse = (calls: ReturnType<typeof toolCall>[], timestamp: number): AgentMessage => ({ role: "assistant", content: calls, stopReason: "toolUse", timestamp });
+const toolUse = (calls: ToolCall[], timestamp: number): AgentMessage => ({ role: "assistant", content: calls, stopReason: "toolUse", timestamp });
 const toolResult = (toolCallId: string, text: string, timestamp: number): AgentMessage => ({ role: "toolResult", toolCallId, toolName: "bash", content: content(text), isError: false, timestamp });
 const partial = (toolCallId: string, text: string) => ({ type: "tool_execution_update" as const, toolCallId, toolName: "bash", args: {}, partialResult: { content: content(text), details: { fullOutputPath: "/tmp/out" } } });
 const tools = (store: ConversationsStore, sessionId = "session") => {
@@ -319,6 +319,26 @@ describe("ConversationsStore live tool state", () => {
     // The live state went with the saved result: a late update cannot bring the call back to running.
     store.applyEvent("session", partial("call-1", "late"));
     expect(tools(store)[0]).toMatchObject({ status: "done", result: { content: content("built") } });
+  });
+
+  test("a tool call shows as running from its start, its arguments filling in as they stream", () => {
+    const store = new ConversationsStore();
+    const delta = (text: string) => store.applyEvent("session", { type: "message_update", streamId: "s-1", assistantMessageEvent: { type: "toolcall_delta", contentIndex: 0, delta: text } });
+    store.applyEvent("session", { type: "message_start", streamId: "s-1", message: toolUse([], 10) });
+    store.applyEvent("session", {
+      type: "message_update", streamId: "s-1",
+      message: toolUse([{ type: "toolCall", id: "call-1", name: "write", arguments: {}, partialJson: "" }], 10),
+      assistantMessageEvent: { type: "toolcall_start", contentIndex: 0 },
+    });
+    expect(tools(store)).toEqual([{ id: "call-1", name: "write", args: {}, status: "running", partialArgs: true }]);
+
+    delta('{"path": "notes.md", "content": "# Not');
+    delta('es\\nfirst li');
+    expect(tools(store)).toEqual([{ id: "call-1", name: "write", args: { path: "notes.md", content: "# Notes\nfirst li" }, status: "running", partialArgs: true }]);
+
+    const call = { type: "toolCall" as const, id: "call-1", name: "write", arguments: { path: "notes.md", content: "# Notes\nfirst line\n" } };
+    store.applyEvent("session", { type: "message_update", streamId: "s-1", assistantMessageEvent: { type: "toolcall_end", contentIndex: 0, toolCall: call } });
+    expect(tools(store)).toEqual([{ id: "call-1", name: "write", args: call.arguments, status: "running" }]);
   });
 
   test("two tool calls of one message run, stream and end separately", () => {

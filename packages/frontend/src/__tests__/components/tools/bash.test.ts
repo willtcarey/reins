@@ -1,29 +1,39 @@
 import { describe, expect, test } from "bun:test";
 import { BashToolBlock, bashRenderer } from "../../../components/tools/bash.js";
-import { collectTemplateProperties, templateToString } from "../../helpers/lit-template.js";
+import { collectTemplateEventListeners, collectTemplateProperties } from "../../helpers/lit-template.js";
+
+const output = ["alpha", "bravo", "charlie", ""].join("\n");
 
 describe("bash tool block", () => {
-  test("a running command shows its output so far without being expanded, and hides it once done", () => {
+  test("a running command gets its output so far", () => {
     const rendered = bashRenderer.render({
       id: "call-1",
       name: "bash",
       args: { command: "make" },
       status: "running",
-      result: { content: [{ type: "text", text: "compiling a\ncompiling b" }] },
+      result: { content: [{ type: "text", text: output }] },
     }, { source: null });
-    expect(collectTemplateProperties(rendered, "output")).toEqual(["compiling a\ncompiling b"]);
+    expect(collectTemplateProperties(rendered, "output")).toEqual([output]);
     expect(collectTemplateProperties(rendered, "showSpinner")).toEqual([true]);
+  });
 
+  test("a running command previews its newest lines, and expands while it runs", () => {
     const block = new BashToolBlock();
     block.command = "make";
-    block.output = "compiling a\ncompiling b";
+    block.output = output;
     block.showSpinner = true;
-    // Once it has run a moment (a quick command never opens its output).
-    Reflect.set(block, "live", true);
-    expect(templateToString(block.render())).toContain("compiling a\ncompiling b");
+    const running = block.render();
+    expect(collectTemplateProperties(running, "lines")).toEqual([["alpha", "bravo", "charlie"]]);
+    expect(collectTemplateProperties(running, "preview")).toEqual(["newest"]);
 
-    block.showSpinner = false;
-    Reflect.set(block, "live", false);
-    expect(templateToString(block.render())).not.toContain("compiling a");
+    const [expand] = collectTemplateEventListeners(running, "click");
+    expand!(new Event("click"));
+    expect(collectTemplateProperties(block.render(), "expanded")).toEqual([true]);
+  });
+
+  test("a command that is done previews nothing", () => {
+    const block = new BashToolBlock();
+    block.output = output;
+    expect(collectTemplateProperties(block.render(), "preview")).toEqual([null]);
   });
 });

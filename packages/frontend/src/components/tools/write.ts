@@ -19,9 +19,8 @@ import type { ToolRenderer } from "./types.js";
 import type { Source } from "@reins/sdk";
 import { ringSpinnerIcon } from "../../ui/icons.js";
 import type { ToolBlockData } from "../../models/chat-state.js";
-import { getWriteSummary, getWriteInfo, getWriteContent } from "../../models/tools/write.js";
-
-const PREVIEW_LINES = 4;
+import { getWriteSummary, getWriteInfo, getWriteContent, getWriteTail } from "../../models/tools/write.js";
+import { PREVIEW_LINES } from "./live-lines.js";
 
 @customElement("write-tool-block")
 export class WriteToolBlock extends LitElement {
@@ -30,7 +29,8 @@ export class WriteToolBlock extends LitElement {
   }
 
   private _hl = new LazyHighlightController(this, () => {
-    if (!this.path || !this.content || this.isError) return null;
+    // Content still being written would be highlighted again on every frame.
+    if (!this.path || !this.content || this.isError || this.partialArgs) return null;
     const lines = this.content.split("\n");
     return {
       path: this.path,
@@ -57,6 +57,10 @@ export class WriteToolBlock extends LitElement {
   @property({ type: Number })
   lineCount = 0;
 
+  /** The file line `content` starts at: while it is written, only its tail is given. */
+  @property({ type: Number })
+  startLine = 1;
+
   @property({ type: Boolean })
   isError = false;
 
@@ -65,6 +69,10 @@ export class WriteToolBlock extends LitElement {
 
   @property({ type: Boolean })
   showSpinner = false;
+
+  /** Its arguments are still being written: its path may be cut short, so it links nowhere yet. */
+  @property({ type: Boolean })
+  partialArgs = false;
 
   override connectedCallback() {
     super.connectedCallback();
@@ -77,7 +85,7 @@ export class WriteToolBlock extends LitElement {
   }
 
   override willUpdate(changed: Map<string, unknown>) {
-    if (changed.has("content") || changed.has("path") || changed.has("isError")) {
+    if (changed.has("content") || changed.has("path") || changed.has("isError") || changed.has("partialArgs")) {
       this._hl.update();
     }
   }
@@ -103,7 +111,7 @@ export class WriteToolBlock extends LitElement {
   private _renderContentLine(index: number, text: string, colorCls: string, wrap: boolean) {
     const content = this._renderHighlightedLine(index, text);
     const divCls = `bg-green-950/50 leading-4 ${wrap ? "flex" : "whitespace-pre"}`;
-    return html`<div class="${divCls}"><span class="select-none text-zinc-700 shrink-0 text-right mr-2 inline-block w-8">${index + 1}</span><span class="select-none text-zinc-600 mr-1 shrink-0">+</span>${wrap ? html`<span class="${colorCls} whitespace-pre-wrap break-words min-w-0">${content}</span>` : html`<span class="${colorCls}">${content}</span>`}</div>`;
+    return html`<div class="${divCls}"><span class="select-none text-zinc-700 shrink-0 text-right mr-2 inline-block w-8">${this.startLine + index}</span><span class="select-none text-zinc-600 mr-1 shrink-0">+</span>${wrap ? html`<span class="${colorCls} whitespace-pre-wrap break-words min-w-0">${content}</span>` : html`<span class="${colorCls}">${content}</span>`}</div>`;
   }
 
   override render() {
@@ -116,8 +124,7 @@ export class WriteToolBlock extends LitElement {
     const hasContent = !!this.content.trim();
     const contentLines = this.content ? this.content.split("\n") : [];
     const hasMore = contentLines.length > PREVIEW_LINES;
-    const previewLines = contentLines.slice(0, PREVIEW_LINES);
-    const canInteract = !this.showSpinner && hasContent;
+    const canInteract = hasContent;
 
     // When collapsed, the entire card is clickable to expand.
     // When expanded, only the header is clickable to collapse.
@@ -127,7 +134,8 @@ export class WriteToolBlock extends LitElement {
     const contentColorCls = this.isError ? "text-red-400" : "text-green-300";
     const previewColorCls = this.isError ? "text-red-400" : "text-green-400/70";
     const wrap = shouldWrapLines(this.path || "");
-    const browsable = isBrowsablePath(this.path, this.source?.path ?? null);
+    const inProject = isBrowsablePath(this.path, this.source?.path ?? null);
+    const browsable = !this.partialArgs && inProject;
 
     return html`
       <div
@@ -146,9 +154,9 @@ export class WriteToolBlock extends LitElement {
           <span
             class="text-xs font-mono ${this.isError ? "text-red-400" : "text-zinc-300"} truncate ${browsable ? "hover:underline cursor-pointer" : ""}"
             @click=${browsable ? this._openInBrowser : nothing}
-            title=${browsable ? "Open in file browser" : "Outside project directory"}
+            title=${browsable ? "Open in file browser" : this.partialArgs ? nothing : "Outside project directory"}
           >${this.path || "…"}</span>
-          ${this.path && !browsable
+          ${this.path && !this.partialArgs && !inProject
             ? html`<span class="text-[10px] font-mono text-zinc-600 bg-zinc-800/60 px-1.5 py-0.5 rounded flex-shrink-0">external</span>`
             : nothing}
           ${this.isError
@@ -159,30 +167,15 @@ export class WriteToolBlock extends LitElement {
             : nothing}
         </div>
 
-        <!-- Preview (collapsed, first few lines) -->
-        ${!this.expanded && hasContent
-          ? html`
-              <div class="border-t border-zinc-800 px-1 py-1 text-xs font-mono overflow-x-auto">
-                <div class="${wrap ? "" : "w-fit min-w-full"}">
-                ${previewLines.map((line, i) => this._renderContentLine(i, line, previewColorCls, wrap))}
-                ${hasMore
-                  ? html`<div class="flex leading-4"><span class="select-none text-zinc-700 shrink-0 text-right mr-2 inline-block w-8"></span><span class="text-zinc-700 ml-1">…</span></div>`
-                  : nothing}
-                </div>
-              </div>
-            `
-          : nothing}
-
-        <!-- Full content (expanded) -->
-        ${this.expanded && hasContent
-          ? html`
-              <div class="border-t border-zinc-800 px-1 py-1 text-xs font-mono max-h-64 overflow-y-auto overflow-x-auto">
-                <div class="${wrap ? "" : "w-fit min-w-full"}">
-                ${contentLines.map((line, i) => this._renderContentLine(i, line, contentColorCls, wrap))}
-                </div>
-              </div>
-            `
-          : nothing}
+        <!-- Content: its newest lines while it is written, its first ones after; all of it when expanded.
+             A new renderLine each render, so lines highlighted since are drawn again. -->
+        ${hasContent ? html`<live-lines
+          .lines=${contentLines}
+          .renderLine=${(line: string, index: number, preview: boolean) => this._renderContentLine(index, line, preview ? previewColorCls : contentColorCls, wrap && !preview)}
+          .preview=${this.partialArgs ? "newest" : "first"}
+          .expanded=${this.expanded}
+          .wrap=${wrap}
+        ></live-lines>` : nothing}
       </div>
     `;
   }
@@ -201,7 +194,7 @@ declare global {
 export const writeRenderer: ToolRenderer = {
   render(block: ToolBlockData, context) {
     const path = toRelativePath(getWriteSummary(block), context.source?.path ?? null);
-    const content = getWriteContent(block);
+    const { content, startLine } = block.partialArgs ? getWriteTail(block) : { content: getWriteContent(block), startLine: 1 };
     const { lines: lineCount } = getWriteInfo(block);
     const isError = !!block.isError;
     return html`<write-tool-block
@@ -209,8 +202,10 @@ export const writeRenderer: ToolRenderer = {
       .source=${context.source}
       .content=${content}
       .lineCount=${lineCount}
+      .startLine=${startLine}
       .isError=${isError}
       .showSpinner=${block.status === "running"}
+      .partialArgs=${!!block.partialArgs}
     ></write-tool-block>`;
   },
 };

@@ -87,6 +87,10 @@ export class ReadToolBlock extends LitElement {
   @property({ type: Boolean })
   showSpinner = false;
 
+  /** Its arguments are still being written: its path may be cut short, so it links nowhere yet. */
+  @property({ type: Boolean })
+  partialArgs = false;
+
   @state()
   private expanded = false;
 
@@ -166,7 +170,8 @@ export class ReadToolBlock extends LitElement {
     const contentColorCls = isError ? "text-red-400" : "text-zinc-400";
     const previewColorCls = isError ? "text-red-400" : "text-zinc-500";
     const wrap = shouldWrapLines(path || "");
-    const browsable = isBrowsablePath(path, this.source?.path ?? null);
+    const inProject = isBrowsablePath(path, this.source?.path ?? null);
+    const browsable = !this.partialArgs && inProject;
 
     return html`
       <div
@@ -185,9 +190,9 @@ export class ReadToolBlock extends LitElement {
           <span
             class="text-xs font-mono ${isError ? "text-red-400" : "text-zinc-300"} truncate ${browsable ? "hover:underline cursor-pointer" : ""}"
             @click=${browsable ? this._openInBrowser : nothing}
-            title=${browsable ? "Open in file browser" : "Outside project directory"}
+            title=${browsable ? "Open in file browser" : this.partialArgs ? nothing : "Outside project directory"}
           >${path || "…"}</span>
-          ${path && !browsable
+          ${path && !this.partialArgs && !inProject
             ? html`<span class="text-[10px] font-mono text-zinc-600 bg-zinc-800/60 px-1.5 py-0.5 rounded flex-shrink-0">external</span>`
             : nothing}
           ${range
@@ -288,6 +293,7 @@ export const readRenderer: ToolRenderer = {
       .images=${images}
       .sessionId=${block.sessionId ?? ""}
       .showSpinner=${isRunning}
+      .partialArgs=${!!block.partialArgs}
     ></read-tool-block>`;
   },
 };

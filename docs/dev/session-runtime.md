@@ -230,6 +230,7 @@ AgentHarness emits `run_end` from the durable terminal commit, after everything 
 
 - `entry_added` is the only way a durable chat entry appears live; message pages return the same envelope. The frontend upserts by `id` and resolves an optimistic input only when an entry carries its `clientId`: no FIFO, content or timestamp matching.
 - Streaming messages (`message_*` by `streamId`) are presentation overlays built from snapshots and deltas (*Streaming message updates*); a sequence gap makes an overlay wait for the next keyframe (frontend-architecture.md, `ConversationsStore`). `message_end.entryId` lets the overlay be removed when its entry arrives. `agent_end` clears remaining overlays and surfaces the terminal error; it never inserts transcript entries.
+- A tool call in a streaming message is shown from its `toolcall_start` keyframe, its arguments parsed from `partialJson` as they stream.
 - `tool_execution_*` are kept by `toolCallId` and applied to the tool call with that ID whether it is still streaming or already saved (Pi saves the assistant at `message_end`, before its tools run); each update's `partialResult` is the tool's output so far (bash sends its whole captured tail each time), shown until the saved tool result arrives.
 - `compaction_start`/`compaction_end` drive the compacting indicator; `auto_retry_*` show retry status.
 

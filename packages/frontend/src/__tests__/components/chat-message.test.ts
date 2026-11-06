@@ -205,7 +205,7 @@ describe("ChatMessage", () => {
     expect(output).toContain("found");
   });
 
-  test("waits for live execution before rendering a streaming tool call", () => {
+  test("renders a streaming tool call from its start, with its arguments so far", () => {
     const raw: AgentAssistantMessage = {
       role: "assistant",
       timestamp: 20,
@@ -213,27 +213,18 @@ describe("ChatMessage", () => {
         type: "toolCall",
         id: "write-1",
         name: "write",
-        arguments: { path: "/work/project/file.ts", content: "complete" },
+        arguments: {},
+        partialJson: '{"path": "/work/project/file.ts", "content": "first li',
       }],
     };
     const element = new ChatMessage();
     element.message = new AssistantMessage(raw, null, null, "streaming-assistant-20", true);
     element.source = { nodeId: "node", path: "/work/project" };
-    expect(templateToString(element.render())).not.toContain("write-tool-block");
 
-    element.message = new AssistantMessage(
-      raw,
-      null,
-      null,
-      "streaming-assistant-20",
-      true,
-      new Map(),
-      { "write-1": { status: "running" } },
-    );
     const output = templateToString(element.render());
     expect(output).toContain("write-tool-block");
     expect(output).toContain(".path=file.ts");
-    expect(output).toContain("complete");
+    expect(output).toContain("first li");
   });
 
   test("offers direct copy only for assistant messages", () => {

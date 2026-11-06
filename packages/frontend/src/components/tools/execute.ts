@@ -34,7 +34,8 @@ export class ExecuteToolBlock extends LitElement {
   }
 
   private _hl = new LazyHighlightController(this, () => {
-    if (!this.code) return null;
+    // Code still being written would be highlighted again on every frame.
+    if (!this.code || this.partialArgs) return null;
     const lines = this.code.split("\n");
     return {
       path: "script.js",
@@ -67,6 +68,10 @@ export class ExecuteToolBlock extends LitElement {
   @property({ type: Boolean })
   showSpinner = false;
 
+  /** Its code is still being written. */
+  @property({ type: Boolean })
+  partialArgs = false;
+
   @state()
   private expanded = false;
 
@@ -81,7 +86,7 @@ export class ExecuteToolBlock extends LitElement {
   }
 
   override willUpdate(changed: Map<string, unknown>) {
-    if (changed.has("code")) {
+    if (changed.has("code") || changed.has("partialArgs")) {
       this._hl.update();
     }
   }
@@ -171,6 +176,7 @@ export const executeRenderer: ToolRenderer = {
       .images=${images}
       .sessionId=${block.sessionId ?? ""}
       .showSpinner=${isRunning}
+      .partialArgs=${!!block.partialArgs}
     ></execute-tool-block>`;
   },
 };
