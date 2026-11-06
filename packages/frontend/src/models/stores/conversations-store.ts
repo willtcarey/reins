@@ -363,6 +363,18 @@ export class ConversationsStore {
     this.update(sessionId, { pendingSubmissions, errorMessage });
   }
 
+  /**
+   * The session's run is over though its `agent_end` was missed (a sleeping phone, a dropped connection):
+   * drop what `agent_end` drops, its streaming overlays and live tool state. Call it only once the saved
+   * messages are loaded, so what an overlay showed is already shown by its entry.
+   */
+  endRun(sessionId: string): void {
+    if (!sessionId) return;
+    this.update(sessionId, (state) => state.streamingAssistants.length > 0 || Object.keys(state.toolExecutions).length > 0
+      ? { streamingAssistants: [], toolExecutions: {} }
+      : undefined);
+  }
+
   clearCompactingState(sessionId: string): void {
     if (sessionId) this.update(sessionId, (state) => state.isCompacting ? { isCompacting: false } : undefined);
   }

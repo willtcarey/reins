@@ -709,6 +709,36 @@ describe("ActiveSessionStore session loading contract", () => {
     }));
   });
 
+  test("a run whose end was missed (a phone asleep) leaves nothing streaming once its saved messages are loaded", async () => {
+    const sessionCache = new SessionCache();
+    const conversationsStore = new ConversationsStore({ sessionCache });
+    sessionCache.set("sess-1", makeSessionData({ activityState: "running" }));
+    const store = new ActiveSessionStore("sess-1", null, sessionCache, conversationsStore);
+    await callPrivate(store, "handleSessionCacheUpdate");
+
+    // A reply streamed, then a tool call started; its message_end (with its entry ID) and agent_end were missed.
+    applyStreamingAssistant(conversationsStore, "sess-1", ["Checking", { id: "tool-1", name: "bash", arguments: { command: "make" } }], 2000);
+    const saved: AgentMessage[] = [
+      { role: "user", content: "build it", timestamp: 1000 },
+      { role: "assistant", content: [{ type: "text", text: "Checking" }, { type: "toolCall", id: "tool-1", name: "bash", arguments: { command: "make" } }], stopReason: "aborted", timestamp: 2000 },
+    ];
+    mockFetch((url, init) => {
+      if (url === "/api/sessions/sess-1/messages") return jsonResponse(messagePage(saved));
+      if (url === "/api/sessions/sess-1/activity" && init?.method === "PATCH") return jsonResponse({ ok: true });
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    sessionCache.set("sess-1", makeSessionData({ activityState: "finished", messageCount: 2 }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(store.conversation.streamingMessages).toEqual([]);
+    expect(rawMessages(store)).toEqual(saved);
+    const [toolCall] = store.conversation.messages.flatMap((message) => message.role === "assistant"
+      ? message.blocks.flatMap((block) => block.type === "toolCall" ? [block.renderData] : [])
+      : []);
+    expect(toolCall).toEqual({ id: "tool-1", name: "bash", args: { command: "make" }, status: "done" });
+  });
+
   test("running metadata does not clear active compaction", async () => {
     const sessionCache = new SessionCache();
     const conversationsStore = new ConversationsStore();

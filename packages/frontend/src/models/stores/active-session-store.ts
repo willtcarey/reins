@@ -309,9 +309,16 @@ export class ActiveSessionStore {
 
     // If running activity just ended, or the first observed metadata is
     // terminal while snapshots exist, pick up canonical records. The merge
-    // removes only matching durable identities and preserves unmatched work.
+    // removes only matching durable identities; once it has loaded them and
+    // the session is still not running, the run is over, so what is left of
+    // it goes too: an overlay whose message_end and agent_end were missed
+    // would otherwise stay. A failed sync keeps it.
     if (!isRunning && (wasRunning || hadStreamingState)) {
-      await this._conversationsStore.syncMessages(this.sessionId);
+      const sessionId = this.sessionId;
+      const synced = await this._conversationsStore.syncMessages(sessionId);
+      if (synced && !this._disposed && this._sessionCache.get(sessionId)?.activityState !== "running") {
+        this._conversationsStore.endRun(sessionId);
+      }
     }
   }
 
