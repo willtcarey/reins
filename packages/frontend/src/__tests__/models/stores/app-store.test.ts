@@ -148,7 +148,7 @@ describe("AppStore as what the Reins SDK is built over", () => {
     reins.views.register("file", renderer);
     reins.workspace.open(view);
 
-    expect(store.inspector.activeTab.view).toBe(view);
+    expect(store.inspector.activeTab?.view).toBe(view);
     expect(store.views.rendererFor(view)).toBe(renderer);
     expect(reins.files).toBe(store.files);
     store.dispose();

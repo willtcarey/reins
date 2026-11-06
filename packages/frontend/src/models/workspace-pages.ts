@@ -24,9 +24,9 @@ export interface MainTabs {
 
 /**
  * The workspace's mobile pages: the sessions, then one per main-area tab (one page without tabs), then one per
- * Inspector tab. The surface lays out one column for the sessions, one for each main-area tab and one for the
- * Inspector, so a swipe past the Inspector's column moves the Inspector's tab panels instead, and its tab strip
- * stays in place.
+ * Inspector tab (none without tabs). The surface lays out one column for the sessions, one for each main-area tab
+ * and one for an Inspector with tabs, so a swipe past the Inspector's column moves the Inspector's tab panels
+ * instead, and its tab strip stays in place.
  */
 export class WorkspacePages {
   private readonly inspectorPage: number;
@@ -34,21 +34,21 @@ export class WorkspacePages {
 
   constructor(
     private readonly main: MainTabs,
-    private readonly inspector: Pick<Inspector, "tabs" | "activeTab"> | null,
+    private readonly inspector: Pick<Inspector, "tabs" | "activeTab">,
   ) {
     this.inspectorPage = 1 + Math.max(1, main.tabs.length);
-    this.inspectorTabs = inspector?.tabs.map((tab) => tab.key) ?? [];
+    this.inspectorTabs = inspector.tabs.map((tab) => tab.key);
   }
 
   get count(): number {
-    return this.inspectorPage + Math.max(1, this.inspectorTabs.length);
+    return this.inspectorPage + this.inspectorTabs.length;
   }
 
-  /** The main area's page is its shown tab's, the Inspector's its active tab's. */
+  /** The main area's page is its shown tab's, the Inspector's its active tab's (the main area's without tabs). */
   pageOf(pane: WorkspacePane): number {
     if (pane === "sessions") return 0;
-    if (pane === "main") return 1 + Math.max(0, this.main.tabs.indexOf(this.main.active ?? ""));
-    return this.inspectorPage + Math.max(0, this.inspectorTabs.indexOf(this.inspector?.activeTab.key ?? ""));
+    if (pane === "main" || this.inspectorTabs.length === 0) return 1 + Math.max(0, this.main.tabs.indexOf(this.main.active ?? ""));
+    return this.inspectorPage + Math.max(0, this.inspectorTabs.indexOf(this.inspector.activeTab?.key ?? ""));
   }
 
   at(page: number): WorkspacePage {
@@ -63,12 +63,13 @@ export class WorkspacePages {
    */
   offsets(page: number, translateX: number | null, width: number): WorkspaceSwipeOffsets {
     if (translateX == null) return { surface: `${-Math.min(page, this.inspectorPage) * 100}%`, inspector: null };
+    if (this.inspectorTabs.length === 0) return { surface: `${translateX}px`, inspector: null };
     const inspectorStart = -this.inspectorPage * width;
     return { surface: `${Math.max(translateX, inspectorStart)}px`, inspector: Math.min(0, translateX - inspectorStart) };
   }
 
-  /** The surface's columns: the sessions, each main-area tab, the Inspector. */
+  /** The surface's columns: the sessions, each main-area tab, an Inspector with tabs. */
   get columns(): number {
-    return this.inspectorPage + 1;
+    return this.inspectorPage + (this.inspectorTabs.length > 0 ? 1 : 0);
   }
 }

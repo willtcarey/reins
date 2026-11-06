@@ -7,10 +7,16 @@ const source = { nodeId: "node", path: "/work" };
 const readme: FileView = { view: "file", source, path: "README.md" };
 const sessionTabs = { tabs: ["session", "session-changes"], active: "session" };
 
-test("the sessions are a page, then each tab of the main area, then each of the Inspector's tabs", () => {
+/** The Inspector of a session: its pinned Changes tab, then the files opened. */
+function sessionInspector(...files: FileView[]) {
   const inspector = testInspector();
-  inspector.open(readme);
-  inspector.open({ view: "file", source, path: "src/index.ts" });
+  inspector.pin({ view: "diff-file-tree" });
+  for (const file of files) inspector.open(file);
+  return inspector;
+}
+
+test("the sessions are a page, then each tab of the main area, then each of the Inspector's tabs", () => {
+  const inspector = sessionInspector(readme, { view: "file", source, path: "src/index.ts" });
   inspector.focus(inspector.tabs[1]!.key);
 
   const pages = new WorkspacePages({ tabs: ["session", "session-changes"], active: "session-changes" }, inspector);
@@ -23,18 +29,19 @@ test("the sessions are a page, then each tab of the main area, then each of the 
   expect(pages.at(2)).toEqual({ pane: "main", tab: "session-changes" });
 });
 
-test("a main area without tabs (a page, or nothing shown) is one page, and without an Inspector (no project) the Inspector is one page", () => {
-  const pages = new WorkspacePages({ tabs: [], active: null }, null);
+test("a main area without tabs (a page, or nothing shown) is one page, and an Inspector without tabs has no page or column", () => {
+  const pages = new WorkspacePages({ tabs: [], active: null }, testInspector());
 
-  expect(pages.count).toBe(3);
+  expect(pages.count).toBe(2);
+  expect(pages.columns).toBe(2);
   expect(pages.pageOf("main")).toBe(1);
+  expect(pages.pageOf("inspector")).toBe(1);
   expect(pages.at(1)).toEqual({ pane: "main", tab: null });
-  expect(pages.at(2)).toEqual({ pane: "inspector", tab: null });
+  expect(pages.offsets(1, -600, 390)).toEqual({ surface: "-600px", inspector: null });
 });
 
 test("a page past the main area's tabs is the Inspector, with the tab to focus", () => {
-  const inspector = testInspector();
-  inspector.open(readme);
+  const inspector = sessionInspector(readme);
 
   inspector.focus("diff-file-tree");
   const pages = new WorkspacePages(sessionTabs, inspector);
@@ -45,8 +52,7 @@ test("a page past the main area's tabs is the Inspector, with the tab to focus",
 });
 
 test("at rest, the surface stops at the Inspector's column and the Inspector shows its active tab", () => {
-  const inspector = testInspector();
-  inspector.open(readme);
+  const inspector = sessionInspector(readme);
 
   const pages = new WorkspacePages(sessionTabs, inspector);
 
@@ -55,8 +61,7 @@ test("at rest, the surface stops at the Inspector's column and the Inspector sho
 });
 
 test("a drag moves the surface up to the Inspector's column and the Inspector's tabs past it", () => {
-  const inspector = testInspector();
-  inspector.open(readme);
+  const inspector = sessionInspector(readme);
 
   const pages = new WorkspacePages(sessionTabs, inspector);
 
@@ -65,8 +70,7 @@ test("a drag moves the surface up to the Inspector's column and the Inspector's 
 });
 
 test("the Inspector's pages follow the main area's, however many tabs it has", () => {
-  const inspector = testInspector();
-  inspector.open(readme);
+  const inspector = sessionInspector(readme);
 
   const pages = new WorkspacePages({ tabs: [], active: null }, inspector);
 

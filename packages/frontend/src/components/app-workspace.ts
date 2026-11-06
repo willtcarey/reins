@@ -232,7 +232,8 @@ export class AppWorkspace extends LitElement {
   }
 
   private pages() {
-    return new WorkspacePages({ tabs: this.mainTabs().map((tab) => tab.view), active: this.shownTab() }, this.store?.inspector ?? null);
+    const inspector = this.store?.inspector;
+    return new WorkspacePages({ tabs: this.mainTabs().map((tab) => tab.view), active: this.shownTab() }, inspector ?? { tabs: [], activeTab: null });
   }
 
   private renderSessionSidebar(store: WorkspaceStore) {
@@ -327,7 +328,7 @@ export class AppWorkspace extends LitElement {
       <app-inspector
         class="block h-full min-h-0"
         .tabs=${inspector.tabs}
-        .activeKey=${inspector.activeTab.key}
+        .activeKey=${inspector.activeTab?.key ?? ""}
         .swipeX=${swipeX}
         .views=${store.app.views}
         .context=${this.contextFor(store.source, "inspector")}
@@ -359,13 +360,14 @@ export class AppWorkspace extends LitElement {
     const tabs = this.mainTabs();
     const pages = this.pages();
     const offsets = pages.offsets(pages.pageOf(this.activePane), this.pageSwipe.translateX, this.pageSwipe.viewportWidth);
-    const hasProject = store.projectId != null;
+    // Views that have something for the Inspector open it there; without tabs it takes no room.
+    const hasInspector = store.inspector.tabs.length > 0;
     const gridStyle = `grid-template-columns: repeat(${pages.columns}, 100%); transform: translate3d(${offsets.surface}, 0, 0);`;
     const width = this.workspaceWidth();
-    const shown = store.inspector.activeTab.view;
-    this.layout.showInspectorView(shown.view, store.app.views.rendererFor(shown)?.pane?.width);
+    const shown = store.inspector.activeTab?.view;
+    if (shown) this.layout.showInspectorView(shown.view, store.app.views.rendererFor(shown)?.pane?.width);
     const left = this.layout.width("sessions", width);
-    const right = hasProject ? this.layout.width("inspector", width) : 0;
+    const right = hasInspector ? this.layout.width("inspector", width) : 0;
     const desktopColumns = `md:![grid-template-columns:var(--workspace-left)_minmax(0,1fr)_var(--workspace-right)]`; 
 
     return html`
@@ -380,7 +382,7 @@ export class AppWorkspace extends LitElement {
         @pointercancel=${this.pageSwipe.handlePointerCancel}
       >
         ${this.renderHandle("sessions")}
-        ${hasProject ? this.renderHandle("inspector") : nothing}
+        ${hasInspector ? this.renderHandle("inspector") : nothing}
         <div
           class="workspace-surface grid h-full min-h-0 min-w-0 grid-rows-[50px_minmax(0,1fr)] md:!transform-none ${desktopColumns} md:grid-rows-[50px_minmax(0,1fr)]"
           data-dragging=${this.pageSwipe.dragging || this.pageSwipe.settling ? "true" : "false"}
@@ -388,7 +390,7 @@ export class AppWorkspace extends LitElement {
         >
           <section class="col-start-1 row-start-1 row-span-2 h-full min-h-0 min-w-0 overflow-hidden md:col-start-1 md:row-start-1 md:row-span-2">${this.renderSessionSidebar(store)}</section>
           ${this.renderMain(store, tabs)}
-          <section class="row-start-1 row-span-2 h-full min-h-0 min-w-0 overflow-hidden [grid-column:var(--inspector-column)] md:col-start-3 md:row-start-1 md:row-span-2 ${hasProject ? "md:border-l md:border-zinc-700" : ""}" style=${`--inspector-column: ${pages.columns};`}>${hasProject ? this.renderInspector(store, offsets.inspector) : nothing}</section>
+          ${hasInspector ? html`<section class="row-start-1 row-span-2 h-full min-h-0 min-w-0 overflow-hidden [grid-column:var(--inspector-column)] md:col-start-3 md:row-start-1 md:row-span-2 md:border-l md:border-zinc-700" style=${`--inspector-column: ${pages.columns};`}>${this.renderInspector(store, offsets.inspector)}</section>` : nothing}
         </div>
       </div>
     `;

@@ -141,7 +141,10 @@ export class SessionToolbar extends LitElement {
 
 type SessionPaneTag = "session-chat-pane" | "session-changes-pane";
 
-/** A tab of the session, drawn by `tag` over the workspace; it follows the workspace's store, so a new view only changes its subject. */
+/**
+ * A tab of the session, drawn by `tag` over the workspace; it follows the workspace's store, so a new view only changes
+ * its subject. While mounted it pins the Inspector's Changes tab, so every view of a session has it, and a page not.
+ */
 function sessionPane<V extends SessionView | SessionChangesView>(workspace: WorkspaceStore, tag: SessionPaneTag, toolbar: PanePresentation<V>["toolbar"], label: { title: string; description: string; icon: PanePresentation<V>["icon"] }): PanePresentation<V> {
   return {
     title: () => label.title,
@@ -154,11 +157,15 @@ function sessionPane<V extends SessionView | SessionChangesView>(workspace: Work
       pane.setAttribute("class", "block h-full min-h-0 min-w-0");
       pane.workspace = workspace;
       target.append(pane);
+      const unpin = workspace.app.inspector.pin({ view: "diff-file-tree" });
       return {
         update: (next) => { shown = next; },
         setVisible: (visible) => { pane.visible = visible; },
         subject: () => subjectOf(workspace, shown.sessionId),
-        dispose: () => pane.remove(),
+        dispose: () => {
+          unpin();
+          pane.remove();
+        },
       };
     },
   };

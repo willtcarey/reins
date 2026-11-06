@@ -18,21 +18,28 @@ const filePane = {
 
 const treePane = { title: () => "Changes", description: () => "Changed files", icon: { mount: () => {} }, mount: () => {} };
 
+/** An Inspector with the Changes tab pinned, as a session's views pin it. */
+function withChanges(): Inspector {
+  const inspector = testInspector();
+  inspector.pin({ view: "diff-file-tree" });
+  return inspector;
+}
+
 function inspectorElement(inspector: Inspector): AppInspector {
   const views = new ViewRegistry();
   views.register("diff-file-tree", { pane: treePane });
   views.register("file", { pane: filePane });
   const element = new AppInspector();
   element.tabs = inspector.tabs;
-  element.activeKey = inspector.activeTab.key;
+  element.activeKey = inspector.activeTab?.key ?? "";
   element.views = views;
   element.context = { source, container: "inspector" };
   return element;
 }
 
 describe("AppInspector", () => {
-  test("offers closing every tab but the diff file tree's", () => {
-    const inspector = testInspector();
+  test("offers closing every tab but a pinned one", () => {
+    const inspector = withChanges();
     inspector.open(plan);
     const element = inspectorElement(inspector);
     const closed: string[] = [];
@@ -45,7 +52,7 @@ describe("AppInspector", () => {
   });
 
   test("focuses a tab when it is chosen", () => {
-    const inspector = testInspector();
+    const inspector = withChanges();
     inspector.open(plan);
     const element = inspectorElement(inspector);
     const focused: string[] = [];
@@ -57,7 +64,7 @@ describe("AppInspector", () => {
   });
 
   test("renders view mounts for each tab's icon and content, with its view's pane, the view and the context", () => {
-    const inspector = testInspector();
+    const inspector = withChanges();
     const view = { ...plan, startLine: 3 };
     inspector.open(view);
     const element = inspectorElement(inspector);
@@ -72,7 +79,7 @@ describe("AppInspector", () => {
   });
 
   test("shows a view whose renderer is gone as unavailable", () => {
-    const inspector = testInspector();
+    const inspector = withChanges();
     inspector.open(plan);
     const element = inspectorElement(inspector);
     element.views = new ViewRegistry();

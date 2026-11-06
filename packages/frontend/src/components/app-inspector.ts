@@ -108,7 +108,7 @@ export class AppInspector extends LitElement {
   private renderTab(tab: InspectorTab) {
     const active = tab.key === this.activeKey;
     const { title, description, icon } = this.label(tab.view);
-    const closable = tab.closable;
+    const closable = !tab.pinned;
     return html`
       <div
         class="group flex h-8 max-w-[min(12rem,85%)] shrink-0 items-center rounded-md text-xs font-medium transition-colors pointer-coarse:h-9 has-[[role=tab]:focus-visible]:ring-2 has-[[role=tab]:focus-visible]:ring-blue-500/60 ${active ? "bg-zinc-800 text-zinc-100 ring-1 ring-zinc-700/70" : "text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-200"}"

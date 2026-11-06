@@ -95,6 +95,8 @@ function installRenderableStore(el: AppWorkspace, options: {
   // The main area shows the session's Chat, as its route does, unless there is no session.
   el.mainView = options.mainView !== undefined ? options.mainView : store.activeSessionStore ? { view: "session", sessionId: store.sessionId } : null;
   connect(el);
+  // A session's tabs pin the Inspector's Changes tab as they mount, which these template tests do not do.
+  if (el.mainView?.view === "session") inspector.pin({ view: "diff-file-tree" });
   return store;
 }
 
@@ -253,6 +255,53 @@ describe("AppWorkspace layout selection", () => {
     if (!(pane instanceof SessionChangesPane)) throw new Error("Expected the session's changes");
 
     expect(fullTemplateOutput(pane.render())).toContain("<review-diff-panel");
+  });
+
+  test("mounting a session's tab pins the Inspector's Changes tab, which closes once the last of them is disposed", () => {
+    installWorkspaceGlobals({ mobile: false });
+    const el = new AppWorkspace();
+    const store = installRenderableStore(el, { mainView: null });
+    const mount = (view: View) => store.app.views.rendererFor(view)?.pane?.mount(testElement(), view, main) ?? undefined;
+
+    const chat = mount({ view: "session", sessionId: "s1" });
+    const changes = mount({ view: "session-changes", sessionId: "s1" });
+    chat?.update?.({ view: "session", sessionId: "s2" }, main);
+
+    expect(store.app.inspector.tabs.map((tab) => [tab.view, tab.pinned])).toEqual([[{ view: "diff-file-tree" }, true]]);
+    chat?.dispose?.();
+    expect(store.app.inspector.tabs).toHaveLength(1);
+    changes?.dispose?.();
+    expect(store.app.inspector.tabs).toEqual([]);
+  });
+
+  test("shows no Inspector, its resize handle or its page while it has no tabs", () => {
+    for (const mobile of [false, true]) {
+      installWorkspaceGlobals({ mobile });
+      const { reins, views } = testSdk();
+      const page: InboxView = { view: "test-inbox", repository: "reins" };
+      registerInboxPage(reins);
+      const el = new AppWorkspace();
+      installRenderableStore(el, { views, mainView: page });
+
+      const output = fullTemplateOutput(el.render());
+
+      expect(output).not.toContain("<app-inspector");
+      expect(output).not.toContain('data-resize-handle="inspector"');
+      expect(output).toContain("--workspace-right: 0px");
+      expect(output).toContain("grid-template-columns: repeat(2, 100%)");
+    }
+  });
+
+  test("shows the Inspector beside a page once it has a tab", () => {
+    installWorkspaceGlobals({ mobile: false });
+    const { reins, views } = testSdk();
+    registerInboxPage(reins);
+    const el = new AppWorkspace();
+    const store = installRenderableStore(el, { projectId: null, views, mainView: { view: "test-inbox", repository: "reins" } });
+
+    store.app.inspector.open(readme);
+
+    expect(fullTemplateOutput(el.render())).toContain("<app-inspector");
   });
 
   test("shows a view alone in the chat pane's place, its pane mounted there as in any container, under a phone's toolbar giving its title", () => {
@@ -460,7 +509,7 @@ describe("AppWorkspace layout selection", () => {
 
     store.app.inspector.open({ ...readme, startLine: 3 });
 
-    expect(store.inspector.activeTab.view).toEqual({ ...readme, startLine: 3 });
+    expect(store.inspector.activeTab?.view).toEqual({ ...readme, startLine: 3 });
     expect(fullTemplateOutput(el.render())).toContain("transform: translate3d(-100%, 0, 0);");
   });
 
@@ -496,7 +545,7 @@ describe("AppWorkspace layout selection", () => {
 
     expect(fullTemplateOutput(dragging)).toContain("transform: translate3d(-1170px, 0, 0);");
     expect(collectTemplateProperties(dragging, "swipeX")).toEqual([-176]);
-    expect(store.inspector.activeTab.key).toBe(store.inspector.tabs[1]!.key);
+    expect(store.inspector.activeTab?.key).toBe(store.inspector.tabs[1]!.key);
     expect(fullTemplateOutput(el.render())).toContain("transform: translate3d(-300%, 0, 0);");
   });
 });

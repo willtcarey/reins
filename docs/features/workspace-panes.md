@@ -4,7 +4,7 @@ On desktop, drag the divider beside Sessions or the Inspector to resize it. Focu
 
 ## The Inspector
 
-The right-hand pane is the **Inspector**: a strip of tabs that keeps things in reach beside the conversation. Its first tab, **Changes**, is the changed-files tree; it is always there and cannot be closed. Other tabs show project files.
+The right-hand pane is the **Inspector**: a strip of tabs that keeps things in reach beside the conversation. While a session is shown, its first tab is **Changes**, the changed-files tree, which cannot be closed. Other tabs show project files. The Inspector shows only when it has tabs, so a page with nothing for it, such as the new session page, has the whole width (unless you opened files there).
 
 - **Open a file in the Inspector** from the file browser (its **Open in Inspector** button, which keeps the file's highlighted lines and Code/Preview tab), from file search (⌘/Ctrl+Enter, or the Inspector button on a result), or by clicking a file named in a message (*File references in messages*, below).
 - **A file opens once.** Opening a file that already has a tab focuses that tab and shows the file as asked, as a new tab would: the file is read again, lines the request names (a reference such as `app.ts:120`) are highlighted and scrolled into view, and its Code/Preview tab is the one the request names (Code when it names none).
