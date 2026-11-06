@@ -14,8 +14,11 @@ declare module "@reins/sdk" {
   }
 }
 
-/** Registers the inbox page; `events` records its lifecycle. It is about the project of the repository it shows. */
-export function registerInboxPage(reins: ReinsSdk): { dispose: Disposer; events: unknown[] } {
+/**
+ * Registers the inbox page; `events` records its lifecycle. It is about the project of the repository it shows.
+ * With `toolbar`, it draws its filter in the host's toolbar.
+ */
+export function registerInboxPage(reins: ReinsSdk, { toolbar = false } = {}): { dispose: Disposer; events: unknown[] } {
   const events: unknown[] = [];
   const dispose = reins.views.register("test-inbox", {
     key: (view) => view.repository,
@@ -23,6 +26,7 @@ export function registerInboxPage(reins: ReinsSdk): { dispose: Disposer; events:
       title: (view) => `Inbox · ${view.repository}`,
       description: (view) => `Notifications of ${view.repository}`,
       icon: { mount: () => {} },
+      ...(toolbar ? { toolbar: { mount: (target: HTMLElement) => { target.append(target.ownerDocument.createElement("select")); } } } : {}),
       mount(target, view) {
         let shown = view;
         events.push(["mount", view]);

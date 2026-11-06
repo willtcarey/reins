@@ -2,7 +2,9 @@ import { LitElement, html } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import { openFileBrowserEvent, paneSelectEvent, reloadRequestEvent } from "./events.js";
 import type { MainPaneSelectDetail } from "./events.js";
-import type { Source } from "@reins/sdk";
+import type { PaneContext, Source, View } from "@reins/sdk";
+import type { Mountable } from "./view-mount.js";
+import "./view-mount.js";
 import type { MainWorkspacePane } from "../models/workspace-pages.js";
 import { menuIcon } from "../ui/icons.js";
 import "./branch-indicator.js";
@@ -26,6 +28,8 @@ export class AppMainToolbar extends LitElement {
   @property({ type: Boolean }) sessionTools = true;
   /** Without session tools, the title of the page shown (a phone's header shows it). */
   @property({ attribute: false }) pageTitle: string | null = null;
+  /** Without session tools, the shown view's own toolbar (`PanePresentation.toolbar`), in place of its title. */
+  @property({ attribute: false }) viewToolbar: { presentation: Mountable; view: View; context: PaneContext } | null = null;
 
   private selectPane(pane: MainPaneSelectDetail["pane"]) {
     this.dispatchEvent(paneSelectEvent(pane));
@@ -80,6 +84,14 @@ export class AppMainToolbar extends LitElement {
     `;
   }
 
+  private renderViewTools() {
+    const toolbar = this.viewToolbar;
+    if (toolbar) {
+      return html`<reins-view-mount class="flex min-w-0 flex-1 items-center gap-1.5" .presentation=${toolbar.presentation} .view=${toolbar.view} .context=${toolbar.context}></reins-view-mount>`;
+    }
+    return html`<h1 class="min-w-0 flex-1 truncate px-1 text-sm font-semibold text-zinc-200">${this.pageTitle ?? ""}</h1>`;
+  }
+
   override render() {
     return html`
       <div class="h-[50px] flex items-center gap-1.5 border-b border-zinc-800/80 bg-zinc-900/80 px-2 py-1.5 overflow-hidden shrink-0">
@@ -92,7 +104,7 @@ export class AppMainToolbar extends LitElement {
             ${this.renderMenuIcon()}
           </button>
         ` : ""}
-        ${this.sessionTools ? this.renderSessionTools() : html`<h1 class="min-w-0 flex-1 truncate px-1 text-sm font-semibold text-zinc-200">${this.pageTitle ?? ""}</h1>`}
+        ${this.sessionTools ? this.renderSessionTools() : this.renderViewTools()}
         <div class="hidden md:flex items-center gap-1 shrink-0">
           ${this.connected ? statusDot("success", { label: "Connected" }) : statusDot("danger", { label: "Disconnected" })}
         </div>

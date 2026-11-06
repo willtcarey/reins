@@ -251,11 +251,19 @@ export class AppWorkspace extends LitElement {
     `;
   }
 
+  /** The shown page's own toolbar (`PanePresentation.toolbar`), which the host's toolbar mounts; null without one. */
+  private viewToolbar(store: WorkspaceStore) {
+    const presentation = this.page ? store.app.views.rendererFor(this.page)?.pane?.toolbar : undefined;
+    if (!this.page || !presentation) return null;
+    return { presentation, view: this.page, context: this.contextFor(store.source, "main") };
+  }
+
   private renderMainToolbar(store: WorkspaceStore, activePane: MainWorkspacePane) {
     return html`
       <app-main-toolbar
         .sessionTools=${this.page == null}
         .pageTitle=${this.page ? store.app.views.titleOf(this.page, this.contextFor(store.source, "main")) : null}
+        .viewToolbar=${activePane === "chat" ? this.viewToolbar(store) : null}
         .source=${store.source}
         .activePane=${activePane}
         .currentBranch=${store.diffStore.branch}
@@ -394,6 +402,8 @@ export class AppWorkspace extends LitElement {
     this.layout.showInspectorView(shown.view, store.app.views.rendererFor(shown)?.pane?.width);
     const left = this.layout.width("sessions", width);
     const right = hasProject ? this.layout.width("inspector", width) : 0;
+    // On a wide screen a page has the host's toolbar only when it gives one of its own; without, it fills the area.
+    const pageFills = this.page != null && this.viewToolbar(store) == null;
     const desktopColumns = `md:![grid-template-columns:var(--workspace-left)_minmax(0,1fr)_var(--workspace-right)]`; 
 
     return html`
@@ -414,14 +424,14 @@ export class AppWorkspace extends LitElement {
           data-dragging=${this.pageSwipe.dragging || this.pageSwipe.settling ? "true" : "false"}
           style=${`${gridStyle} --workspace-left: ${left}px; --workspace-right: ${right}px;`}
         >
-          <div class="z-20 col-start-2 row-start-1 min-w-0 overflow-hidden md:col-start-2 md:row-start-1 ${activeMainPane === "chat" && !this.page ? "md:block" : "md:hidden"}">
+          <div class="z-20 col-start-2 row-start-1 min-w-0 overflow-hidden md:col-start-2 md:row-start-1 ${activeMainPane === "chat" && !pageFills ? "md:block" : "md:hidden"}">
             ${hasSession || this.page ? this.renderMainToolbar(store, "chat") : nothing}
           </div>
           <div class="z-20 col-start-3 row-start-1 min-w-0 overflow-hidden md:col-start-2 md:row-start-1 ${activeMainPane === "changes" ? "md:block" : "md:hidden"}">
             ${hasProject ? this.renderMainToolbar(store, "changes") : nothing}
           </div>
           <section class="col-start-1 row-start-1 row-span-2 h-full min-h-0 min-w-0 overflow-hidden md:col-start-1 md:row-start-1 md:row-span-2">${panes.sessions}</section>
-          <section class="col-start-2 row-start-2 h-full min-h-0 min-w-0 overflow-hidden md:col-start-2 ${this.page ? "md:row-start-1 md:row-span-2" : "md:row-start-2"} ${activeMainPane === "chat" ? "" : "md:hidden"}">${panes.chat}</section>
+          <section class="col-start-2 row-start-2 h-full min-h-0 min-w-0 overflow-hidden md:col-start-2 ${pageFills ? "md:row-start-1 md:row-span-2" : "md:row-start-2"} ${activeMainPane === "chat" ? "" : "md:hidden"}">${panes.chat}</section>
           <section class="col-start-3 row-start-2 h-full min-h-0 min-w-0 overflow-hidden md:col-start-2 md:row-start-2 ${activeMainPane === "changes" ? "" : "md:hidden"}">${panes.changes}</section>
           <section class="col-start-4 row-start-1 row-span-2 h-full min-h-0 min-w-0 overflow-hidden md:col-start-3 md:row-start-1 md:row-span-2 ${hasProject ? "md:border-l md:border-zinc-700" : ""}">${panes.inspector}</section>
         </div>

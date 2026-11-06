@@ -1,6 +1,7 @@
 import { describe, expect, mock, test } from "bun:test";
+import type { PaneContext } from "@reins/sdk";
 import { AppMainToolbar } from "../../components/app-main-toolbar.js";
-import { collectTemplateEventListeners, isTemplateResult, templateToString } from "../helpers/lit-template.js";
+import { collectTemplateEventListeners, collectTemplateProperties, isTemplateResult, templateToString } from "../helpers/lit-template.js";
 
 function findOverflowContent(value: unknown): (() => unknown) | undefined {
   if (!isTemplateResult(value)) return undefined;
@@ -87,5 +88,23 @@ describe("AppMainToolbar", () => {
 
     expect(output).toContain("Inbox · reins");
     expect(output).not.toContain("Browse files");
+  });
+
+  test("without session tools, a view's toolbar is mounted in place of its title", () => {
+    const el = new AppMainToolbar();
+    const toolbar = { mount: () => {} };
+    const view = { view: "test-inbox", repository: "reins" };
+    const context: PaneContext = { source: null, container: "main" };
+    el.sessionTools = false;
+    el.pageTitle = "Inbox · reins";
+    el.viewToolbar = { presentation: toolbar, view, context };
+
+    const rendered = el.render();
+
+    expect(templateToString(rendered)).toContain("<reins-view-mount");
+    expect(templateToString(rendered)).not.toContain("Inbox · reins");
+    expect(collectTemplateProperties(rendered, "presentation")).toEqual([toolbar]);
+    expect(collectTemplateProperties(rendered, "view")).toEqual([view]);
+    expect(collectTemplateProperties(rendered, "context")).toEqual([context]);
   });
 });

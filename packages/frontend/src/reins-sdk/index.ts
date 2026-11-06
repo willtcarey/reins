@@ -171,6 +171,13 @@ export interface PanePresentation<V extends View = View> extends ViewPresentatio
    */
   icon: ViewPresentation<V, PaneContext>;
   /**
+   * Draws the view's controls (a filter, a button) in the host's toolbar, in place of its title, with the same
+   * lifecycle as a view; the host keeps the rest of the toolbar (the sidebar button, the connection status, its
+   * menu). Only the main area shows it, for now. Without it the toolbar shows the title, and on a wide screen
+   * the main area has no toolbar: the view fills it.
+   */
+  toolbar?: ViewPresentation<V, PaneContext>;
+  /**
    * The Inspector's width in px while the view is shown there, until the user resizes it: then the user's width
    * is kept for the view's name. 320 when left out; a phone shows the pane full width. Other containers ignore it.
    */

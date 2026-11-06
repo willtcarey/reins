@@ -210,6 +210,26 @@ describe("AppWorkspace layout selection", () => {
     expect(collectTemplateProperties(rendered, "pageTitle")).toEqual(["Inbox · reins"]);
   });
 
+  test("gives the host's toolbar the toolbar of the view shown, and nothing for a view without one", () => {
+    installWorkspaceGlobals({ mobile: false });
+    const withToolbar = testSdk();
+    registerInboxPage(withToolbar.reins, { toolbar: true });
+    const withoutToolbar = testSdk();
+    registerInboxPage(withoutToolbar.reins);
+    const page: InboxView = { view: "test-inbox", repository: "reins" };
+    const rendered = (views: ViewRegistry) => {
+      const el = new AppWorkspace();
+      installRenderableStore(el, { projectId: null, activeSessionStore: null, views });
+      el.page = page;
+      return el.render();
+    };
+
+    expect(collectTemplateProperties(rendered(withToolbar.views), "viewToolbar")).toEqual([
+      { presentation: withToolbar.views.rendererFor(page)?.pane?.toolbar, view: page, context: { source: null, container: "main" } },
+    ]);
+    expect(collectTemplateProperties(rendered(withoutToolbar.views), "viewToolbar")).toEqual([null]);
+  });
+
   test("shows a page no renderer shows yet as unavailable, and mounts it once its renderer registers", () => {
     installWorkspaceGlobals({ mobile: false });
     const { reins, views } = testSdk();
