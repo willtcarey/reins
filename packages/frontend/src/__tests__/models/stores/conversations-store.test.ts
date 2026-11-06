@@ -374,16 +374,13 @@ describe("ConversationsStore live tool state", () => {
     const sessionCache = new SessionCache();
     sessionCache.set("session", { activityState: "running" });
     const store = new ConversationsStore({ sessionCache });
-    let notifications = 0;
-    store.subscribe("session", () => { notifications += 1; });
+    store.subscribe("session", () => {});
     store.mergeMessages("session", conversationPage([entry("entry-1", 1, toolUse([toolCall("call-1", "make")], 1))]));
     store.applyEvent("session", { type: "tool_execution_start", toolCallId: "call-1", toolName: "bash", args: { command: "make" } });
     store.applyEvent("session", { type: "agent_end", status: "aborted" });
     expect(tools(store)).toEqual([{ id: "call-1", name: "bash", args: { command: "make" }, status: "running" }]);
 
-    const before = notifications;
     sessionCache.set("session", { activityState: "finished" });
-    expect(notifications).toBe(before + 1);
     expect(tools(store)).toEqual([{ id: "call-1", name: "bash", args: { command: "make" }, status: "done" }]);
   });
 

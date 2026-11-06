@@ -89,7 +89,7 @@ export type ChatEvent =
 
 export interface ChatState {
   streamingAssistants: StreamingAssistant[];
-  /** Live tool state by tool call ID, until the call's result is saved or its run ends. */
+  /** Live tool state by tool call ID, until its run ends; a saved result shows over it. */
   toolExecutions: Readonly<Record<string, ToolExecution>>;
   isCompacting: boolean;
   errorMessage: string;

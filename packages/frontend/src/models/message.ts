@@ -95,17 +95,12 @@ export class SessionUpdateMessage extends MessageBase<AgentUserMessage, "session
   }
 }
 
-/**
- * What a transcript knows of tool calls beyond their saved results: the live
- * state by call ID, and whether the session is running (a saved call with no
- * result then shows as running, as after a reload mid-run).
- */
-export interface LiveTools {
-  executions: Readonly<Record<string, ToolExecution>>;
-  running: boolean;
-}
+/** The live state of a tool call by its ID, if it has one. */
+export type ToolExecutionLookup = (toolCallId: string) => ToolExecution | undefined;
 
-const NO_LIVE_TOOLS: LiveTools = { executions: {}, running: false };
+const noExecutions: ToolExecutionLookup = () => undefined;
+/** Shared, so a message given it again is unchanged. */
+const RUNNING: ToolExecution = { status: "running" };
 
 /** A tool call enriched with its saved result or its live execution. */
 export class AssistantToolCallBlock {
@@ -116,8 +111,6 @@ export class AssistantToolCallBlock {
     readonly result: ToolResultMessage | undefined,
     readonly execution: ToolExecution | undefined,
     private readonly streaming: boolean,
-    /** Saved with no result while its session runs: it is running, though no event said so since the page loaded. */
-    readonly awaitingResult = false,
   ) {}
 
   get id(): string { return this.call.id; }
@@ -150,7 +143,7 @@ export class AssistantToolCallBlock {
       if (this.call.partialJson === undefined) return { ...base, status: "running" };
       return { ...base, args: this.partialArguments, status: "running", partialArgs: true };
     }
-    return { ...base, status: this.awaitingResult ? "running" : "done" };
+    return { ...base, status: "done" };
   }
 }
 
@@ -178,30 +171,25 @@ export class AssistantMessage extends MessageBase<AgentAssistantMessage> {
     renderKey: string,
     readonly streaming: boolean,
     toolResults: ReadonlyMap<string, ToolResultMessage> = new Map(),
-    toolExecutions: LiveTools["executions"] = {},
-    awaitingResults = false,
+    executionOf: ToolExecutionLookup = noExecutions,
   ) {
     super(raw, entryId, parentEntryId, renderKey);
     this.blocks = raw.content.map((block) => block.type === "toolCall"
       ? new AssistantToolCallBlock(
         block,
         toolResults.get(block.id),
-        toolExecutions[block.id],
+        executionOf(block.id),
         streaming,
-        awaitingResults && !toolResults.has(block.id),
       )
       : block);
   }
 
   /** This message with other live tool state, or itself when none of its tool calls would show differently. */
-  withLiveTools(executions: LiveTools["executions"], awaitingResults: boolean): AssistantMessage {
+  withExecutions(executionOf: ToolExecutionLookup): AssistantMessage {
     const toolCalls = this.blocks.filter((block) => block instanceof AssistantToolCallBlock);
-    const unchanged = toolCalls.every((block) => (
-      block.execution === executions[block.id] && block.awaitingResult === (awaitingResults && !block.result)
-    ));
-    if (unchanged) return this;
+    if (toolCalls.every((block) => block.result || block.execution === executionOf(block.id))) return this;
     const results = new Map(toolCalls.flatMap((block) => block.result ? [[block.id, block.result] as const] : []));
-    return new AssistantMessage(this.raw, this.entryId, this.parentEntryId, this.renderKey, this.streaming, results, executions, awaitingResults);
+    return new AssistantMessage(this.raw, this.entryId, this.parentEntryId, this.renderKey, this.streaming, results, executionOf);
   }
 
   toMarkdown(): string | null {
@@ -238,14 +226,13 @@ export type Message =
  */
 export function buildMessages(
   sources: readonly MessageSource[],
-  live: LiveTools = NO_LIVE_TOOLS,
 ): Message[] {
   const toolResults = new Map<string, ToolResultMessage>();
   for (const { message } of sources) {
     if (message.role === "toolResult") toolResults.set(message.toolCallId, message);
   }
 
-  const messages = sources.flatMap((source): Message[] => {
+  return sources.flatMap((source): Message[] => {
     const { message, entryId, parentEntryId, renderKey } = source;
     switch (message.role) {
       case "user":
@@ -267,21 +254,25 @@ export function buildMessages(
         return [];
     }
   });
-  return applyLiveTools(messages, live);
 }
 
 /**
  * Apply live tool state to built messages, replacing only the assistants it
  * changes so the others keep their identity (and their rows skip rendering).
- * Only the latest assistant can still be waiting for results: an older call
- * with none was cut off, and is not shown as running.
+ * While the session runs, the latest assistant's calls with no result run too,
+ * though no event may have said so since the page loaded; an older call with
+ * none was cut off.
  */
-export function applyLiveTools(messages: Message[], live: LiveTools): Message[] {
-  const latest = messages.findLastIndex((message) => message.role === "assistant");
+export function applyToolExecutions(
+  messages: Message[],
+  executions: Readonly<Record<string, ToolExecution>>,
+  running: boolean,
+): Message[] {
+  const latest = running ? messages.findLastIndex((message) => message.role === "assistant") : -1;
   let changed = false;
   const next = messages.map((message, index) => {
     if (!(message instanceof AssistantMessage)) return message;
-    const updated = message.withLiveTools(live.executions, live.running && index === latest);
+    const updated = message.withExecutions((id) => executions[id] ?? (index === latest ? RUNNING : undefined));
     if (updated !== message) changed = true;
     return updated;
   });
@@ -291,7 +282,7 @@ export function applyLiveTools(messages: Message[], live: LiveTools): Message[] 
 /** Project authoritative runtime snapshots through the same assistant interface. */
 export function buildStreamingMessages(
   assistants: readonly StreamingAssistant[],
-  toolExecutions: LiveTools["executions"],
+  toolExecutions: Readonly<Record<string, ToolExecution>>,
 ): AssistantMessage[] {
   return assistants.map(({ streamId, message }) => new AssistantMessage(
     message,
@@ -300,6 +291,6 @@ export function buildStreamingMessages(
     `streaming-assistant-${streamId}`,
     true,
     new Map(),
-    toolExecutions,
+    (id) => toolExecutions[id],
   ));
 }

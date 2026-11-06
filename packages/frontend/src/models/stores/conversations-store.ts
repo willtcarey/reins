@@ -8,7 +8,8 @@
  * per session; every other change notifies synchronously and absorbs any
  * pending frame. Views are memoized so streaming-only changes keep transcript
  * `Message` objects identical, and a tool update replaces only the assistant
- * that holds the tool call.
+ * that holds the tool call. Live tool state stays until its run ends; a saved
+ * result shows over it.
  */
 
 import {
@@ -20,7 +21,7 @@ import {
   type ChatState,
 } from "../chat-state.js";
 import type { ClientPromptContent } from "../chat-content.js";
-import { applyLiveTools, buildMessages, buildStreamingMessages, type AssistantMessage, type LiveTools, type Message } from "../message.js";
+import { applyToolExecutions, buildMessages, buildStreamingMessages, type AssistantMessage, type Message } from "../message.js";
 import { streamingTelemetry, type StreamingTelemetry } from "../streaming-telemetry.js";
 import type { ConversationEntry as BackendConversationEntry, SessionMessagePage } from "@backend/messages-store.js";
 import type { AgentMessage } from "../agent-message.js";
@@ -131,26 +132,6 @@ function blankConversationState(): ConversationState {
   };
 }
 
-const savedResultsByEntries = new WeakMap<readonly ConversationEntry[], ReadonlySet<string>>();
-
-/** The tool call IDs with a saved result, computed once per entries array. */
-function savedToolResults(entries: readonly ConversationEntry[]): ReadonlySet<string> {
-  let ids = savedResultsByEntries.get(entries);
-  if (!ids) {
-    ids = new Set(entries.flatMap(({ message }) => message.role === "toolResult" ? [message.toolCallId] : []));
-    savedResultsByEntries.set(entries, ids);
-  }
-  return ids;
-}
-
-/** Live tool state ends where a saved result takes over. Preserves identity when nothing goes. */
-function withoutSavedResults(executions: ChatState["toolExecutions"], entries: readonly ConversationEntry[]): ChatState["toolExecutions"] {
-  const saved = savedToolResults(entries);
-  const ids = Object.keys(executions);
-  if (!ids.some((id) => saved.has(id))) return executions;
-  return Object.fromEntries(ids.flatMap((id) => saved.has(id) ? [] : [[id, executions[id]!]]));
-}
-
 /** Idempotent canonical upsert. Harness sequence is the transcript order. */
 function upsertEntries(current: readonly ConversationEntry[], incoming: readonly ConversationEntry[]): ConversationEntry[] {
   const entries = new Map(current.map((entry) => [entry.id, entry]));
@@ -177,7 +158,7 @@ export class ConversationsStore {
     this._sessionCache = options.sessionCache ?? null;
     this._scheduleFrame = options.scheduleFrame;
     this._telemetry = options.telemetry ?? streamingTelemetry;
-    this._unsubscribeSessionCache = this._sessionCache?.subscribeAll((sessionId) => this.sessionChanged(sessionId)) ?? null;
+    this._unsubscribeSessionCache = this._sessionCache?.subscribeAll((sessionId) => this.pruneSessionIfInactive(sessionId)) ?? null;
     this._unsubscribeEvents = options.eventSource?.subscribe({
       event: (message) => this.applyEvent(message.sessionId, message.event, message.seq),
     }) ?? null;
@@ -190,13 +171,11 @@ export class ConversationsStore {
     const cached = this._views.get(sessionId);
     if (cached?.state === state && cached.running === running) return cached.view;
     const previous = cached?.state;
-    const live: LiveTools = { executions: state.toolExecutions, running };
-    const sameTranscript = cached && previous?.entries === state.entries && previous.pendingSubmissions === state.pendingSubmissions;
-    const sameLiveTools = cached && previous?.toolExecutions === state.toolExecutions && cached.running === running;
+    const transcript = cached && previous?.entries === state.entries && previous.pendingSubmissions === state.pendingSubmissions
+      ? cached.view.messages
+      : buildTranscript(state);
     const view: ConversationView = {
-      messages: sameTranscript
-        ? sameLiveTools ? cached.view.messages : applyLiveTools(cached.view.messages, live)
-        : buildTranscript(state, live),
+      messages: applyToolExecutions(transcript, state.toolExecutions, running),
       streamingMessages: cached && previous?.streamingAssistants === state.streamingAssistants && previous.toolExecutions === state.toolExecutions
         ? cached.view.streamingMessages
         : buildStreamingMessages(state.streamingAssistants, state.toolExecutions),
@@ -397,13 +376,6 @@ export class ConversationsStore {
     this._views.clear();
   }
 
-  /** A session's activity shows in its saved tool calls (*running* without a result), so a change re-renders its viewers. */
-  private sessionChanged(sessionId: string): void {
-    this.pruneSessionIfInactive(sessionId);
-    const cached = this._views.get(sessionId);
-    if (cached && this._listeners.has(sessionId) && cached.running !== this.isRunning(sessionId)) this.notify(sessionId);
-  }
-
   private isRunning(sessionId: string): boolean {
     return this._sessionCache?.get(sessionId)?.activityState === "running";
   }
@@ -448,15 +420,12 @@ export class ConversationsStore {
         new Set(entries.map(({ id }) => id)),
       ).streamingAssistants;
     }
-    let toolExecutions = patch.toolExecutions ?? current.toolExecutions;
-    if (patch.entries || patch.toolExecutions) toolExecutions = withoutSavedResults(toolExecutions, entries);
     this._states.set(sessionId, {
       ...current,
       ...patch,
       entries,
       pendingSubmissions,
       streamingAssistants,
-      toolExecutions,
     });
     if (streamingPartial) this.notifyNextFrame(sessionId, streamingPartial);
     else this.notify(sessionId);
@@ -495,7 +464,7 @@ export class ConversationsStore {
   }
 }
 
-function buildTranscript(state: ConversationState, live: LiveTools): Message[] {
+function buildTranscript(state: ConversationState): Message[] {
   const entries = [...state.entries, ...state.pendingSubmissions.values()];
   return buildMessages(entries.map((entry) => ({
     entryId: entry.id,
@@ -504,5 +473,5 @@ function buildTranscript(state: ConversationState, live: LiveTools): Message[] {
       ? `submission-${entry.clientId}`
       : entry.id!,
     message: entry.message,
-  })), live);
+  })));
 }
