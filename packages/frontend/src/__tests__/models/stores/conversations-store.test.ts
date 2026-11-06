@@ -400,17 +400,6 @@ describe("ConversationsStore live tool state", () => {
     expect(tools(store).map((tool) => [tool?.id, tool?.status])).toEqual([["old", "done"], ["new", "running"]]);
   });
 
-  test("huge partial output keeps only its tail", () => {
-    const store = new ConversationsStore();
-    savedToolUse(store, toolUse([toolCall("call-1", "yes")], 10));
-    const output = `${"x".repeat(200_000)}the end`;
-    store.applyEvent("session", partial("call-1", output));
-
-    const text = tools(store)[0]?.result?.content.flatMap((block) => block.type === "text" ? [block.text] : []).join("") ?? "";
-    expect(text.length).toBe(50 * 1024);
-    expect(text.endsWith("the end")).toBe(true);
-  });
-
   test("tool updates notify once per frame and leave other transcript messages identical", () => {
     const frames: (() => void)[] = [];
     const store = new ConversationsStore({ scheduleFrame: (callback) => { frames.push(callback); return () => {}; } });

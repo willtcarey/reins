@@ -6,7 +6,7 @@
  * belongs exclusively to SessionCache and is not represented here.
  */
 
-import { isImageAttachmentBlock, isInlineImageBlock, type ChatImageBlock } from "./chat-content.js";
+import type { ChatImageBlock } from "./chat-content.js";
 import type { AgentMessage, AssistantMessage, ToolCall } from "./agent-message.js";
 
 /** Normalized rendering data shared by live and finalized tool calls. */
@@ -35,9 +35,6 @@ export interface ToolExecution {
   result?: ToolBlockData["result"];
   isError?: boolean;
 }
-
-/** Partial text kept per tool call: as much as bash keeps of its output (its tail). */
-export const MAX_PARTIAL_TOOL_TEXT = 50 * 1024;
 
 /** One live assistant message: the last full snapshot with the deltas since applied. */
 export interface StreamingAssistant {
@@ -74,7 +71,7 @@ export type ChatEvent =
   /** `message`, when present, is a keyframe: the full message after this step. */
   | { type: "message_update"; message?: RuntimeLifecycleMessage; streamId: string; assistantMessageEvent: AssistantStreamEvent }
   | { type: "tool_execution_start"; toolCallId: string; toolName: string; args: Record<string, unknown> }
-  | { type: "tool_execution_update"; toolCallId: string; toolName: string; args: Record<string, unknown>; partialResult?: Record<string, unknown> }
+  | { type: "tool_execution_update"; toolCallId: string; toolName: string; args: Record<string, unknown>; partialResult?: ToolExecution["result"] }
   | { type: "tool_execution_end"; toolCallId: string; toolName: string; result?: ToolExecution["result"]; isError?: boolean }
   | {
     type: "agent_end";
@@ -186,32 +183,6 @@ export function markStreamsStale<T extends Pick<ChatState, "streamingAssistants"
   return { ...state, streamingAssistants: state.streamingAssistants.map((assistant) => assistant.stale ? assistant : { ...assistant, stale: true as const }) };
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-/** A partial result as the chat shows it: text and image blocks, the text cut to its tail. */
-function partialToolResult(partial: Record<string, unknown> | undefined): ToolBlockData["result"] | undefined {
-  if (!partial || !Array.isArray(partial.content)) return undefined;
-  const content: NonNullable<ToolBlockData["result"]>["content"] = [];
-  let budget = MAX_PARTIAL_TOOL_TEXT;
-  // From the end, so a long output keeps what was written last.
-  for (let index = partial.content.length - 1; index >= 0; index--) {
-    const block: unknown = partial.content[index];
-    if (typeof block !== "object" || block === null || !("type" in block)) continue;
-    if (block.type === "text" && "text" in block && typeof block.text === "string") {
-      if (budget === 0) continue;
-      const text = block.text.length > budget ? block.text.slice(block.text.length - budget) : block.text;
-      budget -= text.length;
-      content.unshift({ type: "text", text });
-    } else if (isInlineImageBlock(block) || isImageAttachmentBlock(block)) {
-      content.unshift(block);
-    }
-  }
-  const { details } = partial;
-  return { content, ...(isRecord(details) ? { details } : {}) };
-}
-
 function setToolExecution(state: ChatState, toolCallId: string, execution: ToolExecution): ChatState {
   return { ...state, toolExecutions: { ...state.toolExecutions, [toolCallId]: execution } };
 }
@@ -253,11 +224,9 @@ export function applyChatEvent(state: ChatState, event: ChatEvent): ChatState {
     case "tool_execution_start":
       return state.toolExecutions[event.toolCallId] ? state : setToolExecution(state, event.toolCallId, { status: "running" });
 
-    case "tool_execution_update": {
+    case "tool_execution_update":
       if (state.toolExecutions[event.toolCallId]?.status === "done") return state;
-      const result = partialToolResult(event.partialResult);
-      return setToolExecution(state, event.toolCallId, { status: "running", ...(result ? { result } : {}) });
-    }
+      return setToolExecution(state, event.toolCallId, { status: "running", ...(event.partialResult ? { result: event.partialResult } : {}) });
 
     case "tool_execution_end":
       return setToolExecution(state, event.toolCallId, {
