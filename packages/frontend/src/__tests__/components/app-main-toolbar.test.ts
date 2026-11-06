@@ -77,4 +77,15 @@ describe("AppMainToolbar", () => {
     expect(panes).toEqual(["sessions", "chat", "changes"]);
     expect(openFileBrowserDetails).toEqual([{ source }]);
   });
+
+  test("without session tools, a page's toolbar shows its title in their place", () => {
+    const el = new AppMainToolbar();
+    el.sessionTools = false;
+    el.pageTitle = "Inbox · reins";
+
+    const output = templateToString(el.render());
+
+    expect(output).toContain("Inbox · reins");
+    expect(output).not.toContain("Browse files");
+  });
 });

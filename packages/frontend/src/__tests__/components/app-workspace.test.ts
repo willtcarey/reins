@@ -6,7 +6,10 @@ import type { FileView } from "../../components/file-viewer/file-viewer.js";
 import { Inspector } from "../../models/inspector.js";
 import { DecoratorRegistry } from "../../sdk-host/decorators.js";
 import { ViewRegistry } from "../../sdk-host/view-registry.js";
-import { testElement } from "../helpers/test-dom.js";
+import { ViewMount } from "../../components/view-mount.js";
+import { registerInboxPage, type InboxView } from "../helpers/inbox-page.js";
+import { testSdk } from "../helpers/reins-sdk.js";
+import { setConnected, testDom, testElement } from "../helpers/test-dom.js";
 import { collectTemplateEventListeners, collectTemplateProperties, collectTemplateValues, templateToString } from "../helpers/lit-template.js";
 
 const source = { nodeId: "node", path: "/work/project" };
@@ -58,10 +61,11 @@ function installRenderableStore(el: AppWorkspace, options: {
   projectId?: number | null;
   sessionId?: string;
   activeSessionStore?: object | null;
+  views?: ViewRegistry;
 } = {}) {
   Reflect.set(el, "getBoundingClientRect", () => ({ width: 1200 }));
   const projectId = options.projectId === undefined ? 42 : options.projectId;
-  const views = new ViewRegistry();
+  const views = options.views ?? new ViewRegistry();
   const inspector = new Inspector(views);
   const app = { views, decorators: new DecoratorRegistry(views), inspector };
   const store = {
@@ -185,31 +189,52 @@ describe("AppWorkspace layout selection", () => {
     expect(collectTemplateProperties(el.render(), "decorators")).toEqual([store.app.decorators]);
   });
 
-  test("shows the new session page in place of a session, with a toolbar without the session's tools", () => {
+  test("shows a view in the chat pane's place, its pane mounted there as in any container, with the host's toolbar giving its title and no session tools", () => {
     installWorkspaceGlobals({ mobile: false });
+    const { reins, views } = testSdk();
+    registerInboxPage(reins);
     const el = new AppWorkspace();
-    installRenderableStore(el, { projectId: null, activeSessionStore: null });
-    const view = { view: "new-session" as const, projectId: 7, taskId: 3 };
-    el.newSession = view;
+    installRenderableStore(el, { projectId: null, activeSessionStore: null, views });
+    const page: InboxView = { view: "test-inbox", repository: "reins" };
+    el.page = page;
 
     const rendered = el.render();
     const output = fullTemplateOutput(rendered);
 
-    expect(output).toContain("<new-session-page");
     expect(output).not.toContain("<chat-panel");
     expect(output).not.toContain("No project selected");
-    expect(collectTemplateProperties(rendered, "view")).toEqual([view]);
+    expect(collectTemplateProperties(rendered, "presentation")).toEqual([views.rendererFor(page)?.pane]);
+    expect(collectTemplateProperties(rendered, "view")).toEqual([page]);
+    expect(collectTemplateProperties(rendered, "context")).toEqual([{ source: null, container: "main" }]);
     expect(collectTemplateProperties(rendered, "sessionTools")).toEqual([false]);
+    expect(collectTemplateProperties(rendered, "pageTitle")).toEqual(["Inbox · reins"]);
   });
 
-  test("shows the chat pane when the new session page opens from the Changes pane", () => {
+  test("shows a page no renderer shows yet as unavailable, and mounts it once its renderer registers", () => {
+    installWorkspaceGlobals({ mobile: false });
+    const { reins, views } = testSdk();
+    const el = new AppWorkspace();
+    installRenderableStore(el, { projectId: null, activeSessionStore: null, views });
+    el.page = { view: "test-inbox", repository: "reins" };
+
+    const before = el.render();
+    registerInboxPage(reins);
+    const after = el.render();
+
+    expect(fullTemplateOutput(before)).toContain("Page unavailable");
+    expect(collectTemplateProperties(before, "presentation")).toEqual([]);
+    expect(fullTemplateOutput(after)).not.toContain("Page unavailable");
+    expect(collectTemplateProperties(after, "presentation")).toEqual([views.rendererFor(el.page)?.pane]);
+  });
+
+  test("shows the chat pane when a page opens from the Changes pane", () => {
     installWorkspaceGlobals({ mobile: false });
     const el = new AppWorkspace();
     installRenderableStore(el, { projectId: null, activeSessionStore: null });
     Reflect.set(el, "activePane", "changes");
-    el.newSession = { view: "new-session", projectId: 7, taskId: null };
+    el.page = { view: "new-session", projectId: 7, taskId: null };
     const changed: PropertyValues<AppWorkspace> = new Map();
-    changed.set("newSession", null);
+    changed.set("page", null);
 
     el.willUpdate(changed);
 
@@ -236,11 +261,11 @@ describe("AppWorkspace layout selection", () => {
     const pane = store.app.views.rendererFor({ view: "diff-file-tree" })?.pane;
     const target = testElement();
 
-    pane?.mount(target, { view: "diff-file-tree" }, { source: store.source });
+    pane?.mount(target, { view: "diff-file-tree" }, { source: store.source, container: "inspector" });
     const tree = target.childNodes[0];
     if (!(tree instanceof DiffFileTree)) throw new Error("Expected the diff file tree");
 
-    expect(pane?.title({ view: "diff-file-tree" }, { source: store.source })).toBe("Changes");
+    expect(pane?.title({ view: "diff-file-tree" }, { source: store.source, container: "inspector" })).toBe("Changes");
     const stores: unknown[] = [tree.store, tree.reviewStore];
     expect(stores).toEqual([store.diffStore, store.codeReviewStore]);
     Reflect.get(el, "disconnectApp").call(el);
@@ -433,14 +458,31 @@ describe("AppWorkspace as the main area's view (workspace.current)", () => {
     expect(switching.current()?.subject).toEqual([{ type: "session", id: "s1" }]);
   });
 
-  test("on the new session page, is about the task and project chosen there", () => {
+  test("on a page, asks the mounted page what it is about", async () => {
+    const { reins, views } = testSdk();
+    registerInboxPage(reins);
+    const el = new AppWorkspace();
+    installRenderableStore(el, { activeSessionStore: null, views });
+    const page: InboxView = { view: "test-inbox", repository: "reins", projectId: 7 };
+    el.page = page;
+    const mount = testDom(new ViewMount());
+    mount.presentation = views.rendererFor(page)?.pane ?? null;
+    mount.view = page;
+    mount.context = { source: null, container: "main" };
+    setConnected(mount, true);
+    await mount.updateComplete;
+    Reflect.set(el, "querySelector", (selector: string) => (selector === "reins-view-mount[data-main-page]" ? mount : null));
+
+    expect(el.current()).toEqual({ view: page, subject: [{ type: "project", id: 7 }] });
+  });
+
+  test("on a page not mounted yet, is about nothing", () => {
     const el = new AppWorkspace();
     installRenderableStore(el, { activeSessionStore: null });
-    el.newSession = { view: "new-session", projectId: 7, taskId: 3 };
+    el.page = { view: "test-inbox", repository: "reins" };
+    Reflect.set(el, "querySelector", () => null);
 
-    expect(el.current()).toEqual({ view: el.newSession, subject: [{ type: "task", id: 3 }, { type: "project", id: 7 }] });
-    el.newSession = { view: "new-session", projectId: null, taskId: null };
-    expect(el.current()?.subject).toEqual([]);
+    expect(el.current()).toEqual({ view: el.page, subject: [] });
   });
 
   test("is no view when it shows neither", () => {

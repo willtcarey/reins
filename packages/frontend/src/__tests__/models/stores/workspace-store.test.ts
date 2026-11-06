@@ -175,7 +175,7 @@ describe("WorkspaceStore Inspector and files", () => {
     const view = { view: "file" as const, source: { nodeId: "internal", path: "/work/project" }, path: "README.md", startLine: 4 };
 
     await workspace.setSession("first");
-    runtime.open(view, "inspector");
+    runtime.inspector.open(view);
     await workspace.setSession("second");
 
     expect(workspace.inspector).toBe(runtime.inspector);

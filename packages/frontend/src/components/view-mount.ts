@@ -7,7 +7,7 @@
 
 import { ReactiveElement, type PropertyValues } from "lit";
 import { customElement, property } from "lit/decorators.js";
-import type { MountedView, View } from "@reins/sdk";
+import type { MountedView, Subject, View } from "@reins/sdk";
 
 /** Anything with a mount: a view's presentation (`ViewPresentation`), or a Settings page or icon, which take no view. */
 export interface Mountable {
@@ -39,6 +39,16 @@ export class ViewMount extends ReactiveElement {
 
   override createRenderRoot() {
     return this;
+  }
+
+  /** What the mounted view says it is about (`MountedView.subject`); nothing when it says nothing, is not mounted or throws. */
+  subject(): readonly Subject[] {
+    try {
+      return this.mounted?.instance?.subject?.() ?? [];
+    } catch (error) {
+      console.error("A view failed to give its subject", error);
+      return [];
+    }
   }
 
   override connectedCallback() {

@@ -3,13 +3,13 @@ import { customElement, property } from "lit/decorators.js";
 import { repeat } from "lit/directives/repeat.js";
 import { StoreController } from "../controllers/store-controller.js";
 import type { InspectorTab } from "../models/inspector.js";
-import type { View, WorkspaceContext } from "@reins/sdk";
+import type { PaneContext, View } from "@reins/sdk";
 import type { ViewRegistry } from "../sdk-host/view-registry.js";
 import { closeIcon, fileIcon } from "../ui/icons.js";
 import { inspectorTabCloseEvent, inspectorTabFocusEvent } from "./events.js";
 import "./view-mount.js";
 
-const NO_CONTEXT: WorkspaceContext = { source: null };
+const NO_CONTEXT: PaneContext = { source: null, container: "inspector" };
 
 interface TabLabel {
   title: string;
@@ -42,7 +42,7 @@ export class AppInspector extends LitElement {
   set views(views: ViewRegistry | null) { this.viewsController.store = views; this.requestUpdate(); }
   get views(): ViewRegistry | null { return this.viewsController.store; }
   /** What views are shown for: every view is given it. */
-  @property({ attribute: false }) context: WorkspaceContext | null = null;
+  @property({ attribute: false }) context: PaneContext | null = null;
   /** On a phone, where a swipe has dragged the track of panels (null at rest, on the active tab). */
   @property({ attribute: false }) swipeX: number | null = null;
 

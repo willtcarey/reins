@@ -22,8 +22,10 @@ export class AppMainToolbar extends LitElement {
   @property({ type: Boolean }) isStandalone = false;
   @property({ type: Boolean }) connected = false;
   @property({ type: Boolean, attribute: "show-sidebar-button" }) showSidebarButton = false;
-  /** Whether a session is shown: without one (the new session page) there are no files, panes or branch to show. */
+  /** Whether a session is shown: without one (a page, such as the new session page) there are no files, panes or branch to show. */
   @property({ type: Boolean }) sessionTools = true;
+  /** Without session tools, the title of the page shown (a phone's header shows it). */
+  @property({ attribute: false }) pageTitle: string | null = null;
 
   private selectPane(pane: MainPaneSelectDetail["pane"]) {
     this.dispatchEvent(paneSelectEvent(pane));
@@ -90,7 +92,7 @@ export class AppMainToolbar extends LitElement {
             ${this.renderMenuIcon()}
           </button>
         ` : ""}
-        ${this.sessionTools ? this.renderSessionTools() : html`<div class="min-w-0 flex-1"></div>`}
+        ${this.sessionTools ? this.renderSessionTools() : html`<h1 class="min-w-0 flex-1 truncate px-1 text-sm font-semibold text-zinc-200">${this.pageTitle ?? ""}</h1>`}
         <div class="hidden md:flex items-center gap-1 shrink-0">
           ${this.connected ? statusDot("success", { label: "Connected" }) : statusDot("danger", { label: "Disconnected" })}
         </div>

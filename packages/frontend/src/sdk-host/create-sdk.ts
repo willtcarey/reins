@@ -24,23 +24,34 @@ export interface SdkBacking {
   readonly commands: CommandRegistry;
   readonly settingsPages: SettingsPages;
   readonly sidebar: SidebarSections;
-  open(view: View, container: Exclude<ContainerId, "main">): void;
 }
 
-/** The main area, which shows a view's route or a page that is not a view. */
-export interface MainArea {
+/** A container of the workspace, as `workspace.open(view, { in })` reaches it: each says what opening does there. */
+export interface Container {
+  /** Shows the view there; throws for a view it cannot show. */
+  open(view: View): void;
+}
+
+/**
+ * The main area, which shows a view's route or a page that is not a view (`RoutedMainArea` in the app). Opening
+ * goes to the view's route, or shows the new view in place of the same one shown.
+ */
+export interface MainArea extends Container {
   /** The view shown and what it is about, as the view tells; null on a page that is not a view. */
   current(): CurrentView | null;
-  /** Goes to the view's route; false for a view that has none. */
-  show(view: View): boolean;
   /** Listens for the view shown, or what it is about, changing. */
   subscribe(listener: () => void): Disposer;
 }
 
+/** The workspace's containers by ID; the main area also answers `workspace.current` and `onDidChange`. */
+export interface SdkContainers extends Readonly<Record<ContainerId, Container>> {
+  readonly main: MainArea;
+}
+
 /**
  * What every extension's SDK is built over. `sessions`, `projects`, `tasks` and `nodes` (`SdkSessions`, `SdkProjects`,
- * `SdkTasks`, `SdkNodes` in the app) use more of the app than the backing. The main area (in the app, the workspace it shows and the router) is apart from it because it
- * navigates, which `AppStore` does not. `http` and `socket` are the server's HTTP API and its WebSocket.
+ * `SdkTasks`, `SdkNodes` in the app) use more of the app than the backing. `containers` are the Inspector (`AppStore.inspector`)
+ * and the main area (the workspace it shows and the router, apart from `AppStore` because it navigates). `http` and `socket` are the server's HTTP API and its WebSocket.
  */
 export interface SdkHost {
   app: SdkBacking;
@@ -49,17 +60,14 @@ export interface SdkHost {
   tasks: Tasks;
   nodes: Nodes;
   ui: Ui;
-  main: MainArea;
+  containers: SdkContainers;
   http: { extension(name: string): ExtensionClient };
   socket: Pick<IAppClient, "subscribe" | "onConnection">;
 }
 
 /** `A` is the extension's HTTP API, which only types `http.call`: the host calls any method by its name. */
-export function createReinsSdk<A extends HttpApi = HttpApi>(extension: ExtensionInfo, { app, sessions, projects, tasks, nodes, ui, main, http, socket }: SdkHost): ReinsSdk<A> {
-  /** Registered views have no route yet (workspace-inspector.md, slice 4), so one is refused rather than dropped. */
-  const showInMain = (view: View) => {
-    if (!main.show(view)) throw new Error(`The main area cannot show the "${view.view}" view`);
-  };
+export function createReinsSdk<A extends HttpApi = HttpApi>(extension: ExtensionInfo, { app, sessions, projects, tasks, nodes, ui, containers, http, socket }: SdkHost): ReinsSdk<A> {
+  const { main } = containers;
   const currentSubject = <K extends keyof SubjectTypes>(type: K): SubjectTypes[K] | null => {
     const found = main.current()?.subject.find((subject): subject is Subject & { type: K; id: SubjectTypes[K] } => subject.type === type);
     return found ? found.id : null;
@@ -68,7 +76,7 @@ export function createReinsSdk<A extends HttpApi = HttpApi>(extension: Extension
   return Object.freeze({
     files: app.files,
     workspace: Object.freeze({
-      open: (view: View, { in: container = "inspector" }: OpenOptions = {}) => (container === "main" ? showInMain(view) : app.open(view, container)),
+      open: (view: View, { in: container = "inspector" }: OpenOptions = {}) => containers[container].open(view),
       current: () => main.current(),
       currentSubject,
       onDidChange: (listener: () => void) => main.subscribe(listener),

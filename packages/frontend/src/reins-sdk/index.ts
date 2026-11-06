@@ -109,6 +109,14 @@ export interface WorkspaceContext {
   readonly source: Source | null;
 }
 
+/**
+ * What a pane is given: the workspace, and the container it is shown in, so a view can fit its actions or
+ * layout to it (a file in the Inspector offers to open in the file browser). Any container can show any pane.
+ */
+export interface PaneContext extends WorkspaceContext {
+  readonly container: ContainerId;
+}
+
 /** What an inline view is given: the piece of message text it is shown for. */
 export interface InlineContext extends WorkspaceContext {
   /** The piece's original text. */
@@ -128,6 +136,12 @@ export interface MountedView<V extends View = View, C = WorkspaceContext> {
   update?(view: V, context: C): void;
   /** Stops what the view runs. Afterwards the host empties the target. */
   dispose?(): void;
+  /**
+   * What the view is about now, most specific first (`Workspace.current`): a dashboard gives the session it has
+   * in focus. Asked when something needs it, such as a command, so it answers synchronously from what the view
+   * holds. Without it, the view is about nothing. Only the main area's view is asked, for now.
+   */
+  subject?(): readonly Subject[];
 }
 
 /**
@@ -140,26 +154,32 @@ export interface ViewPresentation<V extends View = View, C = WorkspaceContext> {
   mount(target: HTMLElement, view: V, context: C): MountedView<V, C> | void;
 }
 
-/** A view in a pane, such as an Inspector tab, with the tab's title, description (its tooltip) and icon. */
-export interface PanePresentation<V extends View = View> extends ViewPresentation<V, WorkspaceContext> {
-  /** `context` is the workspace the pane is in, for a title that says how the view differs from it. */
-  title(view: V, context: WorkspaceContext): string;
-  description(view: V, context: WorkspaceContext): string;
+/**
+ * A view as a block of its own in a container: an Inspector tab, the main area's page (`workspace.open(view,
+ * { in: "main" })`), and later a modal. One presentation for every container: the container draws its own
+ * frame (a tab, a header, the browser tab's title) from the title, description and icon, and says which it is
+ * in the context.
+ */
+export interface PanePresentation<V extends View = View> extends ViewPresentation<V, PaneContext> {
+  /** `context` is where the pane is, for a title that says how the view differs from the viewed session. */
+  title(view: V, context: PaneContext): string;
+  /** A tab's tooltip. */
+  description(view: V, context: PaneContext): string;
   /**
-   * Draws the tab's icon, with the same lifecycle as a view. Its target is the icon's box, 14 px
-   * square, with the tab's text color as `currentColor`: draw to fill it.
+   * Draws the view's icon (an Inspector tab's), with the same lifecycle as a view. Its target is the icon's
+   * box, 14 px square, with the tab's text color as `currentColor`: draw to fill it.
    */
-  icon: ViewPresentation<V, WorkspaceContext>;
+  icon: ViewPresentation<V, PaneContext>;
   /**
-   * The pane's width in px while the view is shown, until the user resizes it: then the user's width
-   * is kept for the view's name. 320 when left out; a phone shows the pane full width.
+   * The Inspector's width in px while the view is shown there, until the user resizes it: then the user's width
+   * is kept for the view's name. 320 when left out; a phone shows the pane full width. Other containers ignore it.
    */
   width?: number;
 }
 
 /**
- * How the host can show a view, by presentation. A container offers one (the Inspector shows views
- * in a `pane`); message decorations show theirs `inline`. A view without the presentation a place
+ * How the host can show a view, by presentation. Containers (the Inspector, the main area) show views
+ * as a `pane`; message decorations show theirs `inline`. A view without the presentation a place
  * needs is unavailable there.
  */
 export interface ViewRenderer<V extends View = View> {
@@ -190,9 +210,10 @@ export interface Views {
 // ---------------------------------------------------------------------------
 
 /**
- * A container of the workspace, by ID; later layouts add IDs. The Inspector shows views in a `pane`.
- * The main area shows one view at a time, the page of a route, so opening a view there navigates
- * (Back returns to the one before); for now it shows only the app's `session` view.
+ * A container of the workspace, by ID; later layouts add IDs. Both show a view's `pane`. The Inspector
+ * shows views as tabs. The main area shows one view at a time, the page of a route the host derives
+ * from the view, so opening a view there navigates (Back returns to the one before), and a reload or a
+ * link shows the same view. The app's `session` view is shown there too.
  */
 export type ContainerId = "inspector" | "main";
 
@@ -223,10 +244,15 @@ export interface Workspace {
    * Shows a view in a container of the workspace. In the Inspector, the same view (`ViewRenderer.key`)
    * already open there is focused and replaced by this one, otherwise it opens after the others; on a
    * phone the workspace on screen moves to the Inspector's page. In the main area it navigates to the
-   * view, and throws for a view the main area cannot show.
+   * view: a history entry, except that the same view (`ViewRenderer.key`) shown there now is replaced
+   * by this one in place, and it throws for a view without a `pane` presentation (the Inspector shows
+   * such a view as unavailable).
    */
   open(view: KnownView, options?: OpenOptions): void;
-  /** The main area's view now; null on a page that is not a view (settings, a project's history, no session). */
+  /**
+   * The main area's view now, and what it is about: a mounted view says it (`MountedView.subject`). Null on a page
+   * that is not a view (settings, a project's history, no session).
+   */
   current(): CurrentView | null;
   /** The ID of the main area's most specific subject of `type` now, or null when it is about none. */
   currentSubject<K extends keyof SubjectTypes>(type: K): SubjectTypes[K] | null;

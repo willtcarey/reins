@@ -1,4 +1,4 @@
-import type { Disposer, View, ViewRenderer, Views, ViewTypes } from "@reins/sdk";
+import type { Disposer, PaneContext, View, ViewRenderer, Views, ViewTypes } from "@reins/sdk";
 
 /** The registered view renderers, app state on `AppStore`: containers look up how to show a view here. Each
  * is recorded with the extension that registered it (none for the app's own). */
@@ -30,6 +30,18 @@ export class ViewRegistry implements Views {
 
   rendererFor(view: View): ViewRenderer | null {
     return this.renderers.get(view.view) ?? null;
+  }
+
+  /** The title of the view's pane, or null without one; an extension's failing title is logged, not thrown. */
+  titleOf(view: View, context: PaneContext): string | null {
+    const pane = this.rendererFor(view)?.pane;
+    if (!pane) return null;
+    try {
+      return pane.title(view, context);
+    } catch (error) {
+      console.error("A view's title failed", error);
+      return null;
+    }
   }
 
   /**

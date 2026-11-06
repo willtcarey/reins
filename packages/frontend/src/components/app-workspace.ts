@@ -8,7 +8,7 @@ import { FileTreeState } from "../models/changes/file-tree-state.js";
 import { WorkspaceLayout, type SidePane } from "../models/workspace-layout.js";
 import type { AppStore } from "../models/stores/app-store.js";
 import { WorkspaceStore } from "../models/stores/workspace-store.js";
-import type { CurrentView, Source, Subject, WorkspaceContext } from "@reins/sdk";
+import type { CurrentView, PaneContext, Source, Subject, View } from "@reins/sdk";
 import {
   MOBILE_WORKSPACE_PANE_ORDER,
   WorkspacePages,
@@ -21,8 +21,8 @@ import { mainViewChangeEvent, openFileSearchEvent, type MainPaneSelectDetail } f
 import type { ReviewDiffPanel } from "./changes/review-diff-panel.js";
 import "./app-main-toolbar.js";
 import "./chat-panel.js";
-import "./new-session-page.js";
-import type { NewSessionView } from "./new-session-page.js";
+import type { ViewMount } from "./view-mount.js";
+import "./view-mount.js";
 import { registerDiffFileTree } from "./changes/diff-file-tree.js";
 import "./changes/review-diff-panel.js";
 import "./app-inspector.js";
@@ -80,14 +80,17 @@ export class AppWorkspace extends LitElement {
   }
   get sessionId(): string | null { return this.routedSessionId; }
 
-  /** The new session page's view, shown in place of a session. */
-  @property({ attribute: false }) newSession: NewSessionView | null = null;
+  /**
+   * The main area's view when it is not a session: its renderer's `pane`, shown as the page in the chat pane's
+   * place, such as the new session page, an extension's page or a file.
+   */
+  @property({ attribute: false }) page: View | null = null;
 
   get store(): WorkspaceStore | null { return this.storeController.store; }
 
-  /** The view it shows and what that is about (`workspace.current()`); null when it shows none. */
+  /** The view it shows and what that is about (`workspace.current()`): a page says it; null when it shows none. */
   current(): CurrentView | null {
-    if (this.newSession) return { view: this.newSession, subject: taskAndProject(this.newSession.projectId, this.newSession.taskId) };
+    if (this.page) return { view: this.page, subject: this.querySelector<ViewMount>("reins-view-mount[data-main-page]")?.subject() ?? [] };
     const sessionId = this.routedSessionId;
     if (!sessionId) return null;
     const subject: Subject[] = [{ type: "session", id: sessionId }];
@@ -101,7 +104,10 @@ export class AppWorkspace extends LitElement {
   @state() private activePane: WorkspacePane = "chat";
   private observedSessionId = "";
   private observedProjectId: number | null = null;
-  private viewContext: WorkspaceContext = { source: null };
+  private contexts: Record<"inspector" | "main", PaneContext> = {
+    inspector: { source: null, container: "inspector" },
+    main: { source: null, container: "main" },
+  };
   private fileTreeState = new FileTreeState();
   private layout = new WorkspaceLayout(typeof localStorage === "undefined" ? null : localStorage, typeof navigator === "undefined" ? "browser" : navigator.userAgent ?? "browser");
   private resizePointer: { pane: SidePane; id: number; startX: number; startWidth: number } | null = null;
@@ -165,7 +171,7 @@ export class AppWorkspace extends LitElement {
   override willUpdate(changed: PropertyValues<this>) {
     const store = this.store;
     if (!store) return;
-    if ((store.sessionId && store.sessionId !== this.observedSessionId) || (changed.has("newSession") && this.newSession)) {
+    if ((store.sessionId && store.sessionId !== this.observedSessionId) || (changed.has("page") && this.page)) {
       this.activePane = "chat";
     }
     if (store.projectId !== this.observedProjectId) this.fileTreeState.reset();
@@ -197,7 +203,7 @@ export class AppWorkspace extends LitElement {
     const { app } = store;
     this.appConnections = [
       app.inspector.onOpen(() => { if (this.viewport.isMobileLayout) this.activePane = "inspector"; }),
-      // The Inspector's width is its view's, which a renderer registered later may change.
+      // A renderer registered later may change the Inspector's width, or show the page routed before it came.
       app.views.subscribe(() => this.requestUpdate()),
       registerDiffFileTree(app.views, { diffStore: store.diffStore, reviewStore: store.codeReviewStore, treeState: this.fileTreeState }),
     ];
@@ -209,9 +215,9 @@ export class AppWorkspace extends LitElement {
   }
 
   /** The same object while the source is, so views are not updated by every render. */
-  private contextFor(source: Source | null): WorkspaceContext {
-    if (this.viewContext.source !== source) this.viewContext = { source };
-    return this.viewContext;
+  private contextFor(source: Source | null, container: "inspector" | "main"): PaneContext {
+    if (this.contexts[container].source !== source) this.contexts[container] = { source, container };
+    return this.contexts[container];
   }
 
   private getDiffPanel(): ReviewDiffPanel | null {
@@ -248,7 +254,8 @@ export class AppWorkspace extends LitElement {
   private renderMainToolbar(store: WorkspaceStore, activePane: MainWorkspacePane) {
     return html`
       <app-main-toolbar
-        .sessionTools=${this.newSession == null}
+        .sessionTools=${this.page == null}
+        .pageTitle=${this.page ? store.app.views.titleOf(this.page, this.contextFor(store.source, "main")) : null}
         .source=${store.source}
         .activePane=${activePane}
         .currentBranch=${store.diffStore.branch}
@@ -309,7 +316,7 @@ export class AppWorkspace extends LitElement {
         .activeKey=${inspector.activeTab.key}
         .swipeX=${swipeX}
         .views=${store.app.views}
-        .context=${this.contextFor(store.source)}
+        .context=${this.contextFor(store.source, "inspector")}
         @inspector-tab-focus=${(event: CustomEvent<string>) => inspector.focus(event.detail)}
         @inspector-tab-close=${(event: CustomEvent<string>) => inspector.close(event.detail)}
         @file-select=${(event: CustomEvent<string>) => this.handleChatFileSelect(event)}
@@ -328,8 +335,8 @@ export class AppWorkspace extends LitElement {
 
     return {
       sessions: this.renderSessionSidebar(store),
-      chat: this.newSession
-        ? html`<new-session-page class="block h-full min-h-0 min-w-0" .app=${store.app} .view=${this.newSession}></new-session-page>`
+      chat: this.page
+        ? this.renderPage(store, this.page)
         : hasSession ? this.renderChatPane(store, conversationVisible) : this.renderEmptyState(),
       changes: hasProject
         ? keyed(
@@ -339,6 +346,22 @@ export class AppWorkspace extends LitElement {
         : nothing,
       inspector: hasProject ? this.renderInspector(store, inspectorSwipeX) : nothing,
     };
+  }
+
+  /** A view in the main area, mounted from its renderer's pane; unavailable until one is registered. */
+  private renderPage(store: WorkspaceStore, view: View) {
+    const pane = store.app.views.rendererFor(view)?.pane;
+    if (!pane) {
+      return html`
+        <div class="flex h-full items-center justify-center px-6 text-center">
+          <div class="max-w-md">
+            <h2 class="mb-2 text-lg font-medium text-zinc-400">Page unavailable</h2>
+            <p class="text-sm text-zinc-500">Nothing shows “${view.view}” pages now. The page opens here once the extension that shows it is loaded.</p>
+          </div>
+        </div>
+      `;
+    }
+    return html`<reins-view-mount data-main-page class="block h-full min-h-0 min-w-0" .presentation=${pane} .view=${view} .context=${this.contextFor(store.source, "main")}></reins-view-mount>`;
   }
 
   private renderEmptyState() {
@@ -391,14 +414,14 @@ export class AppWorkspace extends LitElement {
           data-dragging=${this.pageSwipe.dragging || this.pageSwipe.settling ? "true" : "false"}
           style=${`${gridStyle} --workspace-left: ${left}px; --workspace-right: ${right}px;`}
         >
-          <div class="z-20 col-start-2 row-start-1 min-w-0 overflow-hidden md:col-start-2 md:row-start-1 ${activeMainPane === "chat" && !this.newSession ? "md:block" : "md:hidden"}">
-            ${hasSession || this.newSession ? this.renderMainToolbar(store, "chat") : nothing}
+          <div class="z-20 col-start-2 row-start-1 min-w-0 overflow-hidden md:col-start-2 md:row-start-1 ${activeMainPane === "chat" && !this.page ? "md:block" : "md:hidden"}">
+            ${hasSession || this.page ? this.renderMainToolbar(store, "chat") : nothing}
           </div>
           <div class="z-20 col-start-3 row-start-1 min-w-0 overflow-hidden md:col-start-2 md:row-start-1 ${activeMainPane === "changes" ? "md:block" : "md:hidden"}">
             ${hasProject ? this.renderMainToolbar(store, "changes") : nothing}
           </div>
           <section class="col-start-1 row-start-1 row-span-2 h-full min-h-0 min-w-0 overflow-hidden md:col-start-1 md:row-start-1 md:row-span-2">${panes.sessions}</section>
-          <section class="col-start-2 row-start-2 h-full min-h-0 min-w-0 overflow-hidden md:col-start-2 ${this.newSession ? "md:row-start-1 md:row-span-2" : "md:row-start-2"} ${activeMainPane === "chat" ? "" : "md:hidden"}">${panes.chat}</section>
+          <section class="col-start-2 row-start-2 h-full min-h-0 min-w-0 overflow-hidden md:col-start-2 ${this.page ? "md:row-start-1 md:row-span-2" : "md:row-start-2"} ${activeMainPane === "chat" ? "" : "md:hidden"}">${panes.chat}</section>
           <section class="col-start-3 row-start-2 h-full min-h-0 min-w-0 overflow-hidden md:col-start-2 md:row-start-2 ${activeMainPane === "changes" ? "" : "md:hidden"}">${panes.changes}</section>
           <section class="col-start-4 row-start-1 row-span-2 h-full min-h-0 min-w-0 overflow-hidden md:col-start-3 md:row-start-1 md:row-span-2 ${hasProject ? "md:border-l md:border-zinc-700" : ""}">${panes.inspector}</section>
         </div>

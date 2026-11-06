@@ -78,7 +78,7 @@ Selecting an app must not force it into the four-pane session topology.
 
 This is navigation, not tiling. Arbitrary docking, movable panels, and user-designed workspace layouts are outside the initial capability.
 
-The [workspace Inspector plan](workspace-inspector.md) reserves main-area placement of a view as navigation (a route carrying the serialized view). An app destination may become such a main-area view rather than a separate routing path; plugin content beside the conversation would be an Inspector tab.
+Main-area placement of a view is built ([workspace Inspector plan](workspace-inspector.md) slice 4, ADR-037): a view with a `pane` presentation (the one the Inspector shows) opened with `workspace.open(view, { in: "main" })` is a route the host derives from the view (`#/view/<name>?<parameters>`), with the sidebar beside it on desktop and the page as the chat pane's on a phone. An app destination can be such a view rather than a separate `#/apps/:appId` path; plugin content beside the conversation would be an Inspector tab.
 
 ### Failure behavior
 

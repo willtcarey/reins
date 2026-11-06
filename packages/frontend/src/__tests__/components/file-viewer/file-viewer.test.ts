@@ -16,8 +16,8 @@ describe("the file viewer", () => {
 
     const view: FileView = { view: "file", source, path: "docs/plan.md" };
     const pane = views.rendererFor(view)?.pane;
-    expect(pane?.title(view, { source })).toBe("plan.md");
-    expect(pane?.description(view, { source })).toBe("docs/plan.md");
+    expect(pane?.title(view, { source, container: "inspector" })).toBe("plan.md");
+    expect(pane?.description(view, { source, container: "inspector" })).toBe("docs/plan.md");
   });
 
   test("names the file's node in its tab when the viewed session is on another node", () => {
@@ -28,8 +28,8 @@ describe("the file viewer", () => {
     const view: FileView = { view: "file", source: { nodeId: "internal", path: "/scratch" }, path: "report.html" };
     const pane = views.rendererFor(view)?.pane;
 
-    expect(pane?.title(view, { source })).toBe("report.html · Internal");
-    expect(pane?.description(view, { source })).toBe("/scratch/report.html · Internal");
+    expect(pane?.title(view, { source, container: "inspector" })).toBe("report.html · Internal");
+    expect(pane?.description(view, { source, container: "inspector" })).toBe("/scratch/report.html · Internal");
   });
 
   test("mounts as a file viewer given its view and the SDK's files, updated in place, and removed on dispose", () => {
@@ -39,14 +39,14 @@ describe("the file viewer", () => {
     const pane = views.rendererFor(view)?.pane;
     const target = testElement();
 
-    const mounted = pane?.mount(target, view, { source });
+    const mounted = pane?.mount(target, view, { source, container: "inspector" });
     const element = target.childNodes[0];
     if (!(element instanceof FileViewer)) throw new Error("Expected a file viewer");
     expect(element.view).toBe(view);
     expect(element.files).toBe(files);
 
     const opened: FileView = { view: "file", source, path: "docs/plan.md", startLine: 3 };
-    mounted?.update?.(opened, { source });
+    mounted?.update?.(opened, { source, container: "inspector" });
     expect(element.view).toBe(opened);
     expect(target.childNodes[0]).toBe(element);
 

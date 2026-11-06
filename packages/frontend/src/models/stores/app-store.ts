@@ -1,7 +1,6 @@
 /** Long-lived application runtime and shared stores. */
 
 import type { ProjectView as ProjectInfo } from "@backend/routes/projects.js";
-import type { ContainerId, View } from "@reins/sdk";
 import { CommandRegistry } from "../../sdk-host/commands.js";
 import { SendHandoff } from "../send-handoff.js";
 import { DecoratorRegistry } from "../../sdk-host/decorators.js";
@@ -106,15 +105,6 @@ export class AppStore {
 
   get projects(): ProjectInfo[] { return this.projectsStore.projects; }
   get activitySummary(): { running: number; finished: number } { return this.projectsStore.activitySummary; }
-
-  /** Shows a view in a container: the SDK's `workspace.open`. */
-  open(view: View, container: Exclude<ContainerId, "main">): void {
-    switch (container) {
-      case "inspector":
-        this.inspector.open(view);
-        break;
-    }
-  }
 
   subscribe(listener: AppStoreListener): () => void {
     this.listeners.add(listener);

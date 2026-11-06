@@ -3,6 +3,7 @@ import type { View } from "@reins/sdk";
 import type { NewSessionView } from "../components/new-session-page.js";
 import type { AppStore } from "../models/stores/app-store.js";
 import { FrontendRouter, type Route } from "./router.js";
+import { viewOfRouteParams, viewRouteHash } from "./view-route.js";
 
 export interface AppRouteRenderContext {
   app: AppStore;
@@ -34,7 +35,10 @@ function renderSettingsPage(app: AppStore, shown: { section?: SettingsSectionId;
   `;
 }
 
-/** One template for every workspace route, so the workspace stays mounted while its route changes. */
+/**
+ * One template for every workspace route, so the workspace stays mounted while its route changes. It shows a
+ * session itself, and any other view as a page.
+ */
 function renderWorkspacePage(app: AppStore, route: Route): TemplateResult {
   const view = mainViewOf(route);
   return html`
@@ -42,7 +46,7 @@ function renderWorkspacePage(app: AppStore, route: Route): TemplateResult {
       class="block h-full"
       .app=${app}
       .sessionId=${view?.view === "session" ? view.sessionId : null}
-      .newSession=${view?.view === "new-session" ? view : null}
+      .page=${view && view.view !== "session" ? view : null}
     ></app-workspace>
   `;
 }
@@ -66,6 +70,13 @@ export function createAppRouter(): FrontendRouter<AppRouteRenderContext, Templat
     pattern: "/new",
     // A task is of a project, so it is chosen only with one.
     validate: ({ project, task }) => (project === undefined ? task === undefined : ID.test(project) && (task === undefined || ID.test(task))),
+    renderPage: (route, { app }) => renderWorkspacePage(app, route),
+  });
+  // Any other view the main area shows, its URL derived from it (view-route.ts).
+  router.register({
+    name: "view",
+    pattern: "/view/:view",
+    validate: ({ view }) => !!view && !hasOwnRoute(view),
     renderPage: (route, { app }) => renderWorkspacePage(app, route),
   });
   router.register({
@@ -164,20 +175,39 @@ export function mainViewOf(route: Route): View | null {
 }
 
 function viewOfRoute(route: Route): View | null {
+  if (route.name === "view") return viewOfRouteParams(route.params);
   if (route.name === "session" && route.params.sessionId) return { view: "session", sessionId: route.params.sessionId };
   if (route.name !== "new-session") return null;
   const { project, task } = route.params;
   return { view: "new-session", projectId: project ? Number(project) : null, taskId: task ? Number(task) : null } satisfies NewSessionView;
 }
 
-/** The route of a view the main area can show, or null for any other. */
+/**
+ * The app's views with routes of their own, which they had before any view was routed: each gives its view's
+ * hash, or null for parameters the view cannot have.
+ */
+const OWN_ROUTES: Readonly<Record<string, (view: View) => string | null>> = {
+  session: ({ sessionId }) => (typeof sessionId === "string" && sessionId ? sessionHash(sessionId) : null),
+  "project-history": ({ projectId }) => (typeof projectId === "number" && Number.isInteger(projectId) ? projectHistoryHash(projectId) : null),
+  "new-session": ({ projectId, taskId }) => {
+    if (!isOptionalId(projectId) || !isOptionalId(taskId) || (projectId == null && taskId != null)) return null;
+    return newSessionHash({ projectId, taskId });
+  },
+};
+
+/** Whether views of the name have a route of their own rather than `#/view/<name>`. */
+export function hasOwnRoute(name: string): boolean {
+  return Object.hasOwn(OWN_ROUTES, name);
+}
+
+/**
+ * The route of a view in the main area: the app's views' own, and `#/view/<name>?<parameters>` for any other.
+ * Null for an app's view whose parameters it cannot have. Whether the main area can show the view is the main
+ * area's to say (`RoutedMainArea`).
+ */
 export function mainViewHash(view: View): string | null {
-  if (view.view === "session") return typeof view.sessionId === "string" && view.sessionId ? sessionHash(view.sessionId) : null;
-  if (view.view === "project-history") return typeof view.projectId === "number" && Number.isInteger(view.projectId) ? projectHistoryHash(view.projectId) : null;
-  if (view.view !== "new-session") return null;
-  const { projectId, taskId } = view;
-  if (!isOptionalId(projectId) || !isOptionalId(taskId) || (projectId == null && taskId != null)) return null;
-  return newSessionHash({ projectId, taskId });
+  const own = hasOwnRoute(view.view) ? OWN_ROUTES[view.view] : undefined;
+  return own ? own(view) : viewRouteHash(view);
 }
 
 function isOptionalId(value: unknown): value is number | null {

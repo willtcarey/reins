@@ -26,7 +26,7 @@ function inspectorElement(inspector: Inspector): AppInspector {
   element.tabs = inspector.tabs;
   element.activeKey = inspector.activeTab.key;
   element.views = views;
-  element.context = { source };
+  element.context = { source, container: "inspector" };
   return element;
 }
 

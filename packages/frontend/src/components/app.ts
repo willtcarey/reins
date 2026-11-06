@@ -1,6 +1,6 @@
 /** Root application shell: lifecycle, route outlet, and global overlays. */
 
-import { LitElement, html } from "lit";
+import { LitElement, html, type PropertyValues } from "lit";
 import { customElement, query, state } from "lit/decorators.js";
 import { AppRouteController } from "../controllers/app-route-controller.js";
 import { BUILT_IN_EXTENSIONS } from "../extensions/built-in.js";
@@ -13,11 +13,13 @@ import { SdkSessions } from "../sdk-host/sessions.js";
 import { SdkUi } from "../sdk-host/ui.js";
 import { SdkNodes, SdkProjects, SdkTasks } from "../sdk-host/projects.js";
 import { AppClient } from "../models/ws-client.js";
-import { mainViewHash, navigate, openSettings, renderRoutePage } from "../routing/app-router.js";
+import { mainViewOf, openSettings, renderRoutePage } from "../routing/app-router.js";
+import { RoutedMainArea } from "../routing/main-area.js";
 import type { Route } from "../routing/router.js";
 import type { SourceDetail, OpenImageViewerDetail, OpenInBrowserDetail } from "./events.js";
 import type { AppWorkspace } from "./app-workspace.js";
 import type { ImageLightbox } from "./image-lightbox.js";
+import { registerNewSessionPage } from "./new-session-page.js";
 import type { QuickOpen } from "./quick-open.js";
 import "./file-browser/file-browser.js";
 import "./file-browser/file-search.js";
@@ -31,9 +33,8 @@ export class AppShell extends LitElement {
   }
 
   private appStore = new AppStore(new AppClient());
-  private mainListeners = new Set<() => void>();
-  /** What the main area showed when its listeners were last told, to tell them only of a change. */
-  private mainShown = "null";
+  /** The main area is the workspace routes' page, which knows what the view it shows is about. */
+  private mainArea = new RoutedMainArea(this.appStore.views, () => this.workspace);
   /** What each extension's SDK is built over. */
   private sdkSessions = new SdkSessions(this.appStore);
   private sdkHost: SdkHost = {
@@ -43,20 +44,7 @@ export class AppShell extends LitElement {
     projects: new SdkProjects(this.appStore.projectsStore),
     tasks: new SdkTasks(this.appStore.projectsStore),
     nodes: new SdkNodes(this.appStore.projectsStore),
-    main: {
-      current: () => this.workspace?.current() ?? null,
-      show: (view) => {
-        const hash = mainViewHash(view);
-        if (hash) navigate(hash);
-        // On a phone, opening what the workspace already shows still brings its page forward.
-        if (hash) this.workspace?.revealMain();
-        return hash !== null;
-      },
-      subscribe: (listener) => {
-        this.mainListeners.add(listener);
-        return () => this.mainListeners.delete(listener);
-      },
-    },
+    containers: { inspector: this.appStore.inspector, main: this.mainArea },
     http: api,
     socket: this.appStore.client,
   };
@@ -76,7 +64,12 @@ export class AppShell extends LitElement {
   @query("image-lightbox") private imageLightbox!: ImageLightbox;
 
   override connectedCallback() {
-    this.disposeSdk = BUILT_IN_EXTENSIONS.map((extension) => this.appStore.extensions.activate(extension, createReinsSdk(extension, this.sdkHost)));
+    this.disposeSdk = [
+      registerNewSessionPage(this.appStore.views, this.appStore),
+      ...BUILT_IN_EXTENSIONS.map((extension) => this.appStore.extensions.activate(extension, createReinsSdk(extension, this.sdkHost))),
+      // A page registered or gone changes the title of the page shown.
+      this.appStore.views.subscribe(() => this.updateDocumentTitle()),
+    ];
     // The file browser is app-shell's own overlay, not a registered extension, but it uses only the SDK.
     this.fileBrowserStore = new FileBrowserStore(createReinsSdk({ name: "file-browser", label: "File browser" }, this.sdkHost), {
       viewedSource: () => this.workspace?.store?.source ?? null,
@@ -105,11 +98,15 @@ export class AppShell extends LitElement {
     this.appStore.dispose();
   }
 
+  /** The title of the view the main area shows as its page, if any, after the activity across sessions. */
   private updateDocumentTitle(): void {
     const { running, finished } = this.appStore.activitySummary;
-    if (running > 0) document.title = `(${running} running) REINS`;
-    else if (finished > 0) document.title = `(${finished} new) REINS`;
-    else document.title = "REINS";
+    const view = mainViewOf(this.currentRoute);
+    const page = view && view.view !== "session" ? this.appStore.views.titleOf(view, { source: this.workspace?.store?.source ?? null, container: "main" }) : null;
+    const name = page ? `${page} · REINS` : "REINS";
+    if (running > 0) document.title = `(${running} running) ${name}`;
+    else if (finished > 0) document.title = `(${finished} new) ${name}`;
+    else document.title = name;
   }
 
   private handleRouteChange(route: Route): void {
@@ -119,17 +116,10 @@ export class AppShell extends LitElement {
     }
   }
 
-  protected override updated(): void {
-    this.mainViewChanged();
+  protected override updated(changed: PropertyValues): void {
+    if (changed.has("currentRoute")) this.updateDocumentTitle();
+    this.mainArea.changed();
   }
-
-  /** Tells the SDK's `workspace.subscribe` listeners when the main area's view or subject changed. */
-  private mainViewChanged = () => {
-    const shown = JSON.stringify(this.workspace?.current() ?? null);
-    if (shown === this.mainShown) return;
-    this.mainShown = shown;
-    for (const listener of this.mainListeners) listener();
-  };
 
   private handleOpenInBrowser = (event: CustomEvent<OpenInBrowserDetail>) => {
     const { source, path, startLine, endLine, mode } = event.detail;
@@ -153,7 +143,7 @@ export class AppShell extends LitElement {
         @open-file-browser=${(event: CustomEvent<SourceDetail>) => this.fileBrowserStore?.open(event.detail.source)}
         @open-image-viewer=${this.handleOpenImageViewer}
         @open-settings=${() => openSettings()}
-        @main-view-change=${this.mainViewChanged}
+        @main-view-change=${() => this.mainArea.changed()}
       >
         ${!store.connected ? html`
           <div class="bg-yellow-800 text-yellow-200 text-xs text-center py-1">
