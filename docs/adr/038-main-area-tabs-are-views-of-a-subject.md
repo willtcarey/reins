@@ -32,5 +32,5 @@ A session in the main area is two things the user switches between, its Chat and
 
 - An extension adds a tab to every session by registering a view with `tabOf: { type: "session", parameter: … }`; it needs nothing else.
 - A tab is mounted while its set is shown, so an extension's tab costs its mount even unseen; a costly one waits for `setVisible(true)`.
-- The session the workspace follows (the Inspector's source, the diff and the review) still comes from the session routes; it is to come from the shown view's `session` subject (workspace-inspector.md slice 5).
+- The session the workspace follows (the Inspector's source, the diff and the review) is the shown view's `session` subject, read after the view's mount applies it, not a route's parameter, so any view about a session gets its Inspector and Changes. The session's own tabs draw the store's session, so on a switch they render the session before for the moment between that render and the store following (microtasks, before the browser paints in practice); the alternative, the store following a tab's `tabOf` parameter synchronously, is kept for if that shows.
 - Details: [reins-sdk.md](../dev/reins-sdk.md) *Contribution points*, *Views over the app's state*; [frontend-architecture.md](../dev/frontend-architecture.md) *Component structure*, *Mobile workspace swipe*.

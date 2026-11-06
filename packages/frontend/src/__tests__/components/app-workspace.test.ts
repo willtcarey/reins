@@ -86,7 +86,9 @@ function installRenderableStore(el: AppWorkspace, options: {
     codeReviewStore: {},
     projectsStore: { activityForSession() {} },
     inspector,
-    setSession: async () => {},
+    /** The sessions the workspace asked the store to follow. */
+    followed: Array<string | null>(),
+    async setSession(sessionId: string | null) { this.followed.push(sessionId); },
     subscribe() { return () => {}; },
   };
   Reflect.get(el, "storeController").store = store;
@@ -554,3 +556,34 @@ describe("AppWorkspace as the main area's view (workspace.current)", () => {
     expect(el.current()).toBeNull();
   });
 });
+
+describe("AppWorkspace's session (the Inspector's source, the diff and the review)", () => {
+  beforeEach(() => installWorkspaceGlobals({ mobile: false }));
+
+  /** The workspace showing `view`, mounted as the page would mount it, about what its renderer says. */
+  async function showing(view: View, register?: (reins: ReturnType<typeof testSdk>["reins"]) => void) {
+    const { reins, views } = testSdk();
+    register?.(reins);
+    const el = new AppWorkspace();
+    const store = installRenderableStore(el, { activeSessionStore: null, views, mainView: view });
+    const mount = testDom(new ViewMount());
+    mount.presentation = views.rendererFor(view)?.pane ?? null;
+    mount.view = view;
+    mount.context = main;
+    setConnected(mount, true);
+    await mount.updateComplete;
+    Reflect.set(el, "querySelector", (selector: string) => (selector === "reins-view-mount[data-main-shown]" ? mount : null));
+    store.followed.length = 0;
+    await Reflect.get(el, "followShownView").call(el);
+    return store.followed;
+  }
+
+  test("follows the session the view shown is about, as its subject says", async () => {
+    expect(await showing({ view: "session-changes", sessionId: "s2" })).toEqual(["s2"]);
+  });
+
+  test("follows no session while the view shown is about none", async () => {
+    expect(await showing({ view: "test-inbox", repository: "reins", projectId: 7 }, (reins) => registerInboxPage(reins))).toEqual([null]);
+  });
+});
+

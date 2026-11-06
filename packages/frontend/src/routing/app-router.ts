@@ -35,17 +35,13 @@ function renderSettingsPage(app: AppStore, shown: { section?: SettingsSectionId;
   `;
 }
 
-/**
- * One template for every workspace route, so the workspace stays mounted while its route changes. It shows a
- * session itself, and any other view as a page.
- */
+/** One template for every workspace route, so the workspace stays mounted while its route changes. */
 function renderWorkspacePage(app: AppStore, route: Route): TemplateResult {
   const view = mainViewOf(route);
   return html`
     <app-workspace
       class="block h-full"
       .app=${app}
-      .sessionId=${typeof view?.sessionId === "string" && (view.view === "session" || view.view === "session-changes") ? view.sessionId : null}
       .mainView=${view}
     ></app-workspace>
   `;

@@ -30,28 +30,18 @@ export class AppWorkspace extends LitElement {
 
   private storeController = new StoreController<WorkspaceStore>(this);
   private application: AppStore | null = null;
-  private routedSessionId: string | null = null;
 
   @property({ attribute: false })
   set app(app: AppStore | null) {
     if (app === this.application) return;
     this.application = app;
     this.storeController.store?.dispose();
+    // A new store follows the shown view's session once it renders (`followShownView`).
     this.storeController.store = app ? new WorkspaceStore(app) : null;
-    if (this.storeController.store) void this.storeController.store.setSession(this.routedSessionId);
     // The session's views and the diff file tree are registered over this store.
     if (this.isConnected) this.connectApp();
   }
   get app(): AppStore | null { return this.application; }
-
-  /** The session the workspace follows (the Inspector's source, the diff and the review): the routed session's. */
-  @property({ attribute: false })
-  set sessionId(sessionId: string | null) {
-    if (sessionId === this.routedSessionId) return;
-    this.routedSessionId = sessionId;
-    void this.storeController.store?.setSession(sessionId);
-  }
-  get sessionId(): string | null { return this.routedSessionId; }
 
   /**
    * The main area's view: its renderer's `pane`, in the main area with its tabs (`ViewRenderer.tabOf`), such as a
@@ -152,6 +142,17 @@ export class AppWorkspace extends LitElement {
   }
 
   protected override updated(): void {
+    void this.followShownView();
+  }
+
+  /**
+   * Once the shown view's mount has applied the view just rendered, follows the session it is about (the store's: the
+   * Inspector's source, the diff and the review; none for a view about none), and says the main area changed.
+   */
+  private async followShownView(): Promise<void> {
+    await this.querySelector<ViewMount>("reins-view-mount[data-main-shown]")?.updateComplete;
+    const session = this.current()?.subject.find((subject) => subject.type === "session");
+    void this.store?.setSession(typeof session?.id === "string" ? session.id : null);
     this.dispatchEvent(mainViewChangeEvent());
   }
 
