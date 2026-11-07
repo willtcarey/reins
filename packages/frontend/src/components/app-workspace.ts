@@ -4,7 +4,6 @@ import { customElement, property, state } from "lit/decorators.js";
 import { PageSwipeController } from "../controllers/page-swipe-controller.js";
 import { StoreController } from "../controllers/store-controller.js";
 import { ViewportController } from "../controllers/viewport-controller.js";
-import { FileTreeState } from "../models/changes/file-tree-state.js";
 import { WorkspaceLayout, type SidePane } from "../models/workspace-layout.js";
 import type { AppStore } from "../models/stores/app-store.js";
 import { WorkspaceStore } from "../models/stores/workspace-store.js";
@@ -13,11 +12,9 @@ import { WorkspacePages, type WorkspacePane } from "../models/workspace-pages.js
 import { folderIcon } from "../ui/icons.js";
 import { mainViewChangeEvent, openFileSearchEvent, openMainViewEvent, type MainPaneSelectDetail } from "./events.js";
 import type { MainTab } from "./app-main-toolbar.js";
-import type { ReviewDiffPanel } from "./changes/review-diff-panel.js";
 import "./app-main-toolbar.js";
 import type { ViewMount } from "./view-mount.js";
 import "./view-mount.js";
-import { registerDiffFileTree } from "./changes/diff-file-tree.js";
 import { registerSessionViews } from "./session-views.js";
 import "./app-inspector.js";
 import "./session-sidebar.js";
@@ -63,7 +60,6 @@ export class AppWorkspace extends LitElement {
   /** The tab a swipe settled on, shown until the main area's view is that tab's. */
   @state() private swipedTab: string | null = null;
   private observedSessionId = "";
-  private observedProjectId: number | null = null;
   /** Only the main area's view is asked what it is about, so the Inspector's say nothing. */
   private subjectChanged: Record<"inspector" | "main", () => void> = {
     inspector: () => {},
@@ -73,7 +69,6 @@ export class AppWorkspace extends LitElement {
     inspector: { source: null, container: "inspector", subjectChanged: this.subjectChanged.inspector },
     main: { source: null, container: "main", subjectChanged: this.subjectChanged.main },
   };
-  private fileTreeState = new FileTreeState();
   private layout = new WorkspaceLayout(typeof localStorage === "undefined" ? null : localStorage, typeof navigator === "undefined" ? "browser" : navigator.userAgent ?? "browser");
   private resizePointer: { pane: SidePane; id: number; startX: number; startWidth: number } | null = null;
 
@@ -141,9 +136,7 @@ export class AppWorkspace extends LitElement {
       this.activePane = "main";
       this.swipedTab = null;
     }
-    if (store.projectId !== this.observedProjectId) this.fileTreeState.reset();
     this.observedSessionId = store.sessionId;
-    this.observedProjectId = store.projectId;
   }
 
   protected override updated(): void {
@@ -185,7 +178,6 @@ export class AppWorkspace extends LitElement {
       // A renderer registered later may change the Inspector's width, the main area's tabs, or show the view routed before it came.
       app.views.subscribe(() => this.requestUpdate()),
       registerSessionViews(app.views, store),
-      registerDiffFileTree(app.views, { diffStore: store.diffStore, reviewStore: store.codeReviewStore, treeState: this.fileTreeState }),
     ];
   }
 
@@ -222,20 +214,6 @@ export class AppWorkspace extends LitElement {
     if (!tab || name === this.shownTab()) return;
     this.swipedTab = name;
     this.dispatchEvent(openMainViewEvent(tab));
-  }
-
-  private getDiffPanel(): ReviewDiffPanel | null {
-    return this.querySelector("review-diff-panel");
-  }
-
-  /** A changed file chosen (the Inspector's Changes tab): the session's Changes, scrolled to it. */
-  private handleFileSelect(event: CustomEvent<string>) {
-    event.stopPropagation();
-    this.activePane = "main";
-    this.showTab("session-changes");
-    requestAnimationFrame(() => {
-      this.getDiffPanel()?.scrollToFile(event.detail);
-    });
   }
 
   private handleMainPaneSelect(event: CustomEvent<MainPaneSelectDetail>) {
@@ -345,7 +323,6 @@ export class AppWorkspace extends LitElement {
         .context=${this.contextFor(store.source, "inspector")}
         @inspector-tab-focus=${(event: CustomEvent<string>) => inspector.focus(event.detail)}
         @inspector-tab-close=${(event: CustomEvent<string>) => inspector.close(event.detail)}
-        @file-select=${(event: CustomEvent<string>) => this.handleFileSelect(event)}
       ></app-inspector>
     `;
   }

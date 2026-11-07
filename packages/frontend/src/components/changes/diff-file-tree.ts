@@ -8,17 +8,18 @@
  *
  * Also owns the diff mode selector (branch vs uncommitted).
  *
- * It is the Inspector's `diff-file-tree` view (the Changes tab), which the workspace registers
- * with its stores (`registerDiffFileTree`).
+ * It is the Inspector's `diff-file-tree` view (the Changes tab), which app-shell registers
+ * (`registerDiffFileTree`): it shows the diff of the session the main area is about.
  */
 
 import { LitElement, html, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
-import type { Disposer, Views } from "@reins/sdk";
+import { sameSource, type Disposer, type Views, type Workspace } from "@reins/sdk";
 import type { DiffFileSummary } from "@backend/models/diff-parser.js";
 import type { DiffStore } from "../../models/stores/diff-store.js";
 import type { CodeReviewStore } from "../../models/stores/code-review-store.js";
-import type { FileTreeState } from "../../models/changes/file-tree-state.js";
+import { FileTreeState } from "../../models/changes/file-tree-state.js";
+import type { SessionDiffs } from "../../models/stores/session-diffs.js";
 import { fileSelectEvent } from "../events.js";
 import { conversationIcon, diffIcon, paneIcon } from "../../ui/icons.js";
 import "../tree-view.js";
@@ -120,6 +121,8 @@ export class DiffFileTree extends LitElement {
   @property({ attribute: false }) store: DiffStore | null = null;
   @property({ attribute: false }) reviewStore: CodeReviewStore | null = null;
   @property({ attribute: false }) treeState: FileTreeState | null = null;
+  /** The file to highlight: the one the main area is about. */
+  @property({ attribute: false }) activeFile: string | null = null;
 
   private _unsubscribe: (() => void) | null = null;
   private _unsubscribeReview: (() => void) | null = null;
@@ -276,7 +279,7 @@ export class DiffFileTree extends LitElement {
         <div class="flex-1 overflow-y-auto pb-4">
           <tree-view
             .nodes=${nodes}
-            .activeFile=${store.activeFile}
+            .activeFile=${this.activeFile}
             .renderNodeTrailer=${this._renderNodeTrailer}
             @tree-file-click=${this._handleFileClick}
             @tree-dir-toggle=${this._handleDirToggle}
@@ -287,11 +290,15 @@ export class DiffFileTree extends LitElement {
   }
 }
 
-/** The Inspector's Changes tab: it follows the viewed session, so it has no parameters. */
+/** The Inspector's Changes tab: it follows the main area's session, so it has no parameters. */
 export type DiffFileTreeView = { view: "diff-file-tree" };
 
-/** Registers the Inspector's `diff-file-tree` view (the Changes tab) over a workspace's stores. */
-export function registerDiffFileTree(views: Views, stores: { diffStore: DiffStore; reviewStore: CodeReviewStore; treeState: FileTreeState }): Disposer {
+/**
+ * Registers the Inspector's `diff-file-tree` view (the Changes tab): the changed files of the session the main area
+ * is about (`workspace`), from the app's sessions' diffs, highlighting the file the main area is about. A file chosen
+ * opens the session's Changes at it.
+ */
+export function registerDiffFileTree(views: Views, workspace: Workspace, diffs: Pick<SessionDiffs, "use">): Disposer {
   return views.register("diff-file-tree", {
     pane: {
       title: () => "Changes",
@@ -302,12 +309,45 @@ export function registerDiffFileTree(views: Views, stores: { diffStore: DiffStor
         const tree = target.ownerDocument.createElement("diff-file-tree");
         tree.setAttribute("class", "block h-full min-h-0 flex-1");
         tree.setAttribute("data-swipe-surface", "");
-        tree.store = stores.diffStore;
-        tree.reviewStore = stores.reviewStore;
-        tree.treeState = stores.treeState;
         target.append(tree);
-        // It shows the stores, which it follows itself: a new view or context changes nothing.
-        return { update: () => {}, dispose: () => tree.remove() };
+        let shown: ReturnType<typeof diffs.use> | null = null;
+        let unwatch: Disposer | null = null;
+        const highlight = () => {
+          const file = workspace.currentSubject("file");
+          tree.activeFile = file && shown && sameSource(file.source, shown.diff.source) ? file.path : null;
+        };
+        const follow = () => {
+          const sessionId = workspace.currentSubject("session");
+          if (shown?.diff.sessionId !== sessionId) {
+            unwatch?.();
+            shown?.release();
+            shown = sessionId ? diffs.use(sessionId) : null;
+            // The session's checkout, which the highlight needs, can be known after the main area changed.
+            unwatch = shown?.diff.subscribe(highlight) ?? null;
+            tree.store = shown?.diff.files ?? null;
+            tree.reviewStore = shown?.diff.review ?? null;
+            // Folders open and closed are of one session's files.
+            tree.treeState = shown ? new FileTreeState() : null;
+          }
+          highlight();
+        };
+        follow();
+        const unfollow = workspace.onDidChange(follow);
+        const onFileSelect = (event: CustomEvent<string>) => {
+          if (shown) workspace.open({ view: "session-changes", sessionId: shown.diff.sessionId, file: event.detail }, { in: "main" });
+        };
+        tree.addEventListener("file-select", onFileSelect);
+        // It follows the main area itself: a new view or context changes nothing.
+        return {
+          update: () => {},
+          dispose: () => {
+            unfollow();
+            unwatch?.();
+            tree.removeEventListener("file-select", onFileSelect);
+            shown?.release();
+            tree.remove();
+          },
+        };
       },
     },
   });

@@ -61,40 +61,6 @@ describe("AppStore reconnect catch-up", () => {
     expect(store.projectsStore.refreshFromServer).toHaveBeenCalled();
   });
 
-  test("sets the code review scope from the viewed session", async () => {
-    const setScope = mock(async () => {});
-    workspace.codeReviewStore.setScope = setScope;
-    mockFetch((url) => {
-      if (url === "/api/sessions/sess-1") return Response.json(sessionDetail(false, 11));
-      if (url === "/api/sessions/sess-1/messages") return Response.json(messagePage());
-      return Response.json([]);
-    });
-
-    await workspace.setSession("sess-1");
-
-    expect(setScope).toHaveBeenLastCalledWith({ projectId: 42, taskId: 11 });
-  });
-
-  test("applies scoped code review invalidations", () => {
-    const handleUpdated = mock(async () => {});
-    workspace.codeReviewStore.handleUpdated = handleUpdated;
-
-    client.fireMessage({
-      type: "code_review_updated",
-      projectId: 7,
-      taskId: 11,
-      reviewId: "review-1",
-      revision: 2,
-    });
-
-    expect(handleUpdated).toHaveBeenCalledWith({
-      projectId: 7,
-      taskId: 11,
-      reviewId: "review-1",
-      revision: 2,
-    });
-  });
-
   test("reconnect refreshes active session state", async () => {
     store.projectsStore.refreshFromServer = mock(async () => {});
 

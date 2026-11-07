@@ -3,8 +3,6 @@ import { sameSource, type Source } from "@reins/sdk";
 import type { Inspector } from "../inspector.js";
 import type { AppStore } from "./app-store.js";
 import { ActiveSessionStore } from "./active-session-store.js";
-import { CodeReviewStore } from "./code-review-store.js";
-import { DiffStore } from "./diff-store.js";
 import type { ProjectStore } from "./project-store.js";
 
 export type WorkspaceStoreListener = () => void;
@@ -12,19 +10,14 @@ export type WorkspaceStoreListener = () => void;
 /**
  * Route-scoped workspace state and coordination.
  *
- * A transition owns its active session, diff scope, and review scope. Session
- * changes clear both scopes synchronously; resolved scopes are committed only
- * while that transition is still current.
+ * It follows the shown view's session for the session's Chat: its active session store. The session's diff and review
+ * are the views' own (`app.diffs`).
  */
 export class WorkspaceStore {
-  readonly diffStore = new DiffStore();
-  readonly codeReviewStore = new CodeReviewStore();
-
   private active: ActiveSessionStore | null = null;
   private listeners = new Set<WorkspaceStoreListener>();
   private unsubscribers: Array<() => void> = [];
   private unsubscribeActive: (() => void) | null = null;
-  private transition = 0;
   private disposed = false;
   private _source: Source | null = null;
 
@@ -32,10 +25,6 @@ export class WorkspaceStore {
     this.unsubscribers = [
       app.subscribe(() => this.notify()),
       app.client.subscribe({
-        code_review_updated: (message) => {
-          const { projectId, taskId, reviewId, revision } = message;
-          void this.codeReviewStore.handleUpdated({ projectId, taskId, reviewId, revision });
-        },
         open_file: (message) => {
           if (message.sessionId !== this.sessionId) return;
           const lineRange = message.startLine != null && message.endLine != null
@@ -44,17 +33,8 @@ export class WorkspaceStore {
           document.dispatchEvent(openInBrowserEvent(message.source, message.path, lineRange));
         },
       }),
-      app.files.onFilesChanged((source) => {
-        if (!sameSource(this.source, source)) return;
-        void this.diffStore.refresh({ trigger: "websocket" });
-      }),
-      app.registerReconciler(() => Promise.allSettled([
-        this.active?.refreshFromServer(),
-        this.codeReviewStore.refresh(),
-      ])),
+      app.registerReconciler(() => this.active?.refreshFromServer()),
       app.inspector.subscribe(() => this.notify()),
-      this.diffStore.subscribe(() => this.notify()),
-      this.codeReviewStore.subscribe(() => this.notify()),
     ];
   }
 
@@ -90,7 +70,6 @@ export class WorkspaceStore {
     const nextSessionId = sessionId ?? "";
     if (nextSessionId === this.sessionId) return;
 
-    const transition = ++this.transition;
     this.unsubscribeActive?.();
     this.unsubscribeActive = null;
     this.active?.dispose();
@@ -107,50 +86,20 @@ export class WorkspaceStore {
       this.unsubscribeActive = this.active.subscribe(() => this.notify());
     }
 
-    // The old diff/review may never coexist with the newly selected session.
-    this.diffStore.setScope(null, null);
-    void this.codeReviewStore.setScope(null);
     this.notify();
 
-    const active = this.active;
-    if (!active) return;
-
-    await active.initialize();
-    if (!this.isCurrent(transition, active)) return;
-
-    const projectId = active.projectId;
-    const taskId = active.sessionData.taskId ?? null;
-    if (projectId != null) {
-      await this.app.projectsStore.ensureLoaded(projectId);
-      if (!this.isCurrent(transition, active)) return;
-    }
-    const branch = projectId == null || taskId == null
-      ? null
-      : this.app.projectsStore.peekStore(projectId)?.findTask(taskId)?.branch_name ?? null;
-
-    // Both stores synchronously adopt the same transition's scope before their
-    // own async refreshes can complete. The diff reads the session's own checkout.
-    this.diffStore.setScope(active.sessionId, branch, projectId);
-    if (projectId != null) void this.codeReviewStore.setScope({ projectId, taskId });
-    this.notify();
+    await this.active?.initialize();
   }
 
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
-    this.transition += 1;
     this.unsubscribeActive?.();
     this.active?.dispose();
     this.active = null;
     for (const unsubscribe of this.unsubscribers) unsubscribe();
     this.unsubscribers = [];
-    this.diffStore.dispose();
-    void this.codeReviewStore.setScope(null);
     this.listeners.clear();
-  }
-
-  private isCurrent(transition: number, active: ActiveSessionStore): boolean {
-    return !this.disposed && transition === this.transition && this.active === active;
   }
 
   private notify(): void {

@@ -5,8 +5,8 @@
  * /diff/files endpoint for file listings, and fetches the raw patch on demand
  * when the user views Changes.
  *
- * A single instance is created by the app shell and shared across the review
- * panel and file tree, eliminating duplicate fetches.
+ * One instance per session, in its `SessionDiff` (as its `files`), shared by the review
+ * panel and the file tree, so they fetch once.
  */
 
 import type { DiffFileResponse } from "@backend/routes/diff.js";
@@ -65,9 +65,6 @@ export class DiffStore {
 
   /** Which changes to show: all branch changes or only uncommitted. */
   diffMode: DiffMode = "branch";
-
-  /** The file at the top of the diff review, which the changed-files tree highlights. */
-  activeFile: string | null = null;
 
   /** Commit spread for the active branch (ahead/behind base & remote). */
   spread: SpreadResponse | null = null;
@@ -168,7 +165,6 @@ export class DiffStore {
       this.syncAction = "idle";
       this.syncResult = null;
       this.contextLines = DEFAULT_CONTEXT;
-      this.activeFile = null;
     }
 
     if (sessionChanged || branchChanged) {
@@ -192,12 +188,6 @@ export class DiffStore {
     }
 
     if (sessionChanged || branchChanged) this._restartSpreadPolling();
-  }
-
-  setActiveFile(path: string | null) {
-    if (path === this.activeFile) return;
-    this.activeFile = path;
-    this.notify();
   }
 
   // ---- Diff mode -------------------------------------------------------------

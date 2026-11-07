@@ -268,6 +268,34 @@ describe("ReviewDiffPanel", () => {
     store.dispose();
   });
 
+  test("scrolls to the file it is told to reveal, each time it is told", () => {
+    const store = new DiffStore();
+    store.patchData = Loadable.idle<DiffPatchData>().asLoaded(loadedPatch(manyFilePatch(100)));
+    const panel = new ReviewDiffPanel();
+    panel.store = store;
+    const tops: Array<number | undefined> = [];
+    panel.scrollTo = (options?: ScrollToOptions | number) => {
+      if (typeof options !== "number") tops.push(options?.top);
+    };
+    const querySelector: typeof panel.querySelector = (selector: string) => (
+      selector === "[data-review-scroll]" ? panel : null
+    );
+    panel.querySelector = querySelector;
+    const reveal = (path: string) => {
+      panel.reveal = { path };
+      Reflect.get(panel, "willUpdate").call(panel, new Map([["reveal", null]]));
+    };
+
+    reveal("src/file-99.ts");
+    panel.scrollTop = tops.at(-1) ?? 0;
+    panel.scrollTop = 0;
+    reveal("src/file-99.ts");
+
+    expect(tops).toHaveLength(2);
+    expect(tops[0]).toBeGreaterThan(0);
+    store.dispose();
+  });
+
   test("expands a collapsed target before file-tree navigation scrolls to it", () => {
     localStorage.clear();
     const store = new DiffStore();

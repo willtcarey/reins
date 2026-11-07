@@ -178,7 +178,10 @@ export function mainViewOf(route: Route): View | null {
 function viewOfRoute(route: Route): View | null {
   if (route.name === "view") return viewOfRouteParams(route.params);
   if (route.name === "session" && route.params.sessionId) return { view: "session", sessionId: route.params.sessionId };
-  if (route.name === "session-changes" && route.params.sessionId) return { view: "session-changes", sessionId: route.params.sessionId };
+  if (route.name === "session-changes" && route.params.sessionId) {
+    const { sessionId, file } = route.params;
+    return file ? { view: "session-changes", sessionId, file } : { view: "session-changes", sessionId };
+  }
   if (route.name !== "new-session") return null;
   const { project, task } = route.params;
   return { view: "new-session", projectId: project ? Number(project) : null, taskId: task ? Number(task) : null } satisfies NewSessionView;
@@ -190,7 +193,10 @@ function viewOfRoute(route: Route): View | null {
  */
 const OWN_ROUTES: Readonly<Record<string, (view: View) => string | null>> = {
   session: ({ sessionId }) => (typeof sessionId === "string" && sessionId ? sessionHash(sessionId) : null),
-  "session-changes": ({ sessionId }) => (typeof sessionId === "string" && sessionId ? appRouter.hash("session-changes", { sessionId }) : null),
+  "session-changes": ({ sessionId, file }) => {
+    if (typeof sessionId !== "string" || !sessionId || (file !== undefined && typeof file !== "string")) return null;
+    return appRouter.hash("session-changes", file ? { sessionId, file } : { sessionId });
+  },
   "project-history": ({ projectId }) => (typeof projectId === "number" && Number.isInteger(projectId) ? projectHistoryHash(projectId) : null),
   "new-session": ({ projectId, taskId }) => {
     if (!isOptionalId(projectId) || !isOptionalId(taskId) || (projectId == null && taskId != null)) return null;

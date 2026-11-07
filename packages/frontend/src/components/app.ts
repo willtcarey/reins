@@ -21,6 +21,7 @@ import type { SourceDetail, OpenImageViewerDetail, OpenInBrowserDetail } from ".
 import type { AppWorkspace } from "./app-workspace.js";
 import type { ImageLightbox } from "./image-lightbox.js";
 import { registerNewSessionPage } from "./new-session-page.js";
+import { registerDiffFileTree } from "./changes/diff-file-tree.js";
 import type { QuickOpen } from "./quick-open.js";
 import "./file-browser/file-browser.js";
 import "./file-browser/file-search.js";
@@ -67,6 +68,8 @@ export class AppShell extends LitElement {
   override connectedCallback() {
     this.disposeSdk = [
       registerNewSessionPage(this.appStore.views, this.appStore),
+      // The Inspector's changed-files tree follows the main area as an extension would, over the app's sessions' diffs.
+      registerDiffFileTree(this.appStore.views, createReinsSdk({ name: "changes", label: "Changes" }, this.sdkHost).workspace, this.appStore.diffs),
       ...BUILT_IN_EXTENSIONS.map((extension) => this.appStore.extensions.activate(extension, createReinsSdk(extension, this.sdkHost))),
       // A page registered or gone changes the title of the page shown.
       this.appStore.views.subscribe(() => this.updateDocumentTitle()),

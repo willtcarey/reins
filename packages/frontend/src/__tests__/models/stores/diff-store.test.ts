@@ -57,21 +57,6 @@ describe("DiffStore", () => {
     expect(store.fileData.data).toEqual({ files: [], branch: null, baseBranch: null });
   });
 
-  test("keeps the diff review's active file while the project stays", () => {
-    store.setScope("s7", "feature/review");
-    let notified = 0;
-    store.subscribe(() => { notified += 1; });
-
-    store.setActiveFile("src/app.ts");
-    store.setActiveFile("src/app.ts");
-    expect(notified).toBe(1);
-
-    store.setScope("s7", "feature/other");
-    expect(store.activeFile).toBe("src/app.ts");
-    store.setScope("s8", null);
-    expect(store.activeFile).toBeNull();
-  });
-
   test("applies a route scope with one changed-file request using the final branch", async () => {
     const requests: string[] = [];
     mockFetch((url) => {

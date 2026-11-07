@@ -30,6 +30,7 @@ declare global {
     "open-file-search": CustomEvent<SourceDetail>;
     "open-settings": CustomEvent<void>;
     "open-file-browser": CustomEvent<SourceDetail>;
+    "file-select": CustomEvent<string>;
     "inspector-tab-focus": CustomEvent<string>;
     "inspector-tab-close": CustomEvent<string>;
     "file-viewer-mode-change": CustomEvent<FileViewerMode>;

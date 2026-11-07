@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, jest, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { AppStore } from "../../../models/stores/app-store.js";
 import { WorkspaceStore } from "../../../models/stores/workspace-store.js";
 import { StubClient } from "../../helpers/stub-client.js";
@@ -91,7 +91,7 @@ describe("WorkspaceStore session transitions", () => {
     }
   });
 
-  test("clears stale scopes immediately and ignores a superseded session transition", async () => {
+  test("follows the latest session asked for, whichever details come first", async () => {
     const details = new Map([
       ["first", deferredResponse()],
       ["second", deferredResponse()],
@@ -119,32 +119,22 @@ describe("WorkspaceStore session transitions", () => {
     await first;
 
     expect(workspace.sessionId).toBe("first");
-    expect(workspace.diffStore.projectId).toBe(1);
-    expect(workspace.diffStore.branch).toBe("branch-1");
-    expect(workspace.codeReviewStore.scope).toEqual({ projectId: 1, taskId: 10 });
 
     const second = workspace.setSession("second");
 
     expect(workspace.sessionId).toBe("second");
-    expect(workspace.diffStore.projectId).toBeNull();
-    expect(workspace.codeReviewStore.scope).toBeNull();
 
     const third = workspace.setSession("third");
     details.get("second")!.resolve(Response.json(sessionDetail("second", 2, 20)));
     await second;
 
     expect(workspace.sessionId).toBe("third");
-    expect(workspace.diffStore.projectId).toBeNull();
-    expect(workspace.codeReviewStore.scope).toBeNull();
 
     details.get("third")!.resolve(Response.json(sessionDetail("third", 3, 30)));
     await third;
 
     expect(workspace.sessionId).toBe("third");
     expect(workspace.projectId).toBe(3);
-    expect(workspace.diffStore.projectId).toBe(3);
-    expect(workspace.diffStore.branch).toBe("branch-3");
-    expect(workspace.codeReviewStore.scope).toEqual({ projectId: 3, taskId: 30 });
 
     workspace.dispose();
     runtime.dispose();
@@ -205,33 +195,4 @@ describe("WorkspaceStore Inspector and files", () => {
     runtime.dispose();
   });
 
-  test("refreshes the diff when its source's files may have changed", async () => {
-    const requests: string[] = [];
-    serveSessions({ first: sessionDetail("first", 1, 10) }, requests);
-    const client = new StubClient();
-    const runtime = new AppStore(client);
-    const workspace = new WorkspaceStore(runtime);
-    await workspace.setSession("first");
-    const diffRequests = () => requests.filter((url) => url.startsWith("/api/sessions/first/diff/files")).length;
-    const placement = sessionDetail("first", 1, 10).placement;
-    runtime.sessionCache.set("same-source", { placement });
-    runtime.sessionCache.set("other-source", { placement: { ...placement, path: "/work/other" } });
-    const turnEnded = (sessionId: string) => {
-      jest.useFakeTimers();
-      client.fireMessage({ type: "event", sessionId, projectId: 1, seq: 1, emittedAt: 0, event: { type: "agent_end" } });
-      jest.advanceTimersByTime(500);
-      jest.useRealTimers();
-    };
-    const before = diffRequests();
-
-    turnEnded("other-source");
-    expect(diffRequests()).toBe(before);
-    turnEnded("same-source");
-    await Promise.resolve();
-
-    expect(diffRequests()).toBe(before + 1);
-
-    workspace.dispose();
-    runtime.dispose();
-  });
 });

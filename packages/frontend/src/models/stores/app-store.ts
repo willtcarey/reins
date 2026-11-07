@@ -9,6 +9,7 @@ import { SettingsPages } from "../../sdk-host/settings-pages.js";
 import { SidebarSections, type SidebarLayout, type SidebarLayoutStorage } from "../../sdk-host/sidebar-sections.js";
 import { ViewRegistry } from "../../sdk-host/view-registry.js";
 import { Inspector } from "../inspector.js";
+import { SessionDiffs } from "./session-diffs.js";
 import type { IAppClient } from "../ws-client.js";
 import { SessionOperations } from "../session-operations.js";
 import { api } from "../api.js";
@@ -64,6 +65,8 @@ export class AppStore {
   readonly extensions: Extensions;
   /** When this browser last opened each session: the sidebar's Recent. */
   readonly inspector = new Inspector(this.views);
+  /** Each session's diff and review, while a view shows them. */
+  readonly diffs = new SessionDiffs(this);
   /** A message the new session page sent, which the session's chat panel animates into its conversation. */
   readonly sendHandoff = new SendHandoff();
   /** The skills of each location, for the composers' `/name` suggestions. */
@@ -131,6 +134,7 @@ export class AppStore {
     this.activeConversationsStore.dispose();
     this.projectsStore.dispose();
     this.settingsStore.dispose();
+    this.diffs.dispose();
     this.files.dispose();
     this.nodesStore.dispose();
     this.decorators.dispose();

@@ -1,9 +1,11 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { PropertyValues } from "lit";
 import { AppWorkspace } from "../../components/app-workspace.js";
-import { DiffFileTree } from "../../components/changes/diff-file-tree.js";
 import type { FileView } from "../../components/file-viewer/file-viewer.js";
 import { Inspector } from "../../models/inspector.js";
+import { AppStore } from "../../models/stores/app-store.js";
+import type { SessionCache } from "../../models/stores/session-cache.js";
+import { StubClient } from "../helpers/stub-client.js";
 import { DecoratorRegistry } from "../../sdk-host/decorators.js";
 import { ViewRegistry } from "../../sdk-host/view-registry.js";
 import { ViewMount } from "../../components/view-mount.js";
@@ -81,7 +83,9 @@ function installRenderableStore(el: AppWorkspace, options: {
   const projectId = options.projectId === undefined ? 42 : options.projectId;
   const views = options.views ?? new ViewRegistry();
   const inspector = new Inspector(views);
-  const app = { views, decorators: new DecoratorRegistry(views), inspector };
+  // The sessions' diffs are the app's, over its session cache (`placeSession`).
+  const runtime = new AppStore(new StubClient());
+  const app = { views, decorators: new DecoratorRegistry(views), inspector, diffs: runtime.diffs, sessionCache: runtime.sessionCache };
   const store = {
     app,
     connected: true,
@@ -92,8 +96,6 @@ function installRenderableStore(el: AppWorkspace, options: {
       ? { sessionData: { parentSessionId: null } }
       : options.activeSessionStore,
     activeProjectStore: { getSession: () => undefined, runningChildSessionsFor: () => [] },
-    diffStore: { branch: "main" },
-    codeReviewStore: {},
     projectsStore: { activityForSession() {} },
     inspector,
     /** The sessions the workspace asked the store to follow. */
@@ -108,6 +110,14 @@ function installRenderableStore(el: AppWorkspace, options: {
   // A session's tabs pin the Inspector's Changes tab as they mount, which these template tests do not do.
   if (el.mainView?.view === "session") inspector.pin({ view: "diff-file-tree" });
   return store;
+}
+
+/** Gives the app session `sessionId`'s details: in the workspace's checkout, of `projectId` and `taskId`. */
+function placeSession(store: { app: { sessionCache: SessionCache } }, sessionId: string, projectId: number | null, taskId: number | null = null) {
+  store.app.sessionCache.set(sessionId, {
+    projectId, taskId, createdAt: "", updatedAt: "", messageCount: 0, state: { model: null, thinkingLevel: "off" },
+    placement: { available: true, removed: false, nodeId: source.nodeId, nodeName: "Node", path: source.path },
+  });
 }
 
 /** Connects the workspace to its app, as connecting it to the page does. */
@@ -140,7 +150,9 @@ describe("AppWorkspace layout selection", () => {
     installWorkspaceGlobals({ mobile: false });
 
     const el = new AppWorkspace();
-    installRenderableStore(el);
+    const store = installRenderableStore(el);
+    // The Inspector is as wide as its shown tab asks.
+    store.app.views.register("diff-file-tree", { pane: { title: () => "Changes", description: () => "Changed files", icon: { mount: () => {} }, mount: () => {}, width: 240 } });
     const rendered = el.render();
     const output = fullTemplateOutput(rendered);
 
@@ -253,18 +265,47 @@ describe("AppWorkspace layout selection", () => {
     expect(pane.visible).toBe(false);
   });
 
-  test("the session's Changes tab draws the review surface of the session's project", () => {
+  test("the session's Changes tab draws the review surface over the session's diff, and those of another session it is updated to", () => {
     installWorkspaceGlobals({ mobile: false });
     const el = new AppWorkspace();
     const store = installRenderableStore(el);
+    placeSession(store, "s1", 42);
+    placeSession(store, "s2", 42);
     const view = { view: "session-changes", sessionId: "s1" };
     const target = testElement();
 
-    store.app.views.rendererFor(view)?.pane?.mount(target, view, main);
+    const mounted = store.app.views.rendererFor(view)?.pane?.mount(target, view, main) ?? undefined;
     const pane = target.childNodes[0];
     if (!(pane instanceof SessionChangesPane)) throw new Error("Expected the session's changes");
+    const diffOf = (sessionId: string) => {
+      const { diff, release } = store.app.diffs.use(sessionId);
+      release();
+      return diff;
+    };
 
     expect(fullTemplateOutput(pane.render())).toContain("<review-diff-panel");
+    expect(collectTemplateProperties(pane.render(), "store")).toEqual([diffOf("s1").files]);
+    mounted?.update?.({ view: "session-changes", sessionId: "s2" }, main);
+    expect(collectTemplateProperties(pane.render(), "store")).toEqual([diffOf("s2").files]);
+  });
+
+  test("the session's Changes reveals the file it is opened at, each time it is opened at one", () => {
+    installWorkspaceGlobals({ mobile: false });
+    const el = new AppWorkspace();
+    const store = installRenderableStore(el);
+    placeSession(store, "s1", 42);
+    const target = testElement();
+
+    const mounted = store.app.views.rendererFor({ view: "session-changes", sessionId: "s1", file: "src/a.ts" })?.pane?.mount(target, { view: "session-changes", sessionId: "s1", file: "src/a.ts" }, main) ?? undefined;
+    const pane = target.childNodes[0];
+    if (!(pane instanceof SessionChangesPane)) throw new Error("Expected the session's changes");
+    const [first] = collectTemplateProperties(pane.render(), "reveal");
+    mounted?.update?.({ view: "session-changes", sessionId: "s1", file: "src/a.ts" }, main);
+    const [again] = collectTemplateProperties(pane.render(), "reveal");
+
+    expect(first).toEqual({ path: "src/a.ts" });
+    expect(again).toEqual({ path: "src/a.ts" });
+    expect(again).not.toBe(first);
   });
 
   test("mounting a session's tab pins the Inspector's Changes tab, which closes once the last of them is disposed", () => {
@@ -381,25 +422,6 @@ describe("AppWorkspace layout selection", () => {
     el.willUpdate(changed);
 
     expect(Reflect.get(el, "activePane")).toBe("main");
-  });
-
-  test("registers the diff file tree view while connected, mounting the tree over its stores", () => {
-    installWorkspaceGlobals({ mobile: false });
-    const el = new AppWorkspace();
-    const store = installRenderableStore(el);
-    connect(el);
-    const pane = store.app.views.rendererFor({ view: "diff-file-tree" })?.pane;
-    const target = testElement();
-
-    pane?.mount(target, { view: "diff-file-tree" }, paneContext("inspector", store.source));
-    const tree = target.childNodes[0];
-    if (!(tree instanceof DiffFileTree)) throw new Error("Expected the diff file tree");
-
-    expect(pane?.title({ view: "diff-file-tree" }, paneContext("inspector", store.source))).toBe("Changes");
-    const stores: unknown[] = [tree.store, tree.reviewStore];
-    expect(stores).toEqual([store.diffStore, store.codeReviewStore]);
-    Reflect.get(el, "disconnectApp").call(el);
-    expect(store.app.views.rendererFor({ view: "diff-file-tree" })).toBeNull();
   });
 
   test("renders the mobile layout on mobile viewports, a toolbar on each tab's page marking its own", () => {
@@ -573,28 +595,40 @@ describe("AppWorkspace as the main area's view (workspace.current)", () => {
   test("a session's tabs are about the session, then its task, then its project", () => {
     expect(subjectOfSession({ sessionId: "s1", projectId: 7, sessionData: { taskId: 3, parentSessionId: null } }))
       .toEqual([{ type: "session", id: "s1" }, { type: "task", id: 3 }, { type: "project", id: 7 }]);
-    expect(subjectOfSession({ sessionId: "s1", projectId: 7, sessionData: { taskId: null, parentSessionId: null } }, { view: "session-changes", sessionId: "s1" }))
-      .toEqual([{ type: "session", id: "s1" }, { type: "project", id: 7 }]);
+  });
+
+  test("a session's Changes is about the session, then its task and project, from the session's details", () => {
+    const el = new AppWorkspace();
+    const store = installRenderableStore(el);
+    const view: View = { view: "session-changes", sessionId: "s1" };
+    const subject = () => store.app.views.rendererFor(view)?.pane?.mount(testElement(), view, main)?.subject?.();
+
+    expect(subject()).toEqual([{ type: "session", id: "s1" }]);
+    placeSession(store, "s1", 7, 3);
+    expect(subject()).toEqual([{ type: "session", id: "s1" }, { type: "task", id: 3 }, { type: "project", id: 7 }]);
   });
 
   test("the session's Changes is about the file its review is on first, and says so when the review moves to another", () => {
     const el = new AppWorkspace();
     const store = installRenderableStore(el);
-    const diff: { activeFile: string | null; setActiveFile(path: string | null): void } = { activeFile: "src/a.ts", setActiveFile(path) { this.activeFile = path; } };
-    Object.assign(store.diffStore, diff);
+    placeSession(store, "s1", 42);
     const view: View = { view: "session-changes", sessionId: "s1" };
     const target = testElement();
     let said = 0;
     const context: PaneContext = { ...main, subjectChanged: () => { said += 1; } };
 
     const mounted = store.app.views.rendererFor(view)?.pane?.mount(target, view, context) ?? undefined;
-    expect(mounted?.subject?.()[0]).toEqual({ type: "file", id: { source, path: "src/a.ts" } });
-
     const pane = target.childNodes[0];
     if (!(pane instanceof SessionChangesPane)) throw new Error("Expected the session's changes");
-    for (const listener of collectTemplateEventListeners(pane.render(), "active-file-change")) listener(new CustomEvent("active-file-change", { detail: "src/b.ts" }));
+    const reviewOn = (path: string) => {
+      for (const listener of collectTemplateEventListeners(pane.render(), "active-file-change")) listener(new CustomEvent("active-file-change", { detail: path }));
+    };
+    expect(mounted?.subject?.()[0]).toEqual({ type: "session", id: "s1" });
 
-    expect(said).toBe(1);
+    reviewOn("src/a.ts");
+    reviewOn("src/b.ts");
+
+    expect(said).toBe(2);
     expect(mounted?.subject?.()[0]).toEqual({ type: "file", id: { source, path: "src/b.ts" } });
   });
 
