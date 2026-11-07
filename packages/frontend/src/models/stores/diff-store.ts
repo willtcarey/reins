@@ -146,9 +146,8 @@ export class DiffStore {
   }
 
   /**
-   * Apply route-derived session and branch state atomically. Session switches
-   * otherwise fetch once for HEAD and again after WorkspaceStore resolves the
-   * selected task branch.
+   * Apply the session and its branch atomically. Otherwise it would fetch once
+   * for HEAD and again after its `SessionDiff` resolves the task's branch.
    */
   setScope(sessionId: string | null, branch: string | null, projectId: number | null = null) {
     const sessionChanged = sessionId !== this._sessionId;

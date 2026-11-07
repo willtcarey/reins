@@ -87,8 +87,8 @@ export interface Files {
  * What a container shows: a plain, serializable object whose `view` names its renderer, registered
  * at runtime (`Views.register`); its other fields are parameters that only that renderer reads. The
  * SDK lists no view names: the feature that registers a view defines its parameters. A view
- * about something fixed names it (a file names its source); a view that follows the viewed session
- * reads `WorkspaceContext` instead.
+ * about something fixed names it (a file names its source); a view that follows the main area
+ * reads `workspace.current()` instead.
  */
 export type View = { readonly view: string; readonly [parameter: string]: unknown };
 
@@ -103,17 +103,18 @@ export interface ViewTypes {}
 /** A view of a name some feature added to `ViewTypes`. */
 export type KnownView = ViewTypes[keyof ViewTypes];
 
-/** What the workspace shows views and decorated messages for: the viewed session. */
+/** What a message's decorations are shown for: the session of the message. */
 export interface WorkspaceContext {
-  /** The viewed session's source; null until it is known. */
+  /** The source of the message's session; null until it is known. */
   readonly source: Source | null;
 }
 
 /**
- * What a pane is given: the workspace, and the container it is shown in, so a view can fit its actions or
- * layout to it (a file in the Inspector offers to open in the file browser). Any container can show any pane.
+ * What a pane is given: the container it is shown in, so a view can fit its actions or layout to it (a file in the
+ * Inspector offers to open in the file browser). Any container can show any pane. What the view shows is in the view
+ * itself (a file's source and path); what the main area is about is `workspace.current()`.
  */
-export interface PaneContext extends WorkspaceContext {
+export interface PaneContext {
   readonly container: ContainerId;
   /**
    * Says that what the view is about (`MountedView.subject`) may have changed without the host showing anything
@@ -173,7 +174,7 @@ export interface ViewPresentation<V extends View = View, C = WorkspaceContext> {
  * in the context.
  */
 export interface PanePresentation<V extends View = View> extends ViewPresentation<V, PaneContext> {
-  /** `context` is where the pane is, for a title that says how the view differs from the viewed session. */
+  /** `context` is where the pane is. */
   title(view: V, context: PaneContext): string;
   /** A tab's tooltip. */
   description(view: V, context: PaneContext): string;

@@ -9,7 +9,9 @@
  */
 import { describe, test, expect, beforeEach, mock, afterEach } from "bun:test";
 import { AppStore } from "../../../models/stores/app-store.js";
-import { WorkspaceStore } from "../../../models/stores/workspace-store.js";
+import { registerSessionViews, SessionChatPane } from "../../../components/session-views.js";
+import { paneContext } from "../../helpers/reins-sdk.js";
+import { testElement } from "../../helpers/test-dom.js";
 import { StubClient } from "../../helpers/stub-client.js";
 import { mockFetch, restoreFetch } from "../../helpers/mock-fetch.js";
 import { messagePage } from "../../helpers/conversations.js";
@@ -35,15 +37,39 @@ function sessionDetail(isRunning: boolean, taskId: number | null = null) {
   };
 }
 
+/** The session's Chat as the main area mounts it: its session's store, once `setSession` showed one. */
+function chatOf(app: AppStore) {
+  const unregister = registerSessionViews(app.views, app);
+  let chat: { dispose?(): void } | null = null;
+  let pane: SessionChatPane | null = null;
+  return {
+    get activeSessionStore() { return pane?.session ?? null; },
+    async setSession(sessionId: string) {
+      const view = { view: "session", sessionId };
+      const target = testElement();
+      chat = app.views.rendererFor(view)?.pane?.mount(target, view, paneContext("main")) ?? null;
+      const mounted = target.childNodes[0];
+      if (!(mounted instanceof SessionChatPane)) throw new Error("Expected the session's chat");
+      pane = mounted;
+      // Its store loads the session as it mounts.
+      for (let i = 0; i < 10; i += 1) await new Promise((resolve) => setTimeout(resolve, 0));
+    },
+    dispose() {
+      chat?.dispose?.();
+      unregister();
+    },
+  };
+}
+
 describe("AppStore reconnect catch-up", () => {
   let client: StubClient;
   let store: AppStore;
-  let workspace: WorkspaceStore;
+  let workspace: ReturnType<typeof chatOf>;
 
   beforeEach(() => {
     client = new StubClient();
     store = new AppStore(client);
-    workspace = new WorkspaceStore(store);
+    workspace = chatOf(store);
     restoreFetch();
   });
 
@@ -275,7 +301,7 @@ describe("AppStore reconnect catch-up", () => {
     try {
       client = new StubClient();
       store = new AppStore(client);
-      workspace = new WorkspaceStore(store);
+      workspace = chatOf(store);
       store.connect();
       store.projectsStore.refreshAll = mock(async () => {});
 

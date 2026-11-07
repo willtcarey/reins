@@ -157,19 +157,4 @@ describe("Inspector", () => {
     expect(opened).toEqual([readme]);
   });
 
-  test("closes every tab not pinned when the viewed session's source changes to another", () => {
-    const inspector = testInspector();
-    inspector.pin(changes);
-    inspector.open(readme);
-    inspector.setViewedSource(source);
-    inspector.setViewedSource(null);
-    inspector.setViewedSource({ ...source });
-
-    expect(inspector.tabs).toHaveLength(2);
-
-    inspector.setViewedSource({ nodeId: "node", path: "/other" });
-
-    expect(inspector.tabs.map((tab) => tab.view)).toEqual([changes]);
-    expect(inspector.activeTab?.view).toEqual(changes);
-  });
 });

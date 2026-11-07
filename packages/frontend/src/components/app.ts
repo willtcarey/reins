@@ -22,6 +22,8 @@ import type { AppWorkspace } from "./app-workspace.js";
 import type { ImageLightbox } from "./image-lightbox.js";
 import { registerNewSessionPage } from "./new-session-page.js";
 import { registerDiffFileTree } from "./changes/diff-file-tree.js";
+import { openFilesOfShownSession } from "./open-file-requests.js";
+import { registerSessionViews } from "./session-views.js";
 import type { QuickOpen } from "./quick-open.js";
 import "./file-browser/file-browser.js";
 import "./file-browser/file-search.js";
@@ -66,18 +68,19 @@ export class AppShell extends LitElement {
   @query("image-lightbox") private imageLightbox!: ImageLightbox;
 
   override connectedCallback() {
+    // The app's own views follow the main area through the SDK's workspace, as an extension would.
+    const { workspace } = createReinsSdk({ name: "app", label: "Reins" }, this.sdkHost);
     this.disposeSdk = [
+      registerSessionViews(this.appStore.views, this.appStore),
       registerNewSessionPage(this.appStore.views, this.appStore),
-      // The Inspector's changed-files tree follows the main area as an extension would, over the app's sessions' diffs.
-      registerDiffFileTree(this.appStore.views, createReinsSdk({ name: "changes", label: "Changes" }, this.sdkHost).workspace, this.appStore.diffs),
+      registerDiffFileTree(this.appStore.views, workspace, this.appStore.diffs),
+      openFilesOfShownSession(this.appStore.client, workspace, document),
       ...BUILT_IN_EXTENSIONS.map((extension) => this.appStore.extensions.activate(extension, createReinsSdk(extension, this.sdkHost))),
       // A page registered or gone changes the title of the page shown.
       this.appStore.views.subscribe(() => this.updateDocumentTitle()),
     ];
     // The file browser is app-shell's own overlay, not a registered extension, but it uses only the SDK.
-    this.fileBrowserStore = new FileBrowserStore(createReinsSdk({ name: "file-browser", label: "File browser" }, this.sdkHost), {
-      viewedSource: () => this.workspace?.store?.source ?? null,
-    });
+    this.fileBrowserStore = new FileBrowserStore(createReinsSdk({ name: "file-browser", label: "File browser" }, this.sdkHost));
     super.connectedCallback();
     this.unsubscribeStore = this.appStore.subscribe(() => {
       this.storeVersion += 1;

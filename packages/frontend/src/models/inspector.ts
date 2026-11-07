@@ -1,6 +1,6 @@
 /** The Inspector's tabs (docs/plans/workspace-inspector.md). */
 
-import { sameSource, type Disposer, type Source, type View } from "@reins/sdk";
+import type { Disposer, View } from "@reins/sdk";
 import type { ViewRegistry } from "../sdk-host/view-registry.js";
 
 export interface InspectorTab {
@@ -17,7 +17,6 @@ export class Inspector {
   private _activeKey: string | null = null;
   /** How many pins hold each pinned tab. */
   private pins = new Map<string, number>();
-  private viewedSource: Source | null = null;
   private listeners = new Set<() => void>();
   private openListeners = new Set<(view: View) => void>();
 
@@ -80,21 +79,6 @@ export class Inspector {
   /** The user's close: pinned tabs stay. */
   close(key: string): void {
     if (this._tabs.find((tab) => tab.key === key)?.pinned === false) this.remove(key);
-  }
-
-  /**
-   * The viewed session's source. When it changes to another source, every tab not pinned closes. The
-   * first source known, and null (a session still loading, no session), close nothing.
-   */
-  setViewedSource(source: Source | null): void {
-    if (!source || sameSource(source, this.viewedSource)) return;
-    const previous = this.viewedSource;
-    this.viewedSource = source;
-    const pinned = this._tabs.filter((tab) => tab.pinned);
-    if (!previous || pinned.length === this._tabs.length) return;
-    this._tabs = pinned;
-    if (!this.activeTab) this._activeKey = pinned[0]?.key ?? null;
-    this.notify();
   }
 
   subscribe(listener: () => void): () => void {

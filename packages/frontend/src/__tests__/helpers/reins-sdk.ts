@@ -26,8 +26,8 @@ import { ViewRegistry } from "../../sdk-host/view-registry.js";
 import { StubClient } from "./stub-client.js";
 
 /** A pane's context in `container`, whose subject changes are not listened to. */
-export function paneContext(container: ContainerId, source: Source | null = null): PaneContext {
-  return { source, container, subjectChanged: () => {} };
+export function paneContext(container: ContainerId): PaneContext {
+  return { container, subjectChanged: () => {} };
 }
 
 export interface OpenedView {

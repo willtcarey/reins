@@ -305,4 +305,5 @@ describe("ProjectFiles node names", () => {
     client.fireMessage({ type: "node_updated", node: { ...testNode("node-a", "NODE-A", false), name: "Renamed" } });
     expect(files.nodeName(source)).toBe("Renamed");
   });
+
 });

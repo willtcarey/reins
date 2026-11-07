@@ -12,7 +12,7 @@ async function openSearch(files: string[]) {
     ? Response.json({ files })
     : fileResponse("text")));
   const { reins, opened } = testSdk({ source, projectId: 5 });
-  const store = new FileBrowserStore(reins, { viewedSource: () => null });
+  const store = new FileBrowserStore(reins);
   store.openSearch(source);
   void store.listing;
   await new Promise((resolve) => setTimeout(resolve, 0));

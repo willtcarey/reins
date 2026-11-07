@@ -33,7 +33,7 @@ function inspectorElement(inspector: Inspector): AppInspector {
   element.tabs = inspector.tabs;
   element.activeKey = inspector.activeTab?.key ?? "";
   element.views = views;
-  element.context = paneContext("inspector", source);
+  element.context = paneContext("inspector");
   return element;
 }
 

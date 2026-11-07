@@ -2,12 +2,10 @@ import { LitElement, html, nothing, type PropertyValues } from "lit";
 import { keyed } from "lit/directives/keyed.js";
 import { customElement, property, state } from "lit/decorators.js";
 import { PageSwipeController } from "../controllers/page-swipe-controller.js";
-import { StoreController } from "../controllers/store-controller.js";
 import { ViewportController } from "../controllers/viewport-controller.js";
 import { WorkspaceLayout, type SidePane } from "../models/workspace-layout.js";
 import type { AppStore } from "../models/stores/app-store.js";
-import { WorkspaceStore } from "../models/stores/workspace-store.js";
-import type { CurrentView, PaneContext, Source, View } from "@reins/sdk";
+import type { CurrentView, PaneContext, View } from "@reins/sdk";
 import { WorkspacePages, type WorkspacePane } from "../models/workspace-pages.js";
 import { folderIcon } from "../ui/icons.js";
 import { mainViewChangeEvent, openFileSearchEvent, openMainViewEvent, type MainPaneSelectDetail } from "./events.js";
@@ -15,7 +13,6 @@ import type { MainTab } from "./app-main-toolbar.js";
 import "./app-main-toolbar.js";
 import type { ViewMount } from "./view-mount.js";
 import "./view-mount.js";
-import { registerSessionViews } from "./session-views.js";
 import "./app-inspector.js";
 import "./session-sidebar.js";
 
@@ -25,18 +22,15 @@ export class AppWorkspace extends LitElement {
     return this;
   }
 
-  private storeController = new StoreController<WorkspaceStore>(this);
   private application: AppStore | null = null;
 
   @property({ attribute: false })
   set app(app: AppStore | null) {
     if (app === this.application) return;
+    const old = this.application;
     this.application = app;
-    this.storeController.store?.dispose();
-    // A new store follows the shown view's session once it renders (`followShownView`).
-    this.storeController.store = app ? new WorkspaceStore(app) : null;
-    // The session's views and the diff file tree are registered over this store.
     if (this.isConnected) this.connectApp();
+    this.requestUpdate("app", old);
   }
   get app(): AppStore | null { return this.application; }
 
@@ -45,8 +39,6 @@ export class AppWorkspace extends LitElement {
    * session's Chat and Changes, or alone (the new session page, an extension's page, a file). Null for nothing.
    */
   @property({ attribute: false }) mainView: View | null = null;
-
-  get store(): WorkspaceStore | null { return this.storeController.store; }
 
   /** The view it shows and what that is about (`workspace.current()`), as the mounted view says; null when it shows none. */
   current(): CurrentView | null {
@@ -59,15 +51,15 @@ export class AppWorkspace extends LitElement {
   @state() private activePane: WorkspacePane = "main";
   /** The tab a swipe settled on, shown until the main area's view is that tab's. */
   @state() private swipedTab: string | null = null;
-  private observedSessionId = "";
   /** Only the main area's view is asked what it is about, so the Inspector's say nothing. */
   private subjectChanged: Record<"inspector" | "main", () => void> = {
     inspector: () => {},
     main: () => { void this.followShownView(); },
   };
+  /** One object for each container, so views are not updated by every render. */
   private contexts: Record<"inspector" | "main", PaneContext> = {
-    inspector: { source: null, container: "inspector", subjectChanged: this.subjectChanged.inspector },
-    main: { source: null, container: "main", subjectChanged: this.subjectChanged.main },
+    inspector: { container: "inspector", subjectChanged: this.subjectChanged.inspector },
+    main: { container: "main", subjectChanged: this.subjectChanged.main },
   };
   private layout = new WorkspaceLayout(typeof localStorage === "undefined" ? null : localStorage, typeof navigator === "undefined" ? "browser" : navigator.userAgent ?? "browser");
   private resizePointer: { pane: SidePane; id: number; startX: number; startWidth: number } | null = null;
@@ -108,7 +100,7 @@ export class AppWorkspace extends LitElement {
     commitPage: (page) => {
       const { pane, tab } = this.pages().at(page);
       this.activePane = pane;
-      if (pane === "inspector" && tab) this.store?.inspector.focus(tab);
+      if (pane === "inspector" && tab) this.application?.inspector.focus(tab);
       if (pane === "main" && tab) this.showTab(tab);
     },
     isEnabled: () => this.viewport.isMobileLayout,
@@ -124,19 +116,13 @@ export class AppWorkspace extends LitElement {
     super.disconnectedCallback();
     window.removeEventListener("keydown", this.handleGlobalKeydown);
     this.disconnectApp();
-    this.storeController.store?.dispose();
-    this.storeController.store = null;
-    this.application = null;
   }
 
   override willUpdate(changed: PropertyValues<this>) {
-    const store = this.store;
-    if (!store) return;
-    if ((store.sessionId && store.sessionId !== this.observedSessionId) || changed.has("mainView")) {
+    if (changed.has("mainView")) {
       this.activePane = "main";
       this.swipedTab = null;
     }
-    this.observedSessionId = store.sessionId;
   }
 
   protected override updated(): void {
@@ -145,13 +131,10 @@ export class AppWorkspace extends LitElement {
 
   /**
    * After a render, or when the shown view says its subject changed (`PaneContext.subjectChanged`): once the shown
-   * view's mount has applied the view just rendered, follows the session it is about (the store's: the
-   * Inspector's source, the diff and the review; none for a view about none), and says the main area changed.
+   * view's mount has applied the view just rendered, says the main area changed, so `onDidChange` listeners read it.
    */
   private async followShownView(): Promise<void> {
     await this.querySelector<ViewMount>("reins-view-mount[data-main-shown]")?.updateComplete;
-    const session = this.current()?.subject.find((subject) => subject.type === "session");
-    void this.store?.setSession(typeof session?.id === "string" ? session.id : null);
     this.dispatchEvent(mainViewChangeEvent());
   }
 
@@ -160,24 +143,30 @@ export class AppWorkspace extends LitElement {
     if (this.viewport.isMobileLayout) this.activePane = "main";
   }
 
+  /**
+   * ⌘P searches the files of the session the shown view is about, as a command would (read from its subject), until
+   * the SDK has keyboard shortcuts; nothing without a session whose checkout is known.
+   */
   private handleGlobalKeydown = (event: KeyboardEvent) => {
     if (!(event.metaKey || event.ctrlKey) || event.key !== "p") return;
-    const source = this.store?.source;
-    if (!source) return;
+    const session = this.current()?.subject.find((subject) => subject.type === "session");
+    const placement = typeof session?.id === "string" ? this.application?.sessionCache.getDetail(session.id)?.placement : null;
+    if (!placement?.path) return;
     event.preventDefault();
-    this.dispatchEvent(openFileSearchEvent(source));
+    this.dispatchEvent(openFileSearchEvent({ nodeId: placement.nodeId, path: placement.path }));
   };
 
   private connectApp() {
     this.disconnectApp();
-    const store = this.store;
-    if (!store) return;
-    const { app } = store;
+    const app = this.application;
+    if (!app) return;
     this.appConnections = [
+      // The connection, for the toolbar.
+      app.subscribe(() => this.requestUpdate()),
+      app.inspector.subscribe(() => this.requestUpdate()),
       app.inspector.onOpen(() => { if (this.viewport.isMobileLayout) this.activePane = "inspector"; }),
       // A renderer registered later may change the Inspector's width, the main area's tabs, or show the view routed before it came.
       app.views.subscribe(() => this.requestUpdate()),
-      registerSessionViews(app.views, store),
     ];
   }
 
@@ -186,20 +175,14 @@ export class AppWorkspace extends LitElement {
     this.appConnections = [];
   }
 
-  /** The same object while the source is, so views are not updated by every render. */
-  private contextFor(source: Source | null, container: "inspector" | "main"): PaneContext {
-    if (this.contexts[container].source !== source) this.contexts[container] = { source, container, subjectChanged: this.subjectChanged[container] };
-    return this.contexts[container];
-  }
-
   /** The main area's views' context now (their titles', too). */
   mainContext(): PaneContext {
-    return this.contextFor(this.store?.source ?? null, "main");
+    return this.contexts.main;
   }
 
   /** The main area's tabs: the shown view's (`ViewRegistry.tabsFor`), the view alone when it is none's; none for nothing. */
   private mainTabs(): View[] {
-    const views = this.store?.app.views;
+    const views = this.application?.views;
     return this.mainView && views ? views.tabsFor(this.mainView) : [];
   }
 
@@ -221,15 +204,15 @@ export class AppWorkspace extends LitElement {
   }
 
   private pages() {
-    const inspector = this.store?.inspector;
+    const inspector = this.application?.inspector;
     return new WorkspacePages({ tabs: this.mainTabs().map((tab) => tab.view), active: this.shownTab() }, inspector ?? { tabs: [], activeTab: null });
   }
 
-  private renderSessionSidebar(store: WorkspaceStore) {
+  private renderSessionSidebar(app: AppStore) {
     return html`
       <session-sidebar
         class="block h-full"
-        .app=${store.app}
+        .app=${app}
         .collapsed=${this.layout.sessionsCollapsed}
         .onToggleCollapse=${() => { this.layout.toggleSessions(); this.requestUpdate(); }}
       ></session-sidebar>
@@ -237,15 +220,15 @@ export class AppWorkspace extends LitElement {
   }
 
   /** The tab's own toolbar (`PanePresentation.toolbar`), which the host's toolbar mounts; null without one. */
-  private viewToolbar(store: WorkspaceStore, tab: View) {
-    const presentation = store.app.views.rendererFor(tab)?.pane?.toolbar;
-    return presentation ? { presentation, view: tab, context: this.contextFor(store.source, "main") } : null;
+  private viewToolbar(app: AppStore, tab: View) {
+    const presentation = app.views.rendererFor(tab)?.pane?.toolbar;
+    return presentation ? { presentation, view: tab, context: this.contexts.main } : null;
   }
 
   /** The toolbar over tab `index`: on a phone each tab's page has one, which marks its own tab. */
-  private renderMainToolbar(store: WorkspaceStore, tabs: readonly View[], index: number) {
-    const views = store.app.views;
-    const context = this.contextFor(store.source, "main");
+  private renderMainToolbar(app: AppStore, tabs: readonly View[], index: number) {
+    const views = app.views;
+    const context = this.contexts.main;
     const tab = tabs[index];
     const titled: MainTab[] = tabs.length > 1 ? tabs.map((view) => ({ view, title: views.titleOf(view, context) ?? view.view })) : [];
     return html`
@@ -253,9 +236,9 @@ export class AppWorkspace extends LitElement {
         .tabs=${titled}
         .activeTab=${index}
         .pageTitle=${tab ? views.titleOf(tab, context) : null}
-        .viewToolbar=${tab ? this.viewToolbar(store, tab) : null}
+        .viewToolbar=${tab ? this.viewToolbar(app, tab) : null}
         .isStandalone=${this.viewport.isStandalone}
-        .connected=${store.connected}
+        .connected=${app.connected}
         show-sidebar-button
         @pane-select=${(event: CustomEvent<MainPaneSelectDetail>) => this.handleMainPaneSelect(event)}
         @reload-request=${() => location.reload()}
@@ -264,8 +247,8 @@ export class AppWorkspace extends LitElement {
   }
 
   /** A tab's view, mounted from its renderer's pane; unavailable until one is registered. */
-  private renderTab(store: WorkspaceStore, view: View, shown: boolean, visible: boolean) {
-    const pane = store.app.views.rendererFor(view)?.pane;
+  private renderTab(app: AppStore, view: View, shown: boolean, visible: boolean) {
+    const pane = app.views.rendererFor(view)?.pane;
     if (!pane) {
       return html`
         <div class="flex h-full items-center justify-center px-6 text-center">
@@ -276,7 +259,7 @@ export class AppWorkspace extends LitElement {
         </div>
       `;
     }
-    return html`<reins-view-mount ?data-main-shown=${shown} class="block h-full min-h-0 min-w-0" .presentation=${pane} .view=${view} .context=${this.contextFor(store.source, "main")} .visible=${visible}></reins-view-mount>`;
+    return html`<reins-view-mount ?data-main-shown=${shown} class="block h-full min-h-0 min-w-0" .presentation=${pane} .view=${view} .context=${this.contexts.main} .visible=${visible}></reins-view-mount>`;
   }
 
   /**
@@ -285,16 +268,16 @@ export class AppWorkspace extends LitElement {
    * tabs change, so its highlight moves to the tab shown. A view alone without a toolbar of its own fills its column
    * there, with none.
    */
-  private renderMain(store: WorkspaceStore, tabs: readonly View[]) {
+  private renderMain(app: AppStore, tabs: readonly View[]) {
     if (tabs.length === 0) {
       return html`<section class="col-start-2 row-start-2 h-full min-h-0 min-w-0 overflow-hidden md:col-start-2 md:row-start-2">${this.renderEmptyState()}</section>`;
     }
     const mobile = this.viewport.isMobileLayout;
     const shownTab = this.shownTab();
     const shownIndex = tabs.findIndex((tab) => tab.view === shownTab);
-    const fills = tabs.length === 1 && store.app.views.rendererFor(tabs[0]!)?.pane?.toolbar == null;
+    const fills = tabs.length === 1 && app.views.rendererFor(tabs[0]!)?.pane?.toolbar == null;
     const desktopToolbar = !mobile && !fills && shownIndex >= 0
-      ? html`<div class="z-20 col-start-2 row-start-1 min-w-0 overflow-hidden">${this.renderMainToolbar(store, tabs, shownIndex)}</div>`
+      ? html`<div class="z-20 col-start-2 row-start-1 min-w-0 overflow-hidden">${this.renderMainToolbar(app, tabs, shownIndex)}</div>`
       : nothing;
     // Keyed by name, so a tab keeps its mounted view while the tabs around it change.
     const columns = tabs.map((tab, index) => {
@@ -302,25 +285,25 @@ export class AppWorkspace extends LitElement {
       const visible = shown && (!mobile || this.activePane === "main");
       const column = `--column: ${index + 2};`;
       return keyed(tab.view, html`
-        ${mobile ? html`<div class="z-20 row-start-1 min-w-0 overflow-hidden [grid-column:var(--column)]" style=${column}>${this.renderMainToolbar(store, tabs, index)}</div>` : nothing}
+        ${mobile ? html`<div class="z-20 row-start-1 min-w-0 overflow-hidden [grid-column:var(--column)]" style=${column}>${this.renderMainToolbar(app, tabs, index)}</div>` : nothing}
         <section class="row-start-2 h-full min-h-0 min-w-0 overflow-hidden [grid-column:var(--column)] md:[grid-column:2] ${fills ? "md:row-start-1 md:row-span-2" : "md:row-start-2"} ${shown ? "" : "md:hidden"}" style=${column}>
-          ${this.renderTab(store, tab, shown, visible)}
+          ${this.renderTab(app, tab, shown, visible)}
         </section>
       `);
     });
     return html`${desktopToolbar}${columns}`;
   }
 
-  private renderInspector(store: WorkspaceStore, swipeX: number | null) {
-    const inspector = store.inspector;
+  private renderInspector(app: AppStore, swipeX: number | null) {
+    const inspector = app.inspector;
     return html`
       <app-inspector
         class="block h-full min-h-0"
         .tabs=${inspector.tabs}
         .activeKey=${inspector.activeTab?.key ?? ""}
         .swipeX=${swipeX}
-        .views=${store.app.views}
-        .context=${this.contextFor(store.source, "inspector")}
+        .views=${app.views}
+        .context=${this.contexts.inspector}
         @inspector-tab-focus=${(event: CustomEvent<string>) => inspector.focus(event.detail)}
         @inspector-tab-close=${(event: CustomEvent<string>) => inspector.close(event.detail)}
       ></app-inspector>
@@ -342,18 +325,18 @@ export class AppWorkspace extends LitElement {
   }
 
   override render() {
-    const store = this.store;
-    if (!store) return nothing;
+    const app = this.application;
+    if (!app) return nothing;
     this.pageSwipe.syncPage();
     const tabs = this.mainTabs();
     const pages = this.pages();
     const offsets = pages.offsets(pages.pageOf(this.activePane), this.pageSwipe.translateX, this.pageSwipe.viewportWidth);
     // Views that have something for the Inspector open it there; without tabs it takes no room.
-    const hasInspector = store.inspector.tabs.length > 0;
+    const hasInspector = app.inspector.tabs.length > 0;
     const gridStyle = `grid-template-columns: repeat(${pages.columns}, 100%); transform: translate3d(${offsets.surface}, 0, 0);`;
     const width = this.workspaceWidth();
-    const shown = store.inspector.activeTab?.view;
-    if (shown) this.layout.showInspectorView(shown.view, store.app.views.rendererFor(shown)?.pane?.width);
+    const shown = app.inspector.activeTab?.view;
+    if (shown) this.layout.showInspectorView(shown.view, app.views.rendererFor(shown)?.pane?.width);
     const left = this.layout.width("sessions", width);
     const right = hasInspector ? this.layout.width("inspector", width) : 0;
     const desktopColumns = `md:![grid-template-columns:var(--workspace-left)_minmax(0,1fr)_var(--workspace-right)]`; 
@@ -376,9 +359,9 @@ export class AppWorkspace extends LitElement {
           data-dragging=${this.pageSwipe.dragging || this.pageSwipe.settling ? "true" : "false"}
           style=${`${gridStyle} --workspace-left: ${left}px; --workspace-right: ${right}px;`}
         >
-          <section class="col-start-1 row-start-1 row-span-2 h-full min-h-0 min-w-0 overflow-hidden md:col-start-1 md:row-start-1 md:row-span-2">${this.renderSessionSidebar(store)}</section>
-          ${this.renderMain(store, tabs)}
-          ${hasInspector ? html`<section class="row-start-1 row-span-2 h-full min-h-0 min-w-0 overflow-hidden [grid-column:var(--inspector-column)] md:col-start-3 md:row-start-1 md:row-span-2 md:border-l md:border-zinc-700" style=${`--inspector-column: ${pages.columns};`}>${this.renderInspector(store, offsets.inspector)}</section>` : nothing}
+          <section class="col-start-1 row-start-1 row-span-2 h-full min-h-0 min-w-0 overflow-hidden md:col-start-1 md:row-start-1 md:row-span-2">${this.renderSessionSidebar(app)}</section>
+          ${this.renderMain(app, tabs)}
+          ${hasInspector ? html`<section class="row-start-1 row-span-2 h-full min-h-0 min-w-0 overflow-hidden [grid-column:var(--inspector-column)] md:col-start-3 md:row-start-1 md:row-span-2 md:border-l md:border-zinc-700" style=${`--inspector-column: ${pages.columns};`}>${this.renderInspector(app, offsets.inspector)}</section>` : nothing}
         </div>
       </div>
     `;

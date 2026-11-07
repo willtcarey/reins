@@ -14,7 +14,7 @@ function browserAt(path: string, options: { startLine?: number; endLine?: number
     ? Response.json({ entries: [] })
     : fileResponse("text")));
   const { reins, opened } = testSdk({ source, projectId: 7 });
-  const store = new FileBrowserStore(reins, { viewedSource: () => null });
+  const store = new FileBrowserStore(reins);
   store.open(source, { path, ...options });
   const browser = new FileBrowser();
   browser.store = store;

@@ -1,16 +1,17 @@
 /**
  * A session in the main area: its Chat and its Changes, two views that are tabs of the session (workspace-inspector.md
- * slice 5), and their toolbar. App code: Chat over the workspace's store, which the workspace registers it with while
- * it is connected, again for each `WorkspaceStore`; Changes and the toolbar over their session's diff (`app.diffs`).
+ * slice 5), and their toolbar. App code, which app-shell registers for the app's lifetime: each view finds its session's
+ * state from its own view, Chat its session's store and Changes and the toolbar its session's diff (`app.diffs`).
  */
 
 import { LitElement, html, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import { keyed } from "lit/directives/keyed.js";
-import type { Disposer, PanePresentation, Subject, TabOf, Views } from "@reins/sdk";
+import { sameSource, type Disposer, type PanePresentation, type Source, type Subject, type TabOf, type Views } from "@reins/sdk";
 import { StoreController } from "../controllers/store-controller.js";
 import type { SessionDiff, SessionDiffs } from "../models/stores/session-diffs.js";
-import type { WorkspaceStore } from "../models/stores/workspace-store.js";
+import { ActiveSessionStore } from "../models/stores/active-session-store.js";
+import type { AppStore } from "../models/stores/app-store.js";
 import { conversationIcon, diffIcon, paneIcon } from "../ui/icons.js";
 import { openFileBrowserEvent } from "./events.js";
 import "./branch-indicator.js";
@@ -41,46 +42,83 @@ function taskAndProject(projectId: number | null, taskId: number | null): Subjec
   return taskId == null ? [{ type: "project", id: projectId }] : [{ type: "task", id: taskId }, { type: "project", id: projectId }];
 }
 
-/** The session, then its task and project once the workspace has its details (not while it still shows another). */
-function subjectOf(workspace: WorkspaceStore, sessionId: string): Subject[] {
-  const active = workspace.activeSessionStore;
-  if (active?.sessionId !== sessionId) return [{ type: "session", id: sessionId }];
-  return [{ type: "session", id: sessionId }, ...taskAndProject(active.projectId, active.sessionData.taskId)];
+/** The session, then its task and project once the app has its details. */
+function sessionSubject(app: AppStore, sessionId: string): Subject[] {
+  const detail = app.sessionCache.getDetail(sessionId);
+  return [{ type: "session", id: sessionId }, ...taskAndProject(detail?.projectId || null, detail?.taskId ?? null)];
 }
 
-/** The workspace's session's conversation, which follows the workspace's store. */
+/**
+ * The conversation of one session, while the Chat shows it: its active session store, refreshed on reconnect, and its
+ * project loaded for the chat's parent and child sessions.
+ */
+class ChatSession {
+  readonly store: ActiveSessionStore;
+  private unreconcile: Disposer;
+
+  constructor(app: AppStore, sessionId: string) {
+    this.store = new ActiveSessionStore(sessionId, app.client, app.sessionCache, app.activeConversationsStore, app.sessionOperations);
+    this.unreconcile = app.registerReconciler(() => this.store.refreshFromServer());
+    void this.store.initialize().then(() => {
+      const projectId = this.store.projectId;
+      if (projectId != null) void app.projectsStore.ensureLoaded(projectId);
+    });
+  }
+
+  dispose(): void {
+    this.unreconcile();
+    this.store.dispose();
+  }
+}
+
+/** A session's conversation, over its own session store. */
 @customElement("session-chat-pane")
 export class SessionChatPane extends LitElement {
   override createRenderRoot() {
     return this;
   }
 
-  private stores = new StoreController<WorkspaceStore>(this);
+  private sessions = new StoreController<ActiveSessionStore>(this);
+  /** The app's projects and connection, which the parent and running children come from. */
+  private apps = new StoreController<AppStore>(this);
   @property({ attribute: false }) visible = true;
 
-  set workspace(workspace: WorkspaceStore | null) { this.stores.store = workspace; }
-  get workspace(): WorkspaceStore | null { return this.stores.store; }
+  set session(session: ActiveSessionStore | null) { this.sessions.store = session; }
+  get session(): ActiveSessionStore | null { return this.sessions.store; }
+  set app(app: AppStore | null) { this.apps.store = app; }
+  get app(): AppStore | null { return this.apps.store; }
 
   override render() {
-    const store = this.workspace;
-    const session = store?.activeSessionStore;
-    if (!store || !session) return nothing;
+    const { app, session } = this;
+    if (!app || !session) return nothing;
+    const projectId = session.projectId;
+    const projectStore = projectId == null ? null : app.projectsStore.peekStore(projectId) ?? null;
     const parentSessionId = session.sessionData.parentSessionId;
-    return keyed(store.sessionId, html`
+    const placement = session.sessionData.placement;
+    return keyed(session, html`
       <chat-panel
         class="block h-full min-h-0 min-w-0"
         .store=${session}
-        .projectStore=${store.activeProjectStore}
-        .parentSession=${parentSessionId ? store.activeProjectStore?.getSession(parentSessionId) ?? null : null}
-        .runningChildSessions=${store.activeProjectStore?.runningChildSessionsFor(store.sessionId) ?? []}
-        .source=${store.source}
-        .skills=${store.app.locationSkills}
-        .decorators=${store.app.decorators}
-        .commands=${store.app.commands}
-        .sendHandoff=${store.app.sendHandoff}
+        .projectStore=${projectStore}
+        .parentSession=${parentSessionId ? projectStore?.getSession(parentSessionId) ?? null : null}
+        .runningChildSessions=${projectStore?.runningChildSessionsFor(session.sessionId) ?? []}
+        .source=${placement?.path ? this.sourceOf(placement.nodeId, placement.path) : null}
+        .skills=${app.locationSkills}
+        .decorators=${app.decorators}
+        .commands=${app.commands}
+        .sendHandoff=${app.sendHandoff}
         ?visible=${this.visible}
       ></chat-panel>
     `);
+  }
+
+  private source: Source | null = null;
+
+  /** The same object while the session's checkout is, so the chat is not updated by every render. */
+  private sourceOf(nodeId: string, path: string): Source {
+    const source = { nodeId, path };
+    if (!sameSource(this.source, source)) this.source = source;
+    return this.source ?? source;
   }
 }
 
@@ -106,10 +144,10 @@ class UsedDiff {
 }
 
 /** What a session's Changes is about: the file its review is on, the session, then its task and project once known. */
-function changesSubject(diff: SessionDiff, file: string | null): Subject[] {
+function changesSubject(app: AppStore, diff: SessionDiff, file: string | null): Subject[] {
   const { source, sessionId } = diff;
   const reviewed: Subject[] = file && source ? [{ type: "file", id: { source, path: file } }] : [];
-  return [...reviewed, { type: "session", id: sessionId }, ...taskAndProject(diff.projectId, diff.taskId)];
+  return [...reviewed, ...sessionSubject(app, sessionId)];
 }
 
 /** A session's diff and review, for its project. */
@@ -184,13 +222,13 @@ export class SessionToolbar extends LitElement {
 }
 
 /** Pins the Inspector's Changes tab while a session's tab is mounted, so every view of a session has it, and a page not. */
-function pinChanges(workspace: WorkspaceStore): Disposer {
-  return workspace.app.inspector.pin({ view: "diff-file-tree" });
+function pinChanges(app: AppStore): Disposer {
+  return app.inspector.pin({ view: "diff-file-tree" });
 }
 
-/** Registers the session's Chat (over a workspace's store) and Changes (over the app's sessions' diffs). */
-export function registerSessionViews(views: Views, workspace: WorkspaceStore): Disposer {
-  const diffs = workspace.app.diffs;
+/** Registers the session's Chat and Changes, each over its own session's state in the app. */
+export function registerSessionViews(views: Views, app: AppStore): Disposer {
+  const diffs = app.diffs;
   const toolbar: PanePresentation<SessionView | SessionChangesView>["toolbar"] = {
     mount(target, view) {
       const tools = target.ownerDocument.createElement("session-toolbar");
@@ -219,20 +257,26 @@ export function registerSessionViews(views: Views, workspace: WorkspaceStore): D
         description: () => "The session's conversation",
         icon: paneIcon(conversationIcon),
         toolbar,
-        // It follows the workspace's store, so a new view only changes its subject.
         mount(target, view) {
-          let shown = view;
           const pane = target.ownerDocument.createElement("session-chat-pane");
           pane.setAttribute("class", "block h-full min-h-0 min-w-0");
-          pane.workspace = workspace;
+          pane.app = app;
+          let chat = new ChatSession(app, view.sessionId);
+          pane.session = chat.store;
           target.append(pane);
-          const unpin = pinChanges(workspace);
+          const unpin = pinChanges(app);
           return {
-            update: (next) => { shown = next; },
+            update: (next) => {
+              if (next.sessionId === chat.store.sessionId) return;
+              chat.dispose();
+              chat = new ChatSession(app, next.sessionId);
+              pane.session = chat.store;
+            },
             setVisible: (visible) => { pane.visible = visible; },
-            subject: () => subjectOf(workspace, shown.sessionId),
+            subject: () => sessionSubject(app, chat.store.sessionId),
             dispose: () => {
               unpin();
+              chat.dispose();
               pane.remove();
             },
           };
@@ -258,7 +302,7 @@ export function registerSessionViews(views: Views, workspace: WorkspaceStore): D
           const open = (shown: SessionChangesView) => { if (shown.file) pane.reveal = { path: shown.file }; };
           open(view);
           target.append(pane);
-          const unpin = pinChanges(workspace);
+          const unpin = pinChanges(app);
           return {
             update: (next, nextContext) => {
               shownContext = nextContext;
@@ -266,7 +310,7 @@ export function registerSessionViews(views: Views, workspace: WorkspaceStore): D
               open(next);
             },
             setVisible: (visible) => { pane.visible = visible; },
-            subject: () => changesSubject(used.diff, pane.activeFile),
+            subject: () => changesSubject(app, used.diff, pane.activeFile),
             dispose: () => {
               unpin();
               used.release();

@@ -1,6 +1,6 @@
 import { LitElement, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
-import type { Disposer, Files, ReinsSdk, Source, WorkspaceContext } from "@reins/sdk";
+import type { Disposer, Files, ReinsSdk, Source } from "@reins/sdk";
 import { StoreController } from "../../controllers/store-controller.js";
 import { FileLoader } from "../../models/file-loader.js";
 import { downloadIcon, fileIcon, navigationFolderIcon, paneIcon, panelRightIcon } from "../../ui/icons.js";
@@ -136,24 +136,12 @@ export class FileViewer extends LitElement {
   }
 }
 
-/** The name of the file's node when the viewed session is on another node, which a path alone would hide. */
-function otherNode(view: FileView, { source }: WorkspaceContext, files: Files): string | null {
-  return source && source.nodeId !== view.source.nodeId ? files.nodeName(view.source) : null;
-}
-
 export function registerFileViewer(reins: ReinsSdk): Disposer {
   return reins.views.register("file", {
     key: (view) => `${view.source.nodeId}:${view.source.path}:${view.path}`,
     pane: {
-      title: (view, context) => {
-        const name = view.path.slice(view.path.lastIndexOf("/") + 1);
-        const node = otherNode(view, context, reins.files);
-        return node ? `${name} · ${node}` : name;
-      },
-      description: (view, context) => {
-        const node = otherNode(view, context, reins.files);
-        return node ? `${view.source.path}/${view.path} · ${node}` : view.path;
-      },
+      title: (view) => view.path.slice(view.path.lastIndexOf("/") + 1),
+      description: (view) => view.path,
       icon: paneIcon(fileIcon),
       width: 640,
       mount(target, view) {

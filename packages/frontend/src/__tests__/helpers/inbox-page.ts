@@ -18,7 +18,7 @@ declare module "@reins/sdk" {
  * Registers the inbox page; `events` records its lifecycle. It is about the project of the repository it shows.
  * With `toolbar`, it draws its filter in the host's toolbar.
  */
-export function registerInboxPage(reins: ReinsSdk, { toolbar = false } = {}): { dispose: Disposer; events: unknown[] } {
+export function registerInboxPage(reins: Pick<ReinsSdk, "views">, { toolbar = false } = {}): { dispose: Disposer; events: unknown[] } {
   const events: unknown[] = [];
   const dispose = reins.views.register("test-inbox", {
     key: (view) => view.repository,

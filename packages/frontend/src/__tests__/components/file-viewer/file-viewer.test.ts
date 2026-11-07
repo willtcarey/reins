@@ -16,20 +16,20 @@ describe("the file viewer", () => {
 
     const view: FileView = { view: "file", source, path: "docs/plan.md" };
     const pane = views.rendererFor(view)?.pane;
-    expect(pane?.title(view, paneContext("inspector", source))).toBe("plan.md");
-    expect(pane?.description(view, paneContext("inspector", source))).toBe("docs/plan.md");
+    expect(pane?.title(view, paneContext("inspector"))).toBe("plan.md");
+    expect(pane?.description(view, paneContext("inspector"))).toBe("docs/plan.md");
   });
 
-  test("names the file's node in its tab when the viewed session is on another node", () => {
-    const { reins, views, client, source } = testSdk();
-    client.fireMessage({ type: "node_updated", node: testNode("internal", "Internal") });
+  test("is titled by its file's name and path alone, on any node", () => {
+    const { reins, views, client } = testSdk();
     registerFileViewer(reins);
-
-    const view: FileView = { view: "file", source: { nodeId: "internal", path: "/scratch" }, path: "report.html" };
+    const view: FileView = { view: "file", source: { nodeId: "internal", path: "/scratch" }, path: "reports/report.html" };
     const pane = views.rendererFor(view)?.pane;
 
-    expect(pane?.title(view, paneContext("inspector", source))).toBe("report.html · Internal");
-    expect(pane?.description(view, paneContext("inspector", source))).toBe("/scratch/report.html · Internal");
+    client.fireMessage({ type: "node_updated", node: testNode("internal", "Internal") });
+
+    expect(pane?.title(view, paneContext("inspector"))).toBe("report.html");
+    expect(pane?.description(view, paneContext("inspector"))).toBe("reports/report.html");
   });
 
   test("is about its file, with the source it is in", () => {
@@ -37,8 +37,8 @@ describe("the file viewer", () => {
     registerFileViewer(reins);
     const view: FileView = { view: "file", source, path: "docs/plan.md", startLine: 3 };
 
-    const mounted = views.rendererFor(view)?.pane?.mount(testElement(), view, paneContext("main", source)) ?? undefined;
-    mounted?.update?.({ ...view, path: "README.md" }, paneContext("main", source));
+    const mounted = views.rendererFor(view)?.pane?.mount(testElement(), view, paneContext("main")) ?? undefined;
+    mounted?.update?.({ ...view, path: "README.md" }, paneContext("main"));
 
     expect(mounted?.subject?.()).toEqual([{ type: "file", id: { source, path: "README.md" } }]);
   });
@@ -50,14 +50,14 @@ describe("the file viewer", () => {
     const pane = views.rendererFor(view)?.pane;
     const target = testElement();
 
-    const mounted = pane?.mount(target, view, paneContext("inspector", source));
+    const mounted = pane?.mount(target, view, paneContext("inspector"));
     const element = target.childNodes[0];
     if (!(element instanceof FileViewer)) throw new Error("Expected a file viewer");
     expect(element.view).toBe(view);
     expect(element.files).toBe(files);
 
     const opened: FileView = { view: "file", source, path: "docs/plan.md", startLine: 3 };
-    mounted?.update?.(opened, paneContext("inspector", source));
+    mounted?.update?.(opened, paneContext("inspector"));
     expect(element.view).toBe(opened);
     expect(target.childNodes[0]).toBe(element);
 
