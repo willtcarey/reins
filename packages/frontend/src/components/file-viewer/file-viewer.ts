@@ -145,19 +145,15 @@ export function registerFileViewer(reins: ReinsSdk): Disposer {
       icon: paneIcon(fileIcon),
       width: 640,
       mount(target, view) {
-        let shown = view;
         const element = target.ownerDocument.createElement("file-viewer");
         element.setAttribute("class", "flex h-full min-h-0 flex-col");
         element.files = reins.files;
         element.view = view;
         target.append(element);
         return {
-          update: (next) => {
-            shown = next;
-            element.view = next;
-          },
+          update: (next) => { element.view = next; },
           dispose: () => element.remove(),
-          subject: () => [{ type: "file", id: { source: shown.source, path: shown.path } }],
+          subject: () => element.view ? [{ type: "file", id: { source: element.view.source, path: element.view.path } }] : [],
         };
       },
     },
