@@ -222,7 +222,7 @@ export class AppWorkspace extends LitElement {
   /** The tab's own toolbar (`PanePresentation.toolbar`), which the host's toolbar mounts; null without one. */
   private viewToolbar(app: AppStore, tab: View) {
     const presentation = app.views.rendererFor(tab)?.pane?.toolbar;
-    return presentation ? { presentation, view: tab, context: this.contexts.main } : null;
+    return presentation ? { presentation, view: tab, context: this.contexts.main, key: app.views.keyOf(tab) } : null;
   }
 
   /** The toolbar over tab `index`: on a phone each tab's page has one, which marks its own tab. */
@@ -279,12 +279,13 @@ export class AppWorkspace extends LitElement {
     const desktopToolbar = !mobile && !fills && shownIndex >= 0
       ? html`<div class="z-20 col-start-2 row-start-1 min-w-0 overflow-hidden">${this.renderMainToolbar(app, tabs, shownIndex)}</div>`
       : nothing;
-    // Keyed by name, so a tab keeps its mounted view while the tabs around it change.
+    // Keyed by identity, as the Inspector's tabs are: a tab keeps its mount while the tab shown changes, and a view of
+    // another key (another session's Chat) is mounted anew rather than updated to it.
     const columns = tabs.map((tab, index) => {
       const shown = index === shownIndex;
       const visible = shown && (!mobile || this.activePane === "main");
       const column = `--column: ${index + 2};`;
-      return keyed(tab.view, html`
+      return keyed(app.views.keyOf(tab), html`
         ${mobile ? html`<div class="z-20 row-start-1 min-w-0 overflow-hidden [grid-column:var(--column)]" style=${column}>${this.renderMainToolbar(app, tabs, index)}</div>` : nothing}
         <section class="row-start-2 h-full min-h-0 min-w-0 overflow-hidden [grid-column:var(--column)] md:[grid-column:2] ${fills ? "md:row-start-1 md:row-span-2" : "md:row-start-2"} ${shown ? "" : "md:hidden"}" style=${column}>
           ${this.renderTab(app, tab, shown, visible)}

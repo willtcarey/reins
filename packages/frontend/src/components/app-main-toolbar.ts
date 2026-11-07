@@ -1,4 +1,5 @@
 import { LitElement, html } from "lit";
+import { keyed } from "lit/directives/keyed.js";
 import { customElement, property } from "lit/decorators.js";
 import { openMainViewEvent, paneSelectEvent, reloadRequestEvent } from "./events.js";
 import type { PaneContext, View } from "@reins/sdk";
@@ -34,7 +35,8 @@ export class AppMainToolbar extends LitElement {
   /** The title of the view shown, without tabs or a toolbar of its own (a phone's header shows it). */
   @property({ attribute: false }) pageTitle: string | null = null;
   /** The shown view's own toolbar (`PanePresentation.toolbar`). */
-  @property({ attribute: false }) viewToolbar: { presentation: Mountable; view: View; context: PaneContext } | null = null;
+  /** The shown view's own toolbar; `key`, the view's identity, so a view of another one mounts it anew. */
+  @property({ attribute: false }) viewToolbar: { presentation: Mountable; view: View; context: PaneContext; key: string } | null = null;
 
   private renderTabs() {
     const count = this.tabs.length;
@@ -63,7 +65,7 @@ export class AppMainToolbar extends LitElement {
   private renderViewTools() {
     const toolbar = this.viewToolbar;
     if (toolbar) {
-      return html`<reins-view-mount class="flex min-w-0 flex-1 items-center gap-1.5" .presentation=${toolbar.presentation} .view=${toolbar.view} .context=${toolbar.context}></reins-view-mount>`;
+      return keyed(toolbar.key, html`<reins-view-mount class="flex min-w-0 flex-1 items-center gap-1.5" .presentation=${toolbar.presentation} .view=${toolbar.view} .context=${toolbar.context}></reins-view-mount>`);
     }
     if (this.tabs.length > 1) return html`<div class="min-w-0 flex-1"></div>`;
     return html`<h1 class="min-w-0 flex-1 truncate px-1 text-sm font-semibold text-zinc-200">${this.pageTitle ?? ""}</h1>`;

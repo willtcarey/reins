@@ -44,7 +44,7 @@ beforeEach(() => mockFetch(() => new Response("", { status: 404 })));
 afterEach(() => restoreFetch());
 
 describe("the session's Chat", () => {
-  test("draws the conversation of its own session's store, with the app's message decorators, and another session's once updated to it", () => {
+  test("draws the conversation of its own session's store, with the app's message decorators, and keeps it for a new open of the session", () => {
     const { app, mount } = sessionApp();
 
     const { mounted, pane } = mount({ view: "session", sessionId: "s1" });
@@ -57,9 +57,8 @@ describe("the session's Chat", () => {
     expect(collectTemplateProperties(pane.render(), "decorators")).toEqual([app.decorators]);
     expect(pane.visible).toBe(false);
 
-    mounted?.update?.({ view: "session", sessionId: "s2" }, main);
-    expect(pane.session?.sessionId).toBe("s2");
-    expect(pane.session).not.toBe(first);
+    mounted?.update?.({ view: "session", sessionId: "s1" }, main);
+    expect(pane.session).toBe(first);
   });
 
   test("is about the session, then its task and project once its details are known", () => {
@@ -73,18 +72,15 @@ describe("the session's Chat", () => {
 });
 
 describe("the session's Changes", () => {
-  test("draws the review surface over the session's diff, and that of another session it is updated to", () => {
+  test("draws the review surface over the session's diff", () => {
     const { mount, place, diffOf } = sessionApp();
     place("s1", 42);
-    place("s2", 42);
 
-    const { mounted, pane } = mount({ view: "session-changes", sessionId: "s1" });
+    const { pane } = mount({ view: "session-changes", sessionId: "s1" });
     if (!(pane instanceof SessionChangesPane)) throw new Error("Expected the session's changes");
 
     expect(output(pane.render())).toContain("<review-diff-panel");
     expect(collectTemplateProperties(pane.render(), "store")).toEqual([diffOf("s1").files]);
-    mounted?.update?.({ view: "session-changes", sessionId: "s2" }, main);
-    expect(collectTemplateProperties(pane.render(), "store")).toEqual([diffOf("s2").files]);
   });
 
   test("reveals the file it is opened at, each time it is opened at one", () => {
@@ -145,7 +141,7 @@ describe("a session's tabs", () => {
 
     const chat = mount({ view: "session", sessionId: "s1" }).mounted;
     const changes = mount({ view: "session-changes", sessionId: "s1" }).mounted;
-    chat?.update?.({ view: "session", sessionId: "s2" }, main);
+    chat?.update?.({ view: "session", sessionId: "s1" }, main);
 
     expect(app.inspector.tabs.map((tab) => [tab.view, tab.pinned])).toEqual([[{ view: "diff-file-tree" }, true]]);
     chat?.dispose?.();

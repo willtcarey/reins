@@ -6,10 +6,9 @@
 
 import { LitElement, html, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
-import { keyed } from "lit/directives/keyed.js";
 import { sameSource, type Disposer, type PanePresentation, type Source, type Subject, type TabOf, type Views } from "@reins/sdk";
 import { StoreController } from "../controllers/store-controller.js";
-import type { SessionDiff, SessionDiffs } from "../models/stores/session-diffs.js";
+import type { SessionDiff } from "../models/stores/session-diffs.js";
 import { ActiveSessionStore } from "../models/stores/active-session-store.js";
 import type { AppStore } from "../models/stores/app-store.js";
 import { conversationIcon, diffIcon, paneIcon } from "../ui/icons.js";
@@ -95,7 +94,7 @@ export class SessionChatPane extends LitElement {
     const projectStore = projectId == null ? null : app.projectsStore.peekStore(projectId) ?? null;
     const parentSessionId = session.sessionData.parentSessionId;
     const placement = session.sessionData.placement;
-    return keyed(session, html`
+    return html`
       <chat-panel
         class="block h-full min-h-0 min-w-0"
         .store=${session}
@@ -109,7 +108,7 @@ export class SessionChatPane extends LitElement {
         .sendHandoff=${app.sendHandoff}
         ?visible=${this.visible}
       ></chat-panel>
-    `);
+    `;
   }
 
   private source: Source | null = null;
@@ -120,27 +119,6 @@ export class SessionChatPane extends LitElement {
     if (!sameSource(this.source, source)) this.source = source;
     return this.source ?? source;
   }
-}
-
-/** The session's diff shown: that of the view's session, which an update to another session swaps. */
-class UsedDiff {
-  private used: ReturnType<SessionDiffs["use"]>;
-
-  constructor(private readonly cache: Pick<SessionDiffs, "use">, sessionId: string) {
-    this.used = cache.use(sessionId);
-  }
-
-  get diff(): SessionDiff { return this.used.diff; }
-
-  /** Whether it moved to another session's. */
-  follow(sessionId: string): boolean {
-    if (sessionId === this.used.diff.sessionId) return false;
-    this.used.release();
-    this.used = this.cache.use(sessionId);
-    return true;
-  }
-
-  release(): void { this.used.release(); }
 }
 
 /** What a session's Changes is about: the file its review is on, the session, then its task and project once known. */
@@ -166,16 +144,13 @@ export class SessionChangesPane extends LitElement {
   /** Told when the review moves to another file, which the view is about. */
   subjectChanged: () => void = () => {};
 
-  set diff(diff: SessionDiff | null) {
-    if (diff !== this.stores.store) this.activeFile = null;
-    this.stores.store = diff;
-  }
+  set diff(diff: SessionDiff | null) { this.stores.store = diff; }
   get diff(): SessionDiff | null { return this.stores.store; }
 
   override render() {
     const diff = this.diff;
     if (!diff || diff.projectId == null) return nothing;
-    return keyed(diff, html`
+    return html`
       <review-diff-panel
         class="block h-full min-h-0 min-w-0"
         .store=${diff.files}
@@ -190,7 +165,7 @@ export class SessionChangesPane extends LitElement {
           this.subjectChanged();
         }}
       ></review-diff-panel>
-    `);
+    `;
   }
 }
 
@@ -233,15 +208,14 @@ export function registerSessionViews(views: Views, app: AppStore): Disposer {
     mount(target, view) {
       const tools = target.ownerDocument.createElement("session-toolbar");
       tools.setAttribute("class", "flex min-w-0 flex-1 items-center gap-1.5");
-      const used = new UsedDiff(diffs, view.sessionId);
-      tools.diff = used.diff;
+      const { diff, release } = diffs.use(view.sessionId);
+      tools.diff = diff;
       target.append(tools);
       return {
-        update: (next) => {
-          if (used.follow(next.sessionId)) tools.diff = used.diff;
-        },
+        // The host mounts a view of another session anew, so an update is the same session's.
+        update: () => {},
         dispose: () => {
-          used.release();
+          release();
           tools.remove();
         },
       };
@@ -261,17 +235,13 @@ export function registerSessionViews(views: Views, app: AppStore): Disposer {
           const pane = target.ownerDocument.createElement("session-chat-pane");
           pane.setAttribute("class", "block h-full min-h-0 min-w-0");
           pane.app = app;
-          let chat = new ChatSession(app, view.sessionId);
+          const chat = new ChatSession(app, view.sessionId);
           pane.session = chat.store;
           target.append(pane);
           const unpin = pinChanges(app);
           return {
-            update: (next) => {
-              if (next.sessionId === chat.store.sessionId) return;
-              chat.dispose();
-              chat = new ChatSession(app, next.sessionId);
-              pane.session = chat.store;
-            },
+            // A new open of the session shows its conversation as it is.
+            update: () => {},
             setVisible: (visible) => { pane.visible = visible; },
             subject: () => sessionSubject(app, chat.store.sessionId),
             dispose: () => {
@@ -292,28 +262,23 @@ export function registerSessionViews(views: Views, app: AppStore): Disposer {
         icon: paneIcon(diffIcon),
         toolbar,
         mount(target, view, context) {
-          let shownContext = context;
           const pane = target.ownerDocument.createElement("session-changes-pane");
           pane.setAttribute("class", "block h-full min-h-0 min-w-0");
-          const used = new UsedDiff(diffs, view.sessionId);
-          pane.diff = used.diff;
-          pane.subjectChanged = () => shownContext.subjectChanged();
+          const { diff, release } = diffs.use(view.sessionId);
+          pane.diff = diff;
+          pane.subjectChanged = () => context.subjectChanged();
           // Each open at a file reveals it, even the file revealed last.
           const open = (shown: SessionChangesView) => { if (shown.file) pane.reveal = { path: shown.file }; };
           open(view);
           target.append(pane);
           const unpin = pinChanges(app);
           return {
-            update: (next, nextContext) => {
-              shownContext = nextContext;
-              if (used.follow(next.sessionId)) pane.diff = used.diff;
-              open(next);
-            },
+            update: open,
             setVisible: (visible) => { pane.visible = visible; },
-            subject: () => changesSubject(app, used.diff, pane.activeFile),
+            subject: () => changesSubject(app, diff, pane.activeFile),
             dispose: () => {
               unpin();
-              used.release();
+              release();
               pane.remove();
             },
           };

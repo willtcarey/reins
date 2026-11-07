@@ -11,7 +11,7 @@ import type { PaneContext, View } from "@reins/sdk";
 import { registerInboxPage, type InboxView } from "../helpers/inbox-page.js";
 import { paneContext } from "../helpers/reins-sdk.js";
 import { setConnected, testDom } from "../helpers/test-dom.js";
-import { collectTemplateEventListeners, collectTemplateProperties, collectTemplateValues, templateToString } from "../helpers/lit-template.js";
+import { collectKeyedKeys, collectTemplateEventListeners, collectTemplateProperties, collectTemplateValues, templateToString } from "../helpers/lit-template.js";
 
 const source = { nodeId: "node", path: "/work/project" };
 const readme: FileView = { view: "file", source, path: "README.md" };
@@ -194,6 +194,23 @@ describe("AppWorkspace layout selection", () => {
     expect(scopes).toEqual([{ source: { nodeId: "node", path: "/work/project" } }]);
   });
 
+  test("mounts another session's tabs anew, as views of another identity, and keeps them while only the shown tab changes", () => {
+    installWorkspaceGlobals({ mobile: false });
+    const el = new AppWorkspace();
+    installRenderableStore(el);
+
+    const first = collectKeyedKeys(el.render());
+    el.mainView = { view: "session-changes", sessionId: "s1" };
+    const otherTab = collectKeyedKeys(el.render());
+    el.mainView = { view: "session", sessionId: "s2" };
+    const otherSession = collectKeyedKeys(el.render());
+
+    expect(first).toHaveLength(2);
+    expect(new Set(first).size).toBe(2);
+    expect(otherTab).toEqual(first);
+    expect(otherSession.filter((key) => first.includes(key))).toEqual([]);
+  });
+
   test("shows a session as a tab for each of its views, each mounted in its own column, the shown one visible, and its toolbars marking their own", () => {
     installWorkspaceGlobals({ mobile: false });
     const el = new AppWorkspace();
@@ -282,7 +299,7 @@ describe("AppWorkspace layout selection", () => {
     const withToolbar = rendered(true);
 
     expect(collectTemplateProperties(withToolbar.rendered, "viewToolbar")).toEqual([
-      { presentation: withToolbar.app.views.rendererFor(page)?.pane?.toolbar, view: page, context: expect.objectContaining({ container: "main" }) },
+      { presentation: withToolbar.app.views.rendererFor(page)?.pane?.toolbar, view: page, context: expect.objectContaining({ container: "main" }), key: withToolbar.app.views.keyOf(page) },
     ]);
     expect(collectTemplateProperties(rendered(false).rendered, "viewToolbar")).toEqual([]);
   });
