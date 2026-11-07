@@ -10,17 +10,27 @@ import { ViewMount } from "../../components/view-mount.js";
 import { SessionChangesPane, SessionChatPane } from "../../components/session-views.js";
 import type { PaneContext, View } from "@reins/sdk";
 import { registerInboxPage, type InboxView } from "../helpers/inbox-page.js";
-import { testSdk } from "../helpers/reins-sdk.js";
+import { testSdk, paneContext } from "../helpers/reins-sdk.js";
 import { setConnected, testDom, testElement } from "../helpers/test-dom.js";
 import { collectTemplateEventListeners, collectTemplateProperties, collectTemplateValues, templateToString } from "../helpers/lit-template.js";
 
 const source = { nodeId: "node", path: "/work/project" };
 const readme: FileView = { view: "file", source, path: "README.md" };
-const main: PaneContext = { source, container: "main" };
+const main: PaneContext = paneContext("main", source);
+
+declare module "@reins/sdk" {
+  interface ViewTypes {
+    "test-sessions": { view: "test-sessions" };
+  }
+}
 
 const originalLocation = globalThis.location;
 const originalWindow = globalThis.window;
 const originalNavigator = globalThis.navigator;
+
+function isPaneContext(value: unknown): value is PaneContext {
+  return typeof value === "object" && value !== null && "subjectChanged" in value && typeof value.subjectChanged === "function";
+}
 
 function fullTemplateOutput(value: unknown): string {
   const collected = collectTemplateValues(value);
@@ -318,7 +328,7 @@ describe("AppWorkspace layout selection", () => {
     expect(output).not.toContain("No project selected");
     expect(collectTemplateProperties(rendered, "presentation")).toEqual([views.rendererFor(page)?.pane]);
     expect(collectTemplateProperties(rendered, "view")).toEqual([page]);
-    expect(collectTemplateProperties(rendered, "context")).toEqual([{ source: null, container: "main" }]);
+    expect(collectTemplateProperties(rendered, "context")).toEqual([expect.objectContaining({ source: null, container: "main" })]);
     expect(collectTemplateProperties(rendered, "tabs")).toEqual([[]]);
     expect(collectTemplateProperties(rendered, "pageTitle")).toEqual(["Inbox · reins"]);
   });
@@ -337,7 +347,7 @@ describe("AppWorkspace layout selection", () => {
     };
 
     expect(collectTemplateProperties(rendered(withToolbar.views), "viewToolbar")).toEqual([
-      { presentation: withToolbar.views.rendererFor(page)?.pane?.toolbar, view: page, context: { source: null, container: "main" } },
+      { presentation: withToolbar.views.rendererFor(page)?.pane?.toolbar, view: page, context: expect.objectContaining({ source: null, container: "main" }) },
     ]);
     expect(collectTemplateProperties(rendered(withoutToolbar.views), "viewToolbar")).toEqual([]);
   });
@@ -381,11 +391,11 @@ describe("AppWorkspace layout selection", () => {
     const pane = store.app.views.rendererFor({ view: "diff-file-tree" })?.pane;
     const target = testElement();
 
-    pane?.mount(target, { view: "diff-file-tree" }, { source: store.source, container: "inspector" });
+    pane?.mount(target, { view: "diff-file-tree" }, paneContext("inspector", store.source));
     const tree = target.childNodes[0];
     if (!(tree instanceof DiffFileTree)) throw new Error("Expected the diff file tree");
 
-    expect(pane?.title({ view: "diff-file-tree" }, { source: store.source, container: "inspector" })).toBe("Changes");
+    expect(pane?.title({ view: "diff-file-tree" }, paneContext("inspector", store.source))).toBe("Changes");
     const stores: unknown[] = [tree.store, tree.reviewStore];
     expect(stores).toEqual([store.diffStore, store.codeReviewStore]);
     Reflect.get(el, "disconnectApp").call(el);
@@ -567,6 +577,27 @@ describe("AppWorkspace as the main area's view (workspace.current)", () => {
       .toEqual([{ type: "session", id: "s1" }, { type: "project", id: 7 }]);
   });
 
+  test("the session's Changes is about the file its review is on first, and says so when the review moves to another", () => {
+    const el = new AppWorkspace();
+    const store = installRenderableStore(el);
+    const diff: { activeFile: string | null; setActiveFile(path: string | null): void } = { activeFile: "src/a.ts", setActiveFile(path) { this.activeFile = path; } };
+    Object.assign(store.diffStore, diff);
+    const view: View = { view: "session-changes", sessionId: "s1" };
+    const target = testElement();
+    let said = 0;
+    const context: PaneContext = { ...main, subjectChanged: () => { said += 1; } };
+
+    const mounted = store.app.views.rendererFor(view)?.pane?.mount(target, view, context) ?? undefined;
+    expect(mounted?.subject?.()[0]).toEqual({ type: "file", id: { source, path: "src/a.ts" } });
+
+    const pane = target.childNodes[0];
+    if (!(pane instanceof SessionChangesPane)) throw new Error("Expected the session's changes");
+    for (const listener of collectTemplateEventListeners(pane.render(), "active-file-change")) listener(new CustomEvent("active-file-change", { detail: "src/b.ts" }));
+
+    expect(said).toBe(1);
+    expect(mounted?.subject?.()[0]).toEqual({ type: "file", id: { source, path: "src/b.ts" } });
+  });
+
   test("a session's tabs are about only the session while its details load, or while the store is still another session's", () => {
     expect(subjectOfSession({ sessionId: "s1", projectId: null, sessionData: { taskId: null, parentSessionId: null } })).toEqual([{ type: "session", id: "s1" }]);
     expect(subjectOfSession({ sessionId: "s0", projectId: 7, sessionData: { taskId: 3, parentSessionId: null } })).toEqual([{ type: "session", id: "s1" }]);
@@ -629,6 +660,55 @@ describe("AppWorkspace's session (the Inspector's source, the diff and the revie
 
   test("follows the session the view shown is about, as its subject says", async () => {
     expect(await showing({ view: "session-changes", sessionId: "s2" })).toEqual(["s2"]);
+  });
+
+  test("a view in the main area saying its subject changed is followed again, and the main area is told", async () => {
+    const { reins, views } = testSdk();
+    let about = "s1";
+    reins.views.register("test-sessions", {
+      pane: {
+        title: () => "Sessions",
+        description: () => "Sessions",
+        icon: { mount: () => {} },
+        mount: () => ({ subject: () => [{ type: "session", id: about }] }),
+      },
+    });
+    const view: View = { view: "test-sessions" };
+    const el = new AppWorkspace();
+    const store = installRenderableStore(el, { activeSessionStore: null, views, mainView: view });
+    const [context] = collectTemplateProperties(el.render(), "context");
+    if (!isPaneContext(context)) throw new Error("Expected the main area's context");
+    const mount = testDom(new ViewMount());
+    mount.presentation = views.rendererFor(view)?.pane ?? null;
+    mount.view = view;
+    mount.context = context;
+    setConnected(mount, true);
+    await mount.updateComplete;
+    Reflect.set(el, "querySelector", (selector: string) => (selector === "reins-view-mount[data-main-shown]" ? mount : null));
+    let told = 0;
+    el.addEventListener("main-view-change", () => { told += 1; });
+
+    about = "s2";
+    context.subjectChanged();
+    await mount.updateComplete;
+    await Promise.resolve();
+
+    expect(store.followed).toEqual(["s2"]);
+    expect(told).toBe(1);
+  });
+
+  test("an Inspector view saying its subject changed changes nothing", () => {
+    const el = new AppWorkspace();
+    const store = installRenderableStore(el);
+    const context = collectTemplateProperties(el.render(), "context").find((candidate) => isPaneContext(candidate) && candidate.container === "inspector");
+    if (!isPaneContext(context)) throw new Error("Expected the Inspector's context");
+    let told = 0;
+    el.addEventListener("main-view-change", () => { told += 1; });
+
+    context.subjectChanged();
+
+    expect(store.followed).toEqual([]);
+    expect(told).toBe(0);
   });
 
   test("follows no session while the view shown is about none", async () => {

@@ -3,7 +3,7 @@ import type { OpenInBrowserDetail } from "../../../components/events.js";
 import { FileViewer, registerFileViewer, type FileView } from "../../../components/file-viewer/file-viewer.js";
 import { clickButton, collectTemplateEventListeners, collectTemplateProperties, templateToString } from "../../helpers/lit-template.js";
 import { fileResponse, mockFetch, restoreFetch } from "../../helpers/mock-fetch.js";
-import { testNode, testSdk } from "../../helpers/reins-sdk.js";
+import { testNode, testSdk, paneContext } from "../../helpers/reins-sdk.js";
 import { testElement } from "../../helpers/test-dom.js";
 
 afterEach(() => restoreFetch());
@@ -16,8 +16,8 @@ describe("the file viewer", () => {
 
     const view: FileView = { view: "file", source, path: "docs/plan.md" };
     const pane = views.rendererFor(view)?.pane;
-    expect(pane?.title(view, { source, container: "inspector" })).toBe("plan.md");
-    expect(pane?.description(view, { source, container: "inspector" })).toBe("docs/plan.md");
+    expect(pane?.title(view, paneContext("inspector", source))).toBe("plan.md");
+    expect(pane?.description(view, paneContext("inspector", source))).toBe("docs/plan.md");
   });
 
   test("names the file's node in its tab when the viewed session is on another node", () => {
@@ -28,8 +28,19 @@ describe("the file viewer", () => {
     const view: FileView = { view: "file", source: { nodeId: "internal", path: "/scratch" }, path: "report.html" };
     const pane = views.rendererFor(view)?.pane;
 
-    expect(pane?.title(view, { source, container: "inspector" })).toBe("report.html · Internal");
-    expect(pane?.description(view, { source, container: "inspector" })).toBe("/scratch/report.html · Internal");
+    expect(pane?.title(view, paneContext("inspector", source))).toBe("report.html · Internal");
+    expect(pane?.description(view, paneContext("inspector", source))).toBe("/scratch/report.html · Internal");
+  });
+
+  test("is about its file, with the source it is in", () => {
+    const { reins, views, source } = testSdk();
+    registerFileViewer(reins);
+    const view: FileView = { view: "file", source, path: "docs/plan.md", startLine: 3 };
+
+    const mounted = views.rendererFor(view)?.pane?.mount(testElement(), view, paneContext("main", source)) ?? undefined;
+    mounted?.update?.({ ...view, path: "README.md" }, paneContext("main", source));
+
+    expect(mounted?.subject?.()).toEqual([{ type: "file", id: { source, path: "README.md" } }]);
   });
 
   test("mounts as a file viewer given its view and the SDK's files, updated in place, and removed on dispose", () => {
@@ -39,14 +50,14 @@ describe("the file viewer", () => {
     const pane = views.rendererFor(view)?.pane;
     const target = testElement();
 
-    const mounted = pane?.mount(target, view, { source, container: "inspector" });
+    const mounted = pane?.mount(target, view, paneContext("inspector", source));
     const element = target.childNodes[0];
     if (!(element instanceof FileViewer)) throw new Error("Expected a file viewer");
     expect(element.view).toBe(view);
     expect(element.files).toBe(files);
 
     const opened: FileView = { view: "file", source, path: "docs/plan.md", startLine: 3 };
-    mounted?.update?.(opened, { source, container: "inspector" });
+    mounted?.update?.(opened, paneContext("inspector", source));
     expect(element.view).toBe(opened);
     expect(target.childNodes[0]).toBe(element);
 

@@ -9,7 +9,7 @@ import { closeIcon, fileIcon } from "../ui/icons.js";
 import { inspectorTabCloseEvent, inspectorTabFocusEvent } from "./events.js";
 import "./view-mount.js";
 
-const NO_CONTEXT: PaneContext = { source: null, container: "inspector" };
+const NO_CONTEXT: PaneContext = { source: null, container: "inspector", subjectChanged: () => {} };
 
 interface TabLabel {
   title: string;

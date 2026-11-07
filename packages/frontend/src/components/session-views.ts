@@ -83,6 +83,13 @@ export class SessionChatPane extends LitElement {
   }
 }
 
+/** The file the workspace's review of `sessionId` is on, first in what its Changes is about; none for another session's. */
+function reviewedFile(workspace: WorkspaceStore, sessionId: string): Subject[] {
+  const { source, diffStore } = workspace;
+  if (workspace.sessionId !== sessionId || !source || !diffStore.activeFile) return [];
+  return [{ type: "file", id: { source, path: diffStore.activeFile } }];
+}
+
 /** The workspace's session's diff and review, for its project. */
 @customElement("session-changes-pane")
 export class SessionChangesPane extends LitElement {
@@ -92,6 +99,8 @@ export class SessionChangesPane extends LitElement {
 
   private stores = new StoreController<WorkspaceStore>(this);
   @property({ attribute: false }) visible = true;
+  /** Told when the review moves to another file, which the view is about. */
+  subjectChanged: () => void = () => {};
 
   set workspace(workspace: WorkspaceStore | null) { this.stores.store = workspace; }
   get workspace(): WorkspaceStore | null { return this.stores.store; }
@@ -107,7 +116,10 @@ export class SessionChangesPane extends LitElement {
         .source=${store.source}
         .sessionId=${store.sessionId}
         .visible=${this.visible}
-        @active-file-change=${(event: CustomEvent<string | null>) => store.diffStore.setActiveFile(event.detail)}
+        @active-file-change=${(event: CustomEvent<string | null>) => {
+          store.diffStore.setActiveFile(event.detail);
+          this.subjectChanged();
+        }}
       ></review-diff-panel>
     `);
   }
@@ -151,17 +163,21 @@ function sessionPane<V extends SessionView | SessionChangesView>(workspace: Work
     description: () => label.description,
     icon: label.icon,
     toolbar,
-    mount(target, view) {
+    mount(target, view, context) {
       let shown = view;
       const pane = target.ownerDocument.createElement(tag);
       pane.setAttribute("class", "block h-full min-h-0 min-w-0");
       pane.workspace = workspace;
+      if (pane instanceof SessionChangesPane) pane.subjectChanged = () => context.subjectChanged();
       target.append(pane);
       const unpin = workspace.app.inspector.pin({ view: "diff-file-tree" });
       return {
-        update: (next) => { shown = next; },
+        update: (next, nextContext) => {
+          shown = next;
+          context = nextContext;
+        },
         setVisible: (visible) => { pane.visible = visible; },
-        subject: () => subjectOf(workspace, shown.sessionId),
+        subject: () => [...(pane instanceof SessionChangesPane ? reviewedFile(workspace, shown.sessionId) : []), ...subjectOf(workspace, shown.sessionId)],
         dispose: () => {
           unpin();
           pane.remove();

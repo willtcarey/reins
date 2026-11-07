@@ -4,7 +4,7 @@ import type { FileView } from "../../components/file-viewer/file-viewer.js";
 import type { Inspector } from "../../models/inspector.js";
 import { ViewRegistry } from "../../sdk-host/view-registry.js";
 import { clickButton, collectTemplateProperties, templateToString } from "../helpers/lit-template.js";
-import { testInspector } from "../helpers/reins-sdk.js";
+import { testInspector, paneContext } from "../helpers/reins-sdk.js";
 
 const source = { nodeId: "node", path: "/work" };
 const plan: FileView = { view: "file", source, path: "docs/plan.md" };
@@ -33,7 +33,7 @@ function inspectorElement(inspector: Inspector): AppInspector {
   element.tabs = inspector.tabs;
   element.activeKey = inspector.activeTab?.key ?? "";
   element.views = views;
-  element.context = { source, container: "inspector" };
+  element.context = paneContext("inspector", source);
   return element;
 }
 

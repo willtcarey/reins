@@ -26,6 +26,7 @@ function fullOutput(value: unknown): string {
   return `${templateToString(value)}\n${templateToString(collectTemplateValues(value))}`;
 }
 import { mockFetch, restoreFetch } from "../helpers/mock-fetch.js";
+import { paneContext } from "../helpers/reins-sdk.js";
 
 const originals = {
   navigator: globalThis.navigator,
@@ -294,7 +295,7 @@ describe("NewSessionPage", () => {
 });
 
 describe("the new session page's registration", () => {
-  const main: PaneContext = { source: null, container: "main" };
+  const main: PaneContext = paneContext("main");
   /** The page registered over `app`, as app-shell registers it. */
   function registered() {
     const views = new ViewRegistry();

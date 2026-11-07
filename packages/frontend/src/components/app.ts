@@ -107,7 +107,8 @@ export class AppShell extends LitElement {
     const { running, finished } = this.appStore.activitySummary;
     const view = mainViewOf(this.currentRoute);
     const alone = view && !this.appStore.views.rendererFor(view)?.tabOf;
-    const page = alone ? this.appStore.views.titleOf(view, { source: this.workspace?.store?.source ?? null, container: "main" }) : null;
+    const context = this.workspace?.mainContext();
+    const page = alone && context ? this.appStore.views.titleOf(view, context) : null;
     const name = page ? `${page} · REINS` : "REINS";
     if (running > 0) document.title = `(${running} running) ${name}`;
     else if (finished > 0) document.title = `(${finished} new) ${name}`;

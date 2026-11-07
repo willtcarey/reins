@@ -3,7 +3,7 @@ import { ReinsHttpError } from "@reins/client";
 import type { FileReferenceView } from "../../extensions/message-file-references/message-file-references.js";
 import type { DecorationSpan, MessageDecorator, Source } from "@reins/sdk";
 import type { DecoratedSegment } from "../../sdk-host/decorators.js";
-import { shownNewSession, shownSession, testSdk } from "../helpers/reins-sdk.js";
+import { shownNewSession, shownSession, testSdk, paneContext } from "../helpers/reins-sdk.js";
 import { registerInboxPage } from "../helpers/inbox-page.js";
 import { mockFetch, restoreFetch } from "../helpers/mock-fetch.js";
 
@@ -83,7 +83,7 @@ describe("views.register", () => {
 
     const view = { view: "greeting", name: "Ada" };
     expect(opened).toEqual([{ view, container: "inspector" }]);
-    expect(views.rendererFor(view)?.pane?.title(view, { source: null, container: "inspector" })).toBe("Hello, Ada");
+    expect(views.rendererFor(view)?.pane?.title(view, paneContext("inspector"))).toBe("Hello, Ada");
     expect(views.keyOf(view)).toBe("greeting:Ada");
   });
 

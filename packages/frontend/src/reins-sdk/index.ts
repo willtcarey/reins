@@ -115,6 +115,12 @@ export interface WorkspaceContext {
  */
 export interface PaneContext extends WorkspaceContext {
   readonly container: ContainerId;
+  /**
+   * Says that what the view is about (`MountedView.subject`) may have changed without the host showing anything
+   * new, such as a review scrolled to another file: the host asks `subject()` again and tells `onDidChange`
+   * listeners if it differs. Only the main area's view is asked, so elsewhere it does nothing.
+   */
+  subjectChanged(): void;
 }
 
 /** What an inline view is given: the piece of message text it is shown for. */

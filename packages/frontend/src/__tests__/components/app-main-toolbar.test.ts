@@ -2,6 +2,7 @@ import { describe, expect, mock, test } from "bun:test";
 import type { PaneContext } from "@reins/sdk";
 import { AppMainToolbar } from "../../components/app-main-toolbar.js";
 import { collectTemplateEventListeners, collectTemplateProperties, isTemplateResult, templateToString } from "../helpers/lit-template.js";
+import { paneContext } from "../helpers/reins-sdk.js";
 
 function findOverflowContent(value: unknown): (() => unknown) | undefined {
   if (!isTemplateResult(value)) return undefined;
@@ -89,7 +90,7 @@ describe("AppMainToolbar", () => {
     const el = new AppMainToolbar();
     const toolbar = { mount: () => {} };
     const view = { view: "test-inbox", repository: "reins" };
-    const context: PaneContext = { source: null, container: "main" };
+    const context: PaneContext = paneContext("main");
     el.pageTitle = "Inbox · reins";
     el.viewToolbar = { presentation: toolbar, view, context };
 

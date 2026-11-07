@@ -64,9 +64,14 @@ export class AppWorkspace extends LitElement {
   @state() private swipedTab: string | null = null;
   private observedSessionId = "";
   private observedProjectId: number | null = null;
+  /** Only the main area's view is asked what it is about, so the Inspector's say nothing. */
+  private subjectChanged: Record<"inspector" | "main", () => void> = {
+    inspector: () => {},
+    main: () => { void this.followShownView(); },
+  };
   private contexts: Record<"inspector" | "main", PaneContext> = {
-    inspector: { source: null, container: "inspector" },
-    main: { source: null, container: "main" },
+    inspector: { source: null, container: "inspector", subjectChanged: this.subjectChanged.inspector },
+    main: { source: null, container: "main", subjectChanged: this.subjectChanged.main },
   };
   private fileTreeState = new FileTreeState();
   private layout = new WorkspaceLayout(typeof localStorage === "undefined" ? null : localStorage, typeof navigator === "undefined" ? "browser" : navigator.userAgent ?? "browser");
@@ -146,7 +151,8 @@ export class AppWorkspace extends LitElement {
   }
 
   /**
-   * Once the shown view's mount has applied the view just rendered, follows the session it is about (the store's: the
+   * After a render, or when the shown view says its subject changed (`PaneContext.subjectChanged`): once the shown
+   * view's mount has applied the view just rendered, follows the session it is about (the store's: the
    * Inspector's source, the diff and the review; none for a view about none), and says the main area changed.
    */
   private async followShownView(): Promise<void> {
@@ -190,8 +196,13 @@ export class AppWorkspace extends LitElement {
 
   /** The same object while the source is, so views are not updated by every render. */
   private contextFor(source: Source | null, container: "inspector" | "main"): PaneContext {
-    if (this.contexts[container].source !== source) this.contexts[container] = { source, container };
+    if (this.contexts[container].source !== source) this.contexts[container] = { source, container, subjectChanged: this.subjectChanged[container] };
     return this.contexts[container];
+  }
+
+  /** The main area's views' context now (their titles', too). */
+  mainContext(): PaneContext {
+    return this.contextFor(this.store?.source ?? null, "main");
   }
 
   /** The main area's tabs: the shown view's (`ViewRegistry.tabsFor`), the view alone when it is none's; none for nothing. */

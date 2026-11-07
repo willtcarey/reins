@@ -10,7 +10,7 @@ import { ProjectsStore } from "../../models/stores/projects-store.js";
 import { ConversationsStore } from "../../models/stores/conversations-store.js";
 import { SessionOperations } from "../../models/session-operations.js";
 import { ReinsClient } from "@reins/client";
-import type { ContainerId, CurrentView, ExtensionInfo, HttpApi, SessionCreation, Sessions, Source, Subject, View } from "@reins/sdk";
+import type { ContainerId, CurrentView, ExtensionInfo, HttpApi, PaneContext, SessionCreation, Sessions, Source, Subject, View } from "@reins/sdk";
 import { appRouter, mainViewHash, mainViewOf } from "../../routing/app-router.js";
 import { RoutedMainArea, type MainHistory } from "../../routing/main-area.js";
 import { CommandRegistry } from "../../sdk-host/commands.js";
@@ -24,6 +24,11 @@ import { SdkNodes, SdkProjects, SdkTasks } from "../../sdk-host/projects.js";
 import { SidebarSections, type SidebarLayout, type SidebarLayoutStorage } from "../../sdk-host/sidebar-sections.js";
 import { ViewRegistry } from "../../sdk-host/view-registry.js";
 import { StubClient } from "./stub-client.js";
+
+/** A pane's context in `container`, whose subject changes are not listened to. */
+export function paneContext(container: ContainerId, source: Source | null = null): PaneContext {
+  return { source, container, subjectChanged: () => {} };
+}
 
 export interface OpenedView {
   view: View;

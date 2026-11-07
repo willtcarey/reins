@@ -157,20 +157,35 @@ export function registerFileViewer(reins: ReinsSdk): Disposer {
       icon: paneIcon(fileIcon),
       width: 640,
       mount(target, view) {
+        let shown = view;
         const element = target.ownerDocument.createElement("file-viewer");
         element.setAttribute("class", "flex h-full min-h-0 flex-col");
         element.files = reins.files;
         element.view = view;
         target.append(element);
-        return { update: (shown) => { element.view = shown; }, dispose: () => element.remove() };
+        return {
+          update: (next) => {
+            shown = next;
+            element.view = next;
+          },
+          dispose: () => element.remove(),
+          subject: () => [{ type: "file", id: { source: shown.source, path: shown.path } }],
+        };
       },
     },
   });
 }
 
+/** A file, wherever it is: its source and its path there, so it needs no other subject to be found. */
+export type FileSubject = { source: Source; path: string };
+
 declare module "@reins/sdk" {
   interface ViewTypes {
     file: FileView;
+  }
+  /** What a view about a file is about (the file view, a review on one of its files). */
+  interface SubjectTypes {
+    file: FileSubject;
   }
 }
 
