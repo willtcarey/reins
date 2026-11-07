@@ -105,6 +105,11 @@ export class DiffStore {
   private _filesRequestGeneration = 0;
   private _patchRequestGeneration = 0;
   private _spreadRequestGeneration = 0;
+  /**
+   * Whether a file list of this session and branch has loaded. Until it has, the files are a placeholder, and the
+   * first list differing from it is no change for a patch, which was asked for in this scope too.
+   */
+  private _filesLoadedForScope = false;
 
   // ---- Accessors ------------------------------------------------------------
 
@@ -168,6 +173,7 @@ export class DiffStore {
 
     if (sessionChanged || branchChanged) {
       this._branch = branch;
+      this._filesLoadedForScope = false;
       this.patchData = Loadable.idle();
       this._patchDiffVersion = 0;
       this._filesRequestGeneration += 1;
@@ -231,6 +237,8 @@ export class DiffStore {
       if (requestGeneration !== this._filesRequestGeneration) return;
       const newFiles = sortFileSummaries(json.files ?? []);
       const changed = JSON.stringify(newFiles) !== JSON.stringify(this.fileData.data?.files ?? []);
+      const firstForScope = !this._filesLoadedForScope;
+      this._filesLoadedForScope = true;
       this.lastFilesRefreshAt = new Date().toISOString();
       this.lastRefreshTrigger = trigger;
       this.lastSummaryChanged = changed;
@@ -249,7 +257,7 @@ export class DiffStore {
       const payloadTrigger: DiffRefreshTrigger = trigger === "poll" && changed
         ? "poll-summary-changed"
         : trigger;
-      if (shouldRefetchLoadedDiffs && this.patchData.data) {
+      if (shouldRefetchLoadedDiffs && !firstForScope && this.patchData.data) {
         await this.fetchPatchDiff(payloadTrigger);
       }
     } catch (err: any) {
@@ -268,6 +276,8 @@ export class DiffStore {
   async fetchPatchDiff(trigger: DiffRefreshTrigger = "manual") {
     const requestGeneration = ++this._patchRequestGeneration;
     if (this._sessionId == null) {
+      // Listeners that fetch while there is no patch would call back here without end.
+      if (this.patchData.status === "idle") return;
       this.patchData = Loadable.idle();
       this.notify();
       return;

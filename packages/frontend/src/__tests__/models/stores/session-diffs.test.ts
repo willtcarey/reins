@@ -56,6 +56,22 @@ describe("SessionDiffs", () => {
     app.dispose();
   });
 
+  test("gives one source object while the session's checkout stays the same, and another when it moves", async () => {
+    serveSessions({ s1: sessionDetail("s1", 1, 10) });
+    const app = new AppStore(new StubClient());
+    const { diff, release } = app.diffs.use("s1");
+    await settle();
+
+    const first = diff.source;
+    const again = diff.source;
+    app.sessionCache.set("s1", { placement: { available: true, removed: false, nodeId: "internal", nodeName: "Internal", path: "/work/other" } });
+
+    expect(again).toBe(first);
+    expect(diff.source).toEqual({ nodeId: "internal", path: "/work/other" });
+    release();
+    app.dispose();
+  });
+
   test("diffs a session of no project with no review", async () => {
     serveSessions({ s1: sessionDetail("s1", null, null) });
     const app = new AppStore(new StubClient());

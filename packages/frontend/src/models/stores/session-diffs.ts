@@ -44,10 +44,17 @@ export class SessionDiff {
     void this.scope();
   }
 
-  /** The session's checkout, once its details are known. */
+  private lastSource: Source | null = null;
+
+  /**
+   * The session's checkout, once its details are known: the same object while it stays the same, so the views given
+   * it (the review and each of its files) do not draw again on every notify.
+   */
   get source(): Source | null {
     const placement = this.app.sessionCache.getDetail(this.sessionId)?.placement;
-    return placement?.path ? { nodeId: placement.nodeId, path: placement.path } : null;
+    const source = placement?.path ? { nodeId: placement.nodeId, path: placement.path } : null;
+    if (!sameSource(this.lastSource, source)) this.lastSource = source;
+    return this.lastSource;
   }
 
   get projectId(): number | null {
