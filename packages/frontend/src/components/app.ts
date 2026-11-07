@@ -57,7 +57,7 @@ export class AppShell extends LitElement {
   private quickOpenStore = new QuickOpenStore(this.appStore.sessionCache);
   private unsubscribeStore: (() => void) | null = null;
   private routes = new AppRouteController(this, {
-    onRouteChange: (route) => this.handleRouteChange(route),
+    onRouteChange: (route) => { this.currentRoute = route; },
   });
 
   @state() private currentRoute: Route = { name: "empty", params: {} };
@@ -75,6 +75,7 @@ export class AppShell extends LitElement {
       registerNewSessionPage(this.appStore.views, this.appStore),
       registerDiffFileTree(this.appStore.views, workspace, this.appStore.diffs),
       openFilesOfShownSession(this.appStore.client, workspace, document),
+      this.quickOpenStore.followWorkspace(workspace),
       ...BUILT_IN_EXTENSIONS.map((extension) => this.appStore.extensions.activate(extension, createReinsSdk(extension, this.sdkHost))),
       // A page registered or gone changes the title of the page shown.
       this.appStore.views.subscribe(() => this.updateDocumentTitle()),
@@ -119,13 +120,6 @@ export class AppShell extends LitElement {
     if (running > 0) document.title = `(${running} running) ${name}`;
     else if (finished > 0) document.title = `(${finished} new) ${name}`;
     else document.title = name;
-  }
-
-  private handleRouteChange(route: Route): void {
-    this.currentRoute = route;
-    if ((route.name === "session" || route.name === "session-changes") && route.params.sessionId) {
-      this.quickOpenStore.recordVisit(route.params.sessionId);
-    }
   }
 
   protected override updated(changed: PropertyValues): void {
