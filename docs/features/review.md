@@ -6,11 +6,11 @@ A moved or renamed file appears in the file tree at its new path, and its diff h
 
 When viewing a task session, the diff shows changes on the task's branch compared to the base branch. When viewing a scratch session (no task), the diff shows the live working copy.
 
-Each file header can collapse or expand the file's diff body with a spring animation while leaving the header available, and provides actions to open the file in the file browser, copy its path, or download its current version. The animation is skipped when reduced motion is preferred. Collapsing while scrolled inside a file returns the viewport to that file's header so the spring begins visibly. Choosing a file in the tree while viewing Chat switches to Changes and navigates there even when the file is not currently mounted; a collapsed target expands first. Long reviews stay responsive because Changes mounts only visible files and a bounded surrounding window. Binary changes retain their header and actions while showing a no-text-diff placeholder. Rich Markdown, image, and PDF previews remain available from the file browser rather than the review surface.
+Each file header can collapse or expand the file's diff body with a spring animation while leaving the header available, and provides actions to open the file in the file browser, copy its path, or download its current version. The animation is skipped when reduced motion is preferred. Collapsing while scrolled inside a file returns the viewport to that file's header so the spring begins visibly. Choosing a file in the tree opens Changes at that file (from Chat too) and navigates there even when the file is not currently mounted; a collapsed target expands first. The link names the file (`#/session/<id>/changes?file=<path>`), so a reload shows it again. While you scroll, the tree highlights the file at the top of the review. Long reviews stay responsive because Changes mounts only visible files and a bounded surrounding window. Binary changes retain their header and actions while showing a no-text-diff placeholder. Rich Markdown, image, and PDF previews remain available from the file browser rather than the review surface.
 
 ## Diff modes
 
-The file tree includes a dropdown at the top for switching between two diff modes:
+The file tree includes a dropdown at the top for switching between two diff modes. The choice is the session's: other sessions keep showing branch changes, and it goes back to branch changes once nothing shows the session.
 
 ### Branch changes (default)
 

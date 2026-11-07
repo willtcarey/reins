@@ -91,6 +91,8 @@ export class ReviewDiffPanel extends LitElement {
   @property({ type: Boolean }) visible = false;
   @property() sessionId = "";
   @property({ attribute: false }) source: Source | null = null;
+  /** A file to reveal: each new object scrolls to its file, once the diff has it. */
+  @property({ attribute: false }) reveal: { readonly path: string } | null = null;
 
   private _unsubscribe: (() => void) | null = null;
   private _pendingPath: string | null = null;
@@ -159,6 +161,7 @@ export class ReviewDiffPanel extends LitElement {
     if (changed.has("visible")) this._virtualList.setVisible(this.visible);
     this._reconcilePatchData();
     if (this.visible && (storeChanged || changed.has("visible"))) this._fetchFresh();
+    if (changed.has("reveal") && this.reveal) this.scrollToFile(this.reveal.path);
   }
 
   override updated() {

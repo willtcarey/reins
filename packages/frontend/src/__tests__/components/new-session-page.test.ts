@@ -1,6 +1,11 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { PropertyValues } from "lit";
-import { NewSessionPage, type NewSessionView } from "../../components/new-session-page.js";
+import { NewSessionPage, registerNewSessionPage, type NewSessionView } from "../../components/new-session-page.js";
+import type { PaneContext } from "@reins/sdk";
+import { AppStore } from "../../models/stores/app-store.js";
+import { StubClient } from "../helpers/stub-client.js";
+import { ViewRegistry } from "../../sdk-host/view-registry.js";
+import { testElement } from "../helpers/test-dom.js";
 import { SendHandoff } from "../../models/send-handoff.js";
 import { collectTemplateProperties, collectTemplateValues, templateToString } from "../helpers/lit-template.js";
 
@@ -21,6 +26,7 @@ function fullOutput(value: unknown): string {
   return `${templateToString(value)}\n${templateToString(collectTemplateValues(value))}`;
 }
 import { mockFetch, restoreFetch } from "../helpers/mock-fetch.js";
+import { paneContext } from "../helpers/reins-sdk.js";
 
 const originals = {
   navigator: globalThis.navigator,
@@ -285,5 +291,57 @@ describe("NewSessionPage", () => {
     choose(9, null);
 
     expect(entries).toEqual(["#/new?project=9"]);
+  });
+});
+
+describe("the new session page's registration", () => {
+  const main: PaneContext = paneContext("main");
+  /** The page registered over `app`, as app-shell registers it. */
+  function registered() {
+    const views = new ViewRegistry();
+    const app = new AppStore(new StubClient(), null);
+    registerNewSessionPage(views, app);
+    const page = views.rendererFor({ view: "new-session" })?.pane;
+    if (!page) throw new Error("Expected the new session page");
+    return { views, app, page };
+  }
+
+  test("mounts the page over the app, and shows a new view in place", () => {
+    const { app, page } = registered();
+    const target = testElement();
+    const view: NewSessionView = { view: "new-session", projectId: 7, taskId: null };
+
+    const mounted = page.mount(target, view, main);
+    const shown = target.childNodes[0];
+    if (!(shown instanceof NewSessionPage)) throw new Error("Expected the new session page");
+    const next: NewSessionView = { view: "new-session", projectId: 7, taskId: 3 };
+    mounted?.update?.(next, main);
+
+    expect(shown.app).toBe(app);
+    expect(shown.view).toBe(next);
+    expect(page.title(view, main)).toBe("New session");
+  });
+
+  test("is about the task and project chosen on it, nothing before one is chosen", () => {
+    const { page } = registered();
+    const mounted = page.mount(testElement(), { view: "new-session", projectId: 7, taskId: 3 }, main);
+    const subjects = [mounted?.subject?.()];
+    mounted?.update?.({ view: "new-session", projectId: 7, taskId: null }, main);
+    subjects.push(mounted?.subject?.());
+    mounted?.update?.({ view: "new-session", projectId: null, taskId: null }, main);
+    subjects.push(mounted?.subject?.());
+
+    expect(subjects).toEqual([
+      [{ type: "task", id: 3 }, { type: "project", id: 7 }],
+      [{ type: "project", id: 7 }],
+      [],
+    ]);
+  });
+
+  test("is one view for a project and task, so opening it again there is in place, and another for another choice", () => {
+    const { views } = registered();
+
+    expect(views.keyOf({ view: "new-session", projectId: 7, taskId: 3 })).toBe(views.keyOf({ view: "new-session", projectId: 7, taskId: 3 }));
+    expect(views.keyOf({ view: "new-session", projectId: 7, taskId: 3 })).not.toBe(views.keyOf({ view: "new-session", projectId: 7, taskId: null }));
   });
 });

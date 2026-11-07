@@ -3,7 +3,8 @@ import { ReinsHttpError } from "@reins/client";
 import type { FileReferenceView } from "../../extensions/message-file-references/message-file-references.js";
 import type { DecorationSpan, MessageDecorator, Source } from "@reins/sdk";
 import type { DecoratedSegment } from "../../sdk-host/decorators.js";
-import { shownNewSession, shownSession, testSdk } from "../helpers/reins-sdk.js";
+import { shownNewSession, shownSession, testSdk, paneContext } from "../helpers/reins-sdk.js";
+import { registerInboxPage } from "../helpers/inbox-page.js";
 import { mockFetch, restoreFetch } from "../helpers/mock-fetch.js";
 
 const source: Source = { nodeId: "node", path: "/work" };
@@ -82,7 +83,7 @@ describe("views.register", () => {
 
     const view = { view: "greeting", name: "Ada" };
     expect(opened).toEqual([{ view, container: "inspector" }]);
-    expect(views.rendererFor(view)?.pane?.title(view, { source: null })).toBe("Hello, Ada");
+    expect(views.rendererFor(view)?.pane?.title(view, paneContext("inspector"))).toBe("Hello, Ada");
     expect(views.keyOf(view)).toBe("greeting:Ada");
   });
 
@@ -119,13 +120,61 @@ describe("workspace.open", () => {
     expect(opened).toEqual([]);
   });
 
-  test("refuses any other view in the main area, and a session view without a session ID, as registered views are not shown there yet", () => {
-    const { reins, shownViews } = testSdk();
+  test("refuses in the main area a view without a pane presentation, and a session view without a session ID", () => {
+    const { reins, shownViews, mainHistory } = testSdk();
+    reins.views.register("file-reference", inlineReference);
 
-    expect(() => reins.workspace.open({ view: "file", source, path: "README.md" }, { in: "main" })).toThrow('The main area cannot show the "file" view');
+    expect(() => reins.workspace.open({ view: "file-reference", source, path: "README.md" }, { in: "main" })).toThrow('The "file-reference" view has no pane presentation, so the main area cannot show it');
     // @ts-expect-error: as an extension without TypeScript can
-    expect(() => reins.workspace.open({ view: "session" }, { in: "main" })).toThrow('The main area cannot show the "session" view');
+    expect(() => reins.workspace.open({ view: "session" }, { in: "main" })).toThrow('The main area cannot show this "session" view');
     expect(shownViews).toEqual([]);
+    expect(mainHistory).toEqual(["#/"]);
+  });
+
+  test("shows a registered page in the main area by navigating to its route, so Back returns to the view before", () => {
+    const { reins, shownViews, mainHistory } = testSdk({ current: shownSession("s1") });
+    registerInboxPage(reins);
+
+    reins.workspace.open({ view: "test-inbox", repository: "reins" }, { in: "main" });
+    reins.workspace.open({ view: "test-inbox", repository: "spoke" }, { in: "main" });
+
+    expect(mainHistory).toEqual(["#/session/s1", "#/view/test-inbox?repository=reins", "#/view/test-inbox?repository=spoke"]);
+    expect(shownViews).toEqual([{ view: "test-inbox", repository: "reins" }, { view: "test-inbox", repository: "spoke" }]);
+  });
+
+  test("shows in the main area the same pane an Inspector tab shows, with nothing more registered", () => {
+    const { reins, shownViews, mainHistory } = testSdk();
+    reins.views.register("file", fileRenderer);
+
+    reins.workspace.open({ view: "file", source, path: "README.md" }, { in: "main" });
+
+    expect(mainHistory).toEqual(["#/", "#/view/file?path=README.md&source=%7B%22nodeId%22:%22node%22,%22path%22:%22/work%22%7D"]);
+    expect(shownViews).toEqual([{ view: "file", source, path: "README.md" }]);
+  });
+
+  test("opening the page shown, by its renderer's key, shows the new view in its place without a history entry", () => {
+    const { reins, shownViews, mainHistory } = testSdk({ current: shownSession("s1") });
+    registerInboxPage(reins);
+
+    reins.workspace.open({ view: "test-inbox", repository: "reins", filter: "unread" }, { in: "main" });
+    reins.workspace.open({ view: "test-inbox", repository: "reins", filter: "all" }, { in: "main" });
+    reins.workspace.open({ view: "test-inbox", repository: "reins", filter: "all" }, { in: "main" });
+
+    expect(mainHistory).toEqual(["#/session/s1", "#/view/test-inbox?filter=all&repository=reins"]);
+    expect(shownViews).toEqual([
+      { view: "test-inbox", repository: "reins", filter: "unread" },
+      { view: "test-inbox", repository: "reins", filter: "all" },
+      { view: "test-inbox", repository: "reins", filter: "all" },
+    ]);
+    expect(shownViews[2]).not.toBe(shownViews[1]);
+  });
+
+  test("opening another session adds a history entry, as choosing one in the sidebar does", () => {
+    const { reins, mainHistory } = testSdk({ current: shownSession("s1") });
+
+    reins.workspace.open({ view: "session", sessionId: "s2" }, { in: "main" });
+
+    expect(mainHistory).toEqual(["#/session/s1", "#/session/s2"]);
   });
 });
 

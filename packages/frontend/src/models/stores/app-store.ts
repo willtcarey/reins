@@ -1,7 +1,6 @@
 /** Long-lived application runtime and shared stores. */
 
 import type { ProjectView as ProjectInfo } from "@backend/routes/projects.js";
-import type { ContainerId, View } from "@reins/sdk";
 import { CommandRegistry } from "../../sdk-host/commands.js";
 import { SendHandoff } from "../send-handoff.js";
 import { DecoratorRegistry } from "../../sdk-host/decorators.js";
@@ -10,6 +9,7 @@ import { SettingsPages } from "../../sdk-host/settings-pages.js";
 import { SidebarSections, type SidebarLayout, type SidebarLayoutStorage } from "../../sdk-host/sidebar-sections.js";
 import { ViewRegistry } from "../../sdk-host/view-registry.js";
 import { Inspector } from "../inspector.js";
+import { SessionDiffs } from "./session-diffs.js";
 import type { IAppClient } from "../ws-client.js";
 import { SessionOperations } from "../session-operations.js";
 import { api } from "../api.js";
@@ -65,6 +65,8 @@ export class AppStore {
   readonly extensions: Extensions;
   /** When this browser last opened each session: the sidebar's Recent. */
   readonly inspector = new Inspector(this.views);
+  /** Each session's diff and review, while a view shows them. */
+  readonly diffs = new SessionDiffs(this);
   /** A message the new session page sent, which the session's chat panel animates into its conversation. */
   readonly sendHandoff = new SendHandoff();
   /** The skills of each location, for the composers' `/name` suggestions. */
@@ -107,15 +109,6 @@ export class AppStore {
   get projects(): ProjectInfo[] { return this.projectsStore.projects; }
   get activitySummary(): { running: number; finished: number } { return this.projectsStore.activitySummary; }
 
-  /** Shows a view in a container: the SDK's `workspace.open`. */
-  open(view: View, container: Exclude<ContainerId, "main">): void {
-    switch (container) {
-      case "inspector":
-        this.inspector.open(view);
-        break;
-    }
-  }
-
   subscribe(listener: AppStoreListener): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
@@ -141,6 +134,7 @@ export class AppStore {
     this.activeConversationsStore.dispose();
     this.projectsStore.dispose();
     this.settingsStore.dispose();
+    this.diffs.dispose();
     this.files.dispose();
     this.nodesStore.dispose();
     this.decorators.dispose();

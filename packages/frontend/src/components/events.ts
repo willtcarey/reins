@@ -1,7 +1,7 @@
 import type { SendAnimationSource } from "../helpers/chat-send-animation.js";
 import type { ClientPromptContent } from "../models/chat-content.js";
 import type { ModelSetting } from "@backend/settings-store.js";
-import type { Project, Source, Task } from "@reins/sdk";
+import type { Project, Source, Task, View } from "@reins/sdk";
 import type { FileView, FileViewerMode } from "./file-viewer/file-viewer.js";
 import type { WorkspacePane } from "../models/workspace-pages.js";
 
@@ -30,12 +30,14 @@ declare global {
     "open-file-search": CustomEvent<SourceDetail>;
     "open-settings": CustomEvent<void>;
     "open-file-browser": CustomEvent<SourceDetail>;
+    "file-select": CustomEvent<string>;
     "inspector-tab-focus": CustomEvent<string>;
     "inspector-tab-close": CustomEvent<string>;
     "file-viewer-mode-change": CustomEvent<FileViewerMode>;
     "open-in-inspector": CustomEvent<FileView>;
     "palette-alternate-confirm": CustomEvent<number>;
     "pane-select": CustomEvent<MainPaneSelectDetail>;
+    "open-main-view": CustomEvent<View>;
     "reload-request": CustomEvent<void>;
     "rename-session": CustomEvent<RenameSessionDetail>;
     "move-session": CustomEvent<MoveSessionDetail>;
@@ -137,6 +139,11 @@ export interface MainPaneSelectDetail {
 /** Request to switch the workspace to another pane. */
 export function paneSelectEvent(pane: WorkspacePane) {
   return componentEvent<MainPaneSelectDetail>("pane-select", { pane });
+}
+
+/** Request to show a view in the main area (a tab chosen, a page swiped to), as `workspace.open(view, { in: "main" })`. */
+export function openMainViewEvent(view: View) {
+  return componentEvent("open-main-view", view);
 }
 
 /** Request to reload the application. */

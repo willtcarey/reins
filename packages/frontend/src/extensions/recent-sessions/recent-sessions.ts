@@ -193,9 +193,12 @@ export class RecentSection extends LitElement {
     const update = () => this.requestUpdate();
     new SubscriptionsController(this, () => this.recent, (recent) => [
       recent.subscribe(update),
-      ...(this.reins ? [this.reins.workspace.onDidChange(update)] : []),
+      // Only the shown session is drawn: a review scrolled to another file must not draw the rows again.
+      ...(this.reins ? [this.reins.workspace.onDidChange(() => { if (this.reins?.workspace.currentSubject("session") !== this.drawnSession) update(); })] : []),
     ]);
   }
+
+  private drawnSession: string | null | undefined = undefined;
 
   override disconnectedCallback() {
     super.disconnectedCallback();
@@ -203,6 +206,7 @@ export class RecentSection extends LitElement {
   }
 
   protected override willUpdate() {
+    this.drawnSession = this.reins?.workspace.currentSubject("session");
     this.reorder.capture(this.rows);
   }
 

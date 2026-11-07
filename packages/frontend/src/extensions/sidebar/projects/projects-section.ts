@@ -25,6 +25,9 @@ import "./task-form.js";
 
 const errorMessage = (error: unknown) => error instanceof Error ? error.message : String(error);
 
+/** What the section draws of the main area: the project shown and the session shown. */
+const shownKey = (sdk: ReinsSdk) => JSON.stringify([sdk.workspace.currentSubject("project"), sdk.workspace.currentSubject("session")]);
+
 @customElement("sidebar-projects")
 export class ProjectsSection extends LitElement {
   override createRenderRoot() {
@@ -47,11 +50,15 @@ export class ProjectsSection extends LitElement {
     new SubscriptionsController(this, () => this.reins, (reins) => [
       reins.projects.onDidChange(() => this.requestUpdate()),
       reins.sessions.onDidChange(({ projectIds }) => { if (projectIds.includes(null)) this.requestUpdate(); }),
-      reins.workspace.onDidChange(() => this.requestUpdate()),
+      // Only the shown project and session are drawn: a review scrolled to another file must not draw every project again.
+      reins.workspace.onDidChange(() => { if (shownKey(reins) !== this.drawnShown) this.requestUpdate(); }),
     ]);
   }
 
+  private drawnShown: string | null = null;
+
   override willUpdate() {
+    this.drawnShown = this.reins ? shownKey(this.reins) : null;
     this.expansion.follow(this.reins?.workspace.currentSubject("project") ?? null);
   }
 

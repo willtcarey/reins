@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { HttpOutput } from "@reins/sdk";
 import type { RecentSessionsApi } from "@backend/extensions/recent-sessions/api.js";
-import { RecentSessions, registerRecentSessions, rowActions } from "../../../extensions/recent-sessions/recent-sessions.js";
+import { RecentSection, RecentSessions, registerRecentSessions, rowActions } from "../../../extensions/recent-sessions/recent-sessions.js";
 import { makeSessionListItem } from "../../helpers/fixtures.js";
 import { mockFetch, restoreFetch } from "../../helpers/mock-fetch.js";
-import { testSdk } from "../../helpers/reins-sdk.js";
+import { shownSession, testSdk } from "../../helpers/reins-sdk.js";
 
 const json = (body: unknown) => new Response(JSON.stringify(body), { headers: { "Content-Type": "application/json" } });
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
@@ -80,6 +80,28 @@ describe("Recent sessions", () => {
     expect(labels("unread")).toEqual(["Copy session ID", "Mark as read", "Rename", "Archive"]);
     expect(labels("running")).toEqual(["Copy session ID", "Rename", "Archive"]);
     expect(renamed).toEqual(["s1"]);
+  });
+
+  test("draws again when the main area's session changes, not when only what else it is about does", () => {
+    const { reins, showMain, source } = testSdk<RecentSessionsApi>({ extension, current: shownSession("s") });
+    const section = new RecentSection();
+    section.reins = reins;
+    section.recent = new RecentSessions(reins, 0);
+    // Lit's DOM shim can neither draw nor query; the update it would do once connected is not what is tested.
+    Reflect.set(section, "update", () => {});
+    Reflect.defineProperty(section, "rows", { value: null });
+    section.connectedCallback();
+    Reflect.get(section, "willUpdate").call(section);
+    let asked = 0;
+    section.requestUpdate = () => { asked += 1; };
+    const shown = shownSession("s");
+
+    showMain({ ...shown, subject: [{ type: "file", id: { source, path: "a.ts" } }, ...shown.subject] });
+    showMain({ ...shown, subject: [{ type: "file", id: { source, path: "b.ts" } }, ...shown.subject] });
+    const forFiles = asked;
+    showMain(shownSession("t"));
+
+    expect([forFiles, asked]).toEqual([0, 1]);
   });
 
   test("is the sidebar's Recent section", () => {

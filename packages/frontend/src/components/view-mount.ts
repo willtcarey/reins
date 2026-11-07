@@ -7,7 +7,7 @@
 
 import { ReactiveElement, type PropertyValues } from "lit";
 import { customElement, property } from "lit/decorators.js";
-import type { MountedView, View } from "@reins/sdk";
+import type { MountedView, Subject, View } from "@reins/sdk";
 
 /** Anything with a mount: a view's presentation (`ViewPresentation`), or a Settings page or icon, which take no view. */
 export interface Mountable {
@@ -16,6 +16,8 @@ export interface Mountable {
 
 interface Mounted {
   presentation: Mountable;
+  /** What the view was last told of its visibility. */
+  visible: boolean;
   view: View | null;
   context: object | null;
   instance: MountedView<View, object> | void;
@@ -34,11 +36,23 @@ export class ViewMount extends ReactiveElement {
   @property({ attribute: false }) presentation: Mountable | null = null;
   @property({ attribute: false }) view: View | null = null;
   @property({ attribute: false }) context: object | null = null;
+  /** Whether its container shows it; a hidden one stays mounted and is told (`MountedView.setVisible`). */
+  @property({ attribute: false }) visible = true;
 
   private mounted: Mounted | null = null;
 
   override createRenderRoot() {
     return this;
+  }
+
+  /** What the mounted view says it is about (`MountedView.subject`); nothing when it says nothing, is not mounted or throws. */
+  subject(): readonly Subject[] {
+    try {
+      return this.mounted?.instance?.subject?.() ?? [];
+    } catch (error) {
+      console.error("A view failed to give its subject", error);
+      return [];
+    }
   }
 
   override connectedCallback() {
@@ -60,7 +74,10 @@ export class ViewMount extends ReactiveElement {
     }
     const mounted = this.mounted;
     if (mounted?.presentation === presentation) {
-      if (mounted.view === view && mounted.context === context) return;
+      if (mounted.view === view && mounted.context === context) {
+        this.tellVisible(mounted);
+        return;
+      }
       if (mounted.instance?.update && view && context) {
         mounted.view = view;
         mounted.context = context;
@@ -69,17 +86,30 @@ export class ViewMount extends ReactiveElement {
         } catch (error) {
           this.fail(error);
         }
+        this.tellVisible(mounted);
         return;
       }
     }
     this.unmount();
     const fallback = [...this.childNodes];
     this.replaceChildren();
-    this.mounted = { presentation, view, context, fallback, instance: undefined };
+    this.mounted = { presentation, view, context, fallback, instance: undefined, visible: true };
     try {
       this.mounted.instance = view && context ? presentation.mount(this, view, context) : presentation.mount(this);
     } catch (error) {
       this.fail(error);
+    }
+    this.tellVisible(this.mounted);
+  }
+
+  /** Tells the mounted view when its visibility differs from what it was last told (shown, at first). */
+  private tellVisible(mounted: Mounted) {
+    if (this.mounted !== mounted || mounted.visible === this.visible) return;
+    mounted.visible = this.visible;
+    try {
+      mounted.instance?.setVisible?.(this.visible);
+    } catch (error) {
+      console.error("A view failed to be shown or hidden", error);
     }
   }
 

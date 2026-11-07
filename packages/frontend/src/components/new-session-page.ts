@@ -8,6 +8,7 @@
 
 import { LitElement, html, type PropertyValues } from "lit";
 import { customElement, property, query, state } from "lit/decorators.js";
+import type { Disposer, Subject, Views } from "@reins/sdk";
 import type { ModelSetting } from "@backend/settings-store.js";
 import type { ProjectLocationsView } from "@backend/models/sessions.js";
 import { api } from "../models/api.js";
@@ -20,7 +21,7 @@ import { navigate, navigateToSession, newSessionHash } from "../routing/app-rout
 import type { ChatComposer, DraftAttachment } from "./chat-composer.js";
 import type { ChatComposerSubmitDetail } from "./events.js";
 import type { LocationDialog } from "./location-dialog.js";
-import { branchIcon, conversationIcon, folderIcon, navigationFolderIcon } from "../ui/icons.js";
+import { branchIcon, conversationIcon, folderIcon, navigationFolderIcon, paneIcon } from "../ui/icons.js";
 import "./location-dialog.js";
 import "../ui/choice-menu.js";
 import "../ui/choice-selector.js";
@@ -40,6 +41,39 @@ declare module "@reins/sdk" {
   interface ViewTypes {
     "new-session": NewSessionView;
   }
+}
+
+/** What the page is about: the task and the project chosen on it. */
+function subjectOf({ projectId, taskId }: NewSessionView): Subject[] {
+  if (projectId == null) return [];
+  return taskId == null ? [{ type: "project", id: projectId }] : [{ type: "task", id: taskId }, { type: "project", id: projectId }];
+}
+
+/**
+ * Registers the new session page as the main area's `new-session` page, over the app's stores (app code, as the
+ * Changes tab is). A project and task are one page, so opening it again for them is in place.
+ */
+export function registerNewSessionPage(views: Views, app: AppStore): Disposer {
+  return views.register("new-session", {
+    key: ({ projectId, taskId }) => `${projectId}:${taskId}`,
+    pane: {
+      title: () => "New session",
+      description: () => "Start a session",
+      icon: paneIcon(conversationIcon),
+      mount(target, view) {
+        const page = target.ownerDocument.createElement("new-session-page");
+        page.setAttribute("class", "block h-full min-h-0 min-w-0");
+        page.app = app;
+        page.view = view;
+        target.append(page);
+        return {
+          update: (next) => { page.view = next; },
+          dispose: () => page.remove(),
+          subject: () => subjectOf(page.view),
+        };
+      },
+    },
+  });
 }
 
 @customElement("new-session-page")

@@ -5,8 +5,8 @@
  * /diff/files endpoint for file listings, and fetches the raw patch on demand
  * when the user views Changes.
  *
- * A single instance is created by the app shell and shared across the review
- * panel and file tree, eliminating duplicate fetches.
+ * One instance per session, in its `SessionDiff` (as its `files`), shared by the review
+ * panel and the file tree, so they fetch once.
  */
 
 import type { DiffFileResponse } from "@backend/routes/diff.js";
@@ -66,9 +66,6 @@ export class DiffStore {
   /** Which changes to show: all branch changes or only uncommitted. */
   diffMode: DiffMode = "branch";
 
-  /** The file at the top of the diff review, which the changed-files tree highlights. */
-  activeFile: string | null = null;
-
   /** Commit spread for the active branch (ahead/behind base & remote). */
   spread: SpreadResponse | null = null;
 
@@ -108,6 +105,11 @@ export class DiffStore {
   private _filesRequestGeneration = 0;
   private _patchRequestGeneration = 0;
   private _spreadRequestGeneration = 0;
+  /**
+   * Whether a file list of this session and branch has loaded. Until it has, the files are a placeholder, and the
+   * first list differing from it is no change for a patch, which was asked for in this scope too.
+   */
+  private _filesLoadedForScope = false;
 
   // ---- Accessors ------------------------------------------------------------
 
@@ -149,9 +151,8 @@ export class DiffStore {
   }
 
   /**
-   * Apply route-derived session and branch state atomically. Session switches
-   * otherwise fetch once for HEAD and again after WorkspaceStore resolves the
-   * selected task branch.
+   * Apply the session and its branch atomically. Otherwise it would fetch once
+   * for HEAD and again after its `SessionDiff` resolves the task's branch.
    */
   setScope(sessionId: string | null, branch: string | null, projectId: number | null = null) {
     const sessionChanged = sessionId !== this._sessionId;
@@ -168,11 +169,11 @@ export class DiffStore {
       this.syncAction = "idle";
       this.syncResult = null;
       this.contextLines = DEFAULT_CONTEXT;
-      this.activeFile = null;
     }
 
     if (sessionChanged || branchChanged) {
       this._branch = branch;
+      this._filesLoadedForScope = false;
       this.patchData = Loadable.idle();
       this._patchDiffVersion = 0;
       this._filesRequestGeneration += 1;
@@ -192,12 +193,6 @@ export class DiffStore {
     }
 
     if (sessionChanged || branchChanged) this._restartSpreadPolling();
-  }
-
-  setActiveFile(path: string | null) {
-    if (path === this.activeFile) return;
-    this.activeFile = path;
-    this.notify();
   }
 
   // ---- Diff mode -------------------------------------------------------------
@@ -242,6 +237,8 @@ export class DiffStore {
       if (requestGeneration !== this._filesRequestGeneration) return;
       const newFiles = sortFileSummaries(json.files ?? []);
       const changed = JSON.stringify(newFiles) !== JSON.stringify(this.fileData.data?.files ?? []);
+      const firstForScope = !this._filesLoadedForScope;
+      this._filesLoadedForScope = true;
       this.lastFilesRefreshAt = new Date().toISOString();
       this.lastRefreshTrigger = trigger;
       this.lastSummaryChanged = changed;
@@ -260,7 +257,7 @@ export class DiffStore {
       const payloadTrigger: DiffRefreshTrigger = trigger === "poll" && changed
         ? "poll-summary-changed"
         : trigger;
-      if (shouldRefetchLoadedDiffs && this.patchData.data) {
+      if (shouldRefetchLoadedDiffs && !firstForScope && this.patchData.data) {
         await this.fetchPatchDiff(payloadTrigger);
       }
     } catch (err: any) {
@@ -279,6 +276,8 @@ export class DiffStore {
   async fetchPatchDiff(trigger: DiffRefreshTrigger = "manual") {
     const requestGeneration = ++this._patchRequestGeneration;
     if (this._sessionId == null) {
+      // Listeners that fetch while there is no patch would call back here without end.
+      if (this.patchData.status === "idle") return;
       this.patchData = Loadable.idle();
       this.notify();
       return;

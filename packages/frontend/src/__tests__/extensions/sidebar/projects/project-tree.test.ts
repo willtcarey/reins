@@ -59,6 +59,26 @@ describe("Projects section", () => {
     expect(collectTemplateProperties(rendered, "expanded")).toEqual([true, false, false]);
   });
 
+  test("draws again when the main area's session or project changes, not when only what else it is about does", () => {
+    const { reins, showMain, source } = testSdk({ current: shownSession("s", { projectId: 2, taskId: null }) });
+    const section = new ProjectsSection();
+    section.reins = reins;
+    // Lit's DOM shim cannot draw; the update it would do once connected is not what is tested.
+    Reflect.set(section, "update", () => {});
+    section.connectedCallback();
+    Reflect.get(section, "willUpdate").call(section);
+    let asked = 0;
+    section.requestUpdate = () => { asked += 1; };
+    const shown = shownSession("s", { projectId: 2, taskId: null });
+
+    showMain({ ...shown, subject: [{ type: "file", id: { source, path: "a.ts" } }, ...shown.subject] });
+    showMain({ ...shown, subject: [{ type: "file", id: { source, path: "b.ts" } }, ...shown.subject] });
+    const forFiles = asked;
+    showMain(shownSession("t", { projectId: 2, taskId: null }));
+
+    expect([forFiles, asked]).toEqual([0, 1]);
+  });
+
   test("renames any of its sessions through the host's dialog", async () => {
     const { reins } = testSdk();
     const renamed: string[] = [];

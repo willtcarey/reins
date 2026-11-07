@@ -56,6 +56,17 @@ export function collectTemplateValues(value: unknown): unknown[] {
   return value.values.flatMap((entry) => [entry, ...collectTemplateValues(entry)]);
 }
 
+/** The keys of the `keyed` directives anywhere in the template, outermost first: what Lit keeps or makes anew. */
+export function collectKeyedKeys(value: unknown): unknown[] {
+  if (Array.isArray(value)) return value.flatMap((entry) => collectKeyedKeys(entry));
+  if (typeof value === "object" && value !== null && directiveOf(value) === KEYED_DIRECTIVE) {
+    const args: unknown = Reflect.get(value, "values");
+    return Array.isArray(args) ? [args[0], ...collectKeyedKeys(args[1])] : [];
+  }
+  if (!isTemplateResult(value)) return [];
+  return value.values.flatMap((entry) => collectKeyedKeys(entry));
+}
+
 export type TemplateEventListener = (event: Event) => unknown;
 
 function isTemplateEventListener(value: unknown): value is TemplateEventListener {

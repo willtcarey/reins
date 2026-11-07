@@ -16,10 +16,9 @@ function deferred() {
   return { promise, resolve };
 }
 
-function browser(options: { available?: boolean; viewedSource?: () => typeof source | null } = {}) {
-  const { viewedSource = () => source, ...sdkOptions } = options;
-  const sdk = testSdk({ source, projectId: 1, ...sdkOptions });
-  return { ...sdk, store: new FileBrowserStore(sdk.reins, { viewedSource }) };
+function browser(options: { available?: boolean } = {}) {
+  const sdk = testSdk({ source, projectId: 1, ...options });
+  return { ...sdk, store: new FileBrowserStore(sdk.reins) };
 }
 
 /** A project file server: listings, directory levels and text files, recording each request. */
@@ -36,20 +35,15 @@ function serveFiles(requests: string[] = [], files: string[] = ["README.md"]) {
 afterEach(() => restoreFetch());
 
 describe("FileBrowserStore opening", () => {
-  test("names its source's node when the viewed session is on another node", () => {
+  test("names its source's node once the app knows it", () => {
     serveFiles();
-    let viewed: typeof source | null = source;
-    const { store, client } = browser({ viewedSource: () => viewed });
+    const { store, client } = browser();
+    store.open({ nodeId: "internal", path: "/home/will/scratch" }, { path: "report.html" });
+    expect(store.nodeName).toBeNull();
+
     client.fireMessage({ type: "node_updated", node: testNode("internal", "Internal") });
 
-    store.open(source);
-    expect(store.otherNode).toBeNull();
-
-    store.open({ nodeId: "internal", path: "/home/will/scratch" }, { path: "report.html" });
-    expect(store.otherNode).toBe("Internal");
-
-    viewed = null;
-    expect(store.otherNode).toBeNull();
+    expect(store.nodeName).toBe("Internal");
   });
 
   test("opens at a file with its lines and tab, as a `file` view, and opens the tree to it", async () => {

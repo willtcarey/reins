@@ -115,7 +115,7 @@ export class FileBrowser extends LitElement {
     if (!store?.browserOpen && !store?.view) return nothing;
     const path = store.path;
     const checkout = store.source?.path ?? "";
-    const otherNode = store.otherNode;
+    const nodeName = store.nodeName;
 
     return html`
       <div
@@ -143,7 +143,7 @@ export class FileBrowser extends LitElement {
             >
               ${fileSearchIcon()}
             </button>
-            <span class="text-sm text-zinc-400 truncate flex-1" title=${otherNode ? `${checkout} on ${otherNode}` : checkout}>${checkout.slice(checkout.lastIndexOf("/") + 1)}${otherNode ? html`<span class="text-zinc-500"> · ${otherNode}</span>` : nothing}</span>
+            <span class="text-sm text-zinc-400 truncate flex-1" title=${nodeName ? `${checkout} on ${nodeName}` : checkout}>${checkout.slice(checkout.lastIndexOf("/") + 1)}</span>
             ${store.uploadProgress === null ? nothing : html`<span class="text-xs text-zinc-400 shrink-0">Uploading ${store.uploadProgress}%</span>`}
             <input data-role="upload-input" type="file" multiple hidden @change=${this._onFilesChosen} />
             <button

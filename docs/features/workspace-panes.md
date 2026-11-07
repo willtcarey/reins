@@ -4,14 +4,14 @@ On desktop, drag the divider beside Sessions or the Inspector to resize it. Focu
 
 ## The Inspector
 
-The right-hand pane is the **Inspector**: a strip of tabs that keeps things in reach beside the conversation. Its first tab, **Changes**, is the changed-files tree; it is always there and cannot be closed. Other tabs show project files.
+The right-hand pane is the **Inspector**: a strip of tabs that keeps things in reach beside the conversation. While a session is shown, its first tab is **Changes**, the changed-files tree, which cannot be closed. Other tabs show project files. The Inspector shows only when it has tabs, so a page with nothing for it, such as the new session page, has the whole width (unless you opened files there).
 
 - **Open a file in the Inspector** from the file browser (its **Open in Inspector** button, which keeps the file's highlighted lines and Code/Preview tab), from file search (⌘/Ctrl+Enter, or the Inspector button on a result), or by clicking a file named in a message (*File references in messages*, below).
 - **A file opens once.** Opening a file that already has a tab focuses that tab and shows the file as asked, as a new tab would: the file is read again, lines the request names (a reference such as `app.ts:120`) are highlighted and scrolled into view, and its Code/Preview tab is the one the request names (Code when it names none).
 - **Switch tabs** by clicking them; a tab keeps its scroll position, Code/Preview choice and highlighted lines while another is shown. **Close** a file tab with its × button (shown on the current tab and the one under the pointer; on a touch screen, on every tab) or a middle click; closing the current tab shows the one before it.
 - **When the tabs overflow** the pane, scroll them sideways (a mouse wheel works too); the current tab is always scrolled into view, also when the pane is resized. A tab whose name is cut short keeps its extension, so `plan.ts` and `plan.md` stay apart.
 - A file tab shows the file in the file viewer, as the file browser does ([file-browser.md](file-browser.md) *File Viewer*). A file on another node than the session you are viewing has that node in its tab's title and tooltip (for example "report.html · Internal"). The folder button in its header opens the file in the file browser, with the tab's lines and the Code/Preview tab you are on; the download button downloads it.
-- Tabs stay while you switch between sessions that work in the same checkout, and when you leave the workspace (Settings, History) and come back. Switching to a session in another checkout closes them; Changes stays. They are not remembered across a reload.
+- Tabs stay until you close them: while you switch between sessions, and when you leave the workspace (Settings, History) and come back. A file tab always shows its own checkout's file. A file tab is titled by the file's name, with its path as the tooltip. Tabs are not remembered across a reload.
 - A file tab shows the file from the checkout it was opened from. Opening a tab again reads the file again; when a session working in that checkout changes files (a write, edit or command finishes, or a turn ends), open files are read again too.
 
 ## File references in messages

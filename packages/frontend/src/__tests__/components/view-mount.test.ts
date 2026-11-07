@@ -147,4 +147,26 @@ describe("ViewMount", () => {
       logged.mockRestore();
     }
   });
+
+  test("tells a mounted view when it is hidden and shown again, and one mounted hidden at once", async () => {
+    const told: unknown[] = [];
+    const presentation: ViewPresentation<View, object> = {
+      mount: () => ({ setVisible: (visible) => { told.push(visible); } }),
+    };
+    const shown = viewMount(presentation).element;
+    const hidden = viewMount(presentation).element;
+    hidden.visible = false;
+    setConnected(shown, true);
+    setConnected(hidden, true);
+    await shown.updateComplete;
+    await hidden.updateComplete;
+    expect(told).toEqual([false]);
+
+    shown.visible = false;
+    await shown.updateComplete;
+    hidden.visible = true;
+    await hidden.updateComplete;
+
+    expect(told).toEqual([false, false, true]);
+  });
 });

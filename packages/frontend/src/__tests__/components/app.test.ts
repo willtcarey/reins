@@ -27,11 +27,10 @@ afterEach(() => {
 });
 
 describe("AppShell route outlet", () => {
-  test("owns route selection and records session visits", () => {
+  test("owns route selection", () => {
     installLocation();
     const shell = new AppShell();
     const routes = Reflect.get(shell, "routes");
-    const quickOpenStore = Reflect.get(shell, "quickOpenStore");
 
     routes.applyRoute({ name: "session", params: { sessionId: "s1" } });
 
@@ -39,7 +38,6 @@ describe("AppShell route outlet", () => {
       name: "session",
       params: { sessionId: "s1" },
     });
-    expect(quickOpenStore.recentIds[0]).toBe("s1");
   });
 
   test("renders the registered workspace page for session routes", () => {

@@ -10,8 +10,9 @@ import { ProjectsStore } from "../../models/stores/projects-store.js";
 import { ConversationsStore } from "../../models/stores/conversations-store.js";
 import { SessionOperations } from "../../models/session-operations.js";
 import { ReinsClient } from "@reins/client";
-import type { ContainerId, CurrentView, ExtensionInfo, HttpApi, SessionCreation, Sessions, Source, Subject, View } from "@reins/sdk";
-import { mainViewHash } from "../../routing/app-router.js";
+import type { ContainerId, CurrentView, ExtensionInfo, HttpApi, PaneContext, SessionCreation, Sessions, Source, Subject, View } from "@reins/sdk";
+import { appRouter, mainViewHash, mainViewOf } from "../../routing/app-router.js";
+import { RoutedMainArea, type MainHistory } from "../../routing/main-area.js";
 import { CommandRegistry } from "../../sdk-host/commands.js";
 import { DecoratorRegistry } from "../../sdk-host/decorators.js";
 import { Extensions } from "../../sdk-host/extensions.js";
@@ -23,6 +24,11 @@ import { SdkNodes, SdkProjects, SdkTasks } from "../../sdk-host/projects.js";
 import { SidebarSections, type SidebarLayout, type SidebarLayoutStorage } from "../../sdk-host/sidebar-sections.js";
 import { ViewRegistry } from "../../sdk-host/view-registry.js";
 import { StubClient } from "./stub-client.js";
+
+/** A pane's context in `container`, whose subject changes are not listened to. */
+export function paneContext(container: ContainerId): PaneContext {
+  return { container, subjectChanged: () => {} };
+}
 
 export interface OpenedView {
   view: View;
@@ -95,8 +101,8 @@ export function testNode(id: string, name: string, connected = true): NodeView {
  * An SDK over the app's parts, as app-shell builds it, for `extension`. Its node list has `source`'s node, "Node",
  * connected when `available` (another node is listed once a `node_updated` names it), and a session of `projectId`
  * is placed on `source`. `opened` records what `workspace.open` reaches the app with, `shownViews` the views it shows
- * in the main area, and `sessionCalls` what reaches its sessions (`sessions` replaces their operations).
- * The main area shows `current` until another view is shown there, about nothing; it shows the views the app has routes for.
+ * in the main area (the app's main area, over a history kept in `mainHistory`), and `sessionCalls` what reaches its sessions (`sessions` replaces their operations).
+ * The main area shows `current` until another view is shown there, about nothing.
  * Requests go to `fetch` (`mockFetch`); messages and the connection come from `client` (`fireMessage`, `fireConnection`).
  * Projects, tasks and sessions are the app's over a real `ProjectsStore` (`projectsStore`) and session cache
  * (`sessions`), which a test fills; `showMain` changes what the main area shows. `sidebar` is the sidebar's
@@ -129,40 +135,41 @@ export function testSdk<A extends HttpApi = HttpApi>({ source = { nodeId: "node"
   const opened: OpenedView[] = [];
   const shownViews: View[] = [];
   const sessionCalls: SessionCall[] = [];
-  const mainListeners = new Set<() => void>();
   let shown = current;
-  /** Shows `view` in the main area, as navigating there would, and tells `workspace.subscribe` listeners. */
+  /** The main area's history entries, the last the one shown, starting at `current`'s route. */
+  const mainHistory = [current ? mainViewHash(current.view) ?? "#/" : "#/"];
+  /** Navigates as the browser would: each view a route shows is a new object, about nothing. */
+  const history: MainHistory = {
+    get hash() { return mainHistory.at(-1) ?? ""; },
+    go(hash, replace) {
+      if (replace) mainHistory[mainHistory.length - 1] = hash;
+      else if (hash !== history.hash) mainHistory.push(hash);
+      const view = mainViewOf(appRouter.resolve(hash));
+      if (view) shownViews.push(view);
+      showMain(view && { view, subject: [] });
+    },
+  };
+  const main = new RoutedMainArea(views, () => ({ current: () => shown, revealMain() {} }), history);
+  /** Shows `view` in the main area, as navigating there would, and tells `workspace.onDidChange` listeners. */
   const showMain = (view: CurrentView | null) => {
     shown = view;
-    for (const listener of mainListeners) listener();
+    main.changed();
   };
   const recorded = recordingSessions(sessionCalls, live, sessions, sessionOverrides);
   const host: SdkHost = {
-    app: { files, views, decorators, commands, settingsPages, sidebar, open: (view, container) => opened.push({ view, container }) },
+    app: { files, views, decorators, commands, settingsPages, sidebar },
     sessions: recorded,
     ui: new SdkUi(sessions, recorded),
     projects: new SdkProjects(projectsStore),
     tasks: new SdkTasks(projectsStore),
     nodes: new SdkNodes(projectsStore),
-    main: {
-      current: () => shown,
-      show: (view) => {
-        if (!mainViewHash(view)) return false;
-        shownViews.push(view);
-        showMain({ view, subject: [] });
-        return true;
-      },
-      subscribe: (listener) => {
-        mainListeners.add(listener);
-        return () => mainListeners.delete(listener);
-      },
-    },
+    containers: { inspector: { open: (view) => opened.push({ view, container: "inspector" }) }, main },
     http: new ReinsClient(),
     socket: client,
   };
   const reins = createReinsSdk<A>(extension, host);
   const sdkFor = (other: ExtensionInfo) => createReinsSdk(other, host);
-  return { client, sessions, projectsStore, files, views, decorators, commands, settingsPages, sidebar, extensions, reins, sdkFor, source, opened, shownViews, sessionCalls, showMain };
+  return { client, sessions, projectsStore, files, views, decorators, commands, settingsPages, sidebar, extensions, reins, sdkFor, source, opened, shownViews, mainHistory, sessionCalls, showMain };
 }
 
 /** An Inspector over views that know the file viewer's `file` view, as the app's do. */

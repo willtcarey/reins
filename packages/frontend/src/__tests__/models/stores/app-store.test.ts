@@ -140,7 +140,7 @@ describe("AppStore as what the Reins SDK is built over", () => {
     const store = new AppStore(new StubClient());
     const reins = createReinsSdk(
       { name: "test", label: "Test" },
-      { app: store, sessions: new SdkSessions(store), projects: new SdkProjects(store.projectsStore), tasks: new SdkTasks(store.projectsStore), nodes: new SdkNodes(store.projectsStore), ui: new SdkUi(store.sessionCache, new SdkSessions(store)), main: { current: () => null, show: () => false, subscribe: () => () => {} }, http: new ReinsClient(), socket: store.client },
+      { app: store, sessions: new SdkSessions(store), projects: new SdkProjects(store.projectsStore), tasks: new SdkTasks(store.projectsStore), nodes: new SdkNodes(store.projectsStore), ui: new SdkUi(store.sessionCache, new SdkSessions(store)), containers: { inspector: store.inspector, main: { current: () => null, open: () => {}, subscribe: () => () => {} } }, http: new ReinsClient(), socket: store.client },
     );
     const view = { view: "file" as const, source: { nodeId: "node", path: "/work" }, path: "README.md" };
     const renderer = { pane: { title: () => "README.md", description: () => "README.md", icon: { mount: () => {} }, mount: () => {} } };
@@ -148,7 +148,7 @@ describe("AppStore as what the Reins SDK is built over", () => {
     reins.views.register("file", renderer);
     reins.workspace.open(view);
 
-    expect(store.inspector.activeTab.view).toBe(view);
+    expect(store.inspector.activeTab?.view).toBe(view);
     expect(store.views.rendererFor(view)).toBe(renderer);
     expect(reins.files).toBe(store.files);
     store.dispose();

@@ -3,13 +3,13 @@ import { customElement, property } from "lit/decorators.js";
 import { repeat } from "lit/directives/repeat.js";
 import { StoreController } from "../controllers/store-controller.js";
 import type { InspectorTab } from "../models/inspector.js";
-import type { View, WorkspaceContext } from "@reins/sdk";
+import type { PaneContext, View } from "@reins/sdk";
 import type { ViewRegistry } from "../sdk-host/view-registry.js";
 import { closeIcon, fileIcon } from "../ui/icons.js";
 import { inspectorTabCloseEvent, inspectorTabFocusEvent } from "./events.js";
 import "./view-mount.js";
 
-const NO_CONTEXT: WorkspaceContext = { source: null };
+const NO_CONTEXT: PaneContext = { container: "inspector", subjectChanged: () => {} };
 
 interface TabLabel {
   title: string;
@@ -42,7 +42,7 @@ export class AppInspector extends LitElement {
   set views(views: ViewRegistry | null) { this.viewsController.store = views; this.requestUpdate(); }
   get views(): ViewRegistry | null { return this.viewsController.store; }
   /** What views are shown for: every view is given it. */
-  @property({ attribute: false }) context: WorkspaceContext | null = null;
+  @property({ attribute: false }) context: PaneContext | null = null;
   /** On a phone, where a swipe has dragged the track of panels (null at rest, on the active tab). */
   @property({ attribute: false }) swipeX: number | null = null;
 
@@ -108,7 +108,7 @@ export class AppInspector extends LitElement {
   private renderTab(tab: InspectorTab) {
     const active = tab.key === this.activeKey;
     const { title, description, icon } = this.label(tab.view);
-    const closable = tab.closable;
+    const closable = !tab.pinned;
     return html`
       <div
         class="group flex h-8 max-w-[min(12rem,85%)] shrink-0 items-center rounded-md text-xs font-medium transition-colors pointer-coarse:h-9 has-[[role=tab]:focus-visible]:ring-2 has-[[role=tab]:focus-visible]:ring-blue-500/60 ${active ? "bg-zinc-800 text-zinc-100 ring-1 ring-zinc-700/70" : "text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-200"}"

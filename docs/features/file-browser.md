@@ -1,6 +1,6 @@
 # File Browser
 
-A file browser overlay for viewing the files of a directory on a node, and uploading files into it: usually the checkout of the session you are viewing, or the directory of a file an agent opened for you on any node (`reins.ui.openFile`, [scripting.md](scripting.md)). When the directory is on another node than the session you are viewing, the header names that node after the directory's name (for example "scratch · Internal").
+A file browser overlay for viewing the files of a directory on a node, and uploading files into it: usually the checkout of the session you are viewing, or the directory of a file an agent opened for you on any node (`reins.ui.openFile`, [scripting.md](scripting.md)). The header shows the directory's name; its tooltip gives the whole path and the node it is on (for example "/srv/scratch on Internal").
 
 ## How to Open
 

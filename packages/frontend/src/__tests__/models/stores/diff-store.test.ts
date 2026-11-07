@@ -41,6 +41,21 @@ describe("DiffStore", () => {
     expect(store.contextLines).toBe(3);
   });
 
+  test("a patch fetch before the store has a session changes nothing and tells no one", async () => {
+    // The review panel's listener fetches the patch whenever there is none, as it does while it is visible.
+    let told = 0;
+    store.subscribe(() => {
+      told += 1;
+      if (!store.patchData.data && !store.patchData.loading && !store.patchData.error) void store.fetchPatchDiff();
+    });
+
+    await store.fetchPatchDiff();
+
+    expect(told).toBe(0);
+    expect(store.patchData.data).toBeNull();
+    expect(store.patchData.loading).toBe(false);
+  });
+
   test("resets renderer state when the project changes", () => {
     store.patchData = store.patchData.asLoaded({
       patch: "old",
@@ -55,21 +70,6 @@ describe("DiffStore", () => {
     expect(store.sessionId).toBe("s7");
     expect(store.patchData.data).toBeNull();
     expect(store.fileData.data).toEqual({ files: [], branch: null, baseBranch: null });
-  });
-
-  test("keeps the diff review's active file while the project stays", () => {
-    store.setScope("s7", "feature/review");
-    let notified = 0;
-    store.subscribe(() => { notified += 1; });
-
-    store.setActiveFile("src/app.ts");
-    store.setActiveFile("src/app.ts");
-    expect(notified).toBe(1);
-
-    store.setScope("s7", "feature/other");
-    expect(store.activeFile).toBe("src/app.ts");
-    store.setScope("s8", null);
-    expect(store.activeFile).toBeNull();
   });
 
   test("applies a route scope with one changed-file request using the final branch", async () => {
@@ -276,6 +276,29 @@ describe("DiffStore", () => {
 
     expect(store.patchData.data?.patch).toBe("patch-2");
     expect(store.lastRefreshTrigger).toBe("poll-summary-changed");
+  });
+
+  test("loads the patch once when a view opens on a session, though its first file list differs from none", async () => {
+    // The visible review's listener asks for the patch as soon as the scope leaves it with none, before the store
+    // asks for the files; the patch comes back first.
+    const files = deferredResponse();
+    let patchRequests = 0;
+    mockFetch((url) => {
+      if (url.includes("/diff/files")) return files.promise;
+      if (url.includes("/diff/patch")) return textResponse(`patch-${++patchRequests}`);
+      return jsonResponse({});
+    });
+    store.subscribe(() => {
+      if (!store.patchData.data && !store.patchData.loading && !store.patchData.error) void store.fetchPatchDiff();
+    });
+    store.setScope("s1", null);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    files.resolve(jsonResponse({ files: [{ path: "a.ts", additions: 1, removals: 0 }] }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(store.fileData.data?.files.map((file) => file.path)).toEqual(["a.ts"]);
+    expect(patchRequests).toBe(1);
   });
 
   test("does not refresh loaded patch data when polled summaries are unchanged", async () => {

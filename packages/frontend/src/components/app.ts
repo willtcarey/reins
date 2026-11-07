@@ -1,6 +1,6 @@
 /** Root application shell: lifecycle, route outlet, and global overlays. */
 
-import { LitElement, html } from "lit";
+import { LitElement, html, type PropertyValues } from "lit";
 import { customElement, query, state } from "lit/decorators.js";
 import { AppRouteController } from "../controllers/app-route-controller.js";
 import { BUILT_IN_EXTENSIONS } from "../extensions/built-in.js";
@@ -13,11 +13,17 @@ import { SdkSessions } from "../sdk-host/sessions.js";
 import { SdkUi } from "../sdk-host/ui.js";
 import { SdkNodes, SdkProjects, SdkTasks } from "../sdk-host/projects.js";
 import { AppClient } from "../models/ws-client.js";
-import { mainViewHash, navigate, openSettings, renderRoutePage } from "../routing/app-router.js";
+import { mainViewOf, openSettings, renderRoutePage } from "../routing/app-router.js";
+import { RoutedMainArea } from "../routing/main-area.js";
 import type { Route } from "../routing/router.js";
+import type { View } from "@reins/sdk";
 import type { SourceDetail, OpenImageViewerDetail, OpenInBrowserDetail } from "./events.js";
 import type { AppWorkspace } from "./app-workspace.js";
 import type { ImageLightbox } from "./image-lightbox.js";
+import { registerNewSessionPage } from "./new-session-page.js";
+import { registerDiffFileTree } from "./changes/diff-file-tree.js";
+import { openFilesOfShownSession } from "./open-file-requests.js";
+import { registerSessionViews } from "./session-views.js";
 import type { QuickOpen } from "./quick-open.js";
 import "./file-browser/file-browser.js";
 import "./file-browser/file-search.js";
@@ -31,9 +37,8 @@ export class AppShell extends LitElement {
   }
 
   private appStore = new AppStore(new AppClient());
-  private mainListeners = new Set<() => void>();
-  /** What the main area showed when its listeners were last told, to tell them only of a change. */
-  private mainShown = "null";
+  /** The main area is the workspace routes' page, which knows what the view it shows is about. */
+  private mainArea = new RoutedMainArea(this.appStore.views, () => this.workspace);
   /** What each extension's SDK is built over. */
   private sdkSessions = new SdkSessions(this.appStore);
   private sdkHost: SdkHost = {
@@ -43,20 +48,7 @@ export class AppShell extends LitElement {
     projects: new SdkProjects(this.appStore.projectsStore),
     tasks: new SdkTasks(this.appStore.projectsStore),
     nodes: new SdkNodes(this.appStore.projectsStore),
-    main: {
-      current: () => this.workspace?.current() ?? null,
-      show: (view) => {
-        const hash = mainViewHash(view);
-        if (hash) navigate(hash);
-        // On a phone, opening what the workspace already shows still brings its page forward.
-        if (hash) this.workspace?.revealMain();
-        return hash !== null;
-      },
-      subscribe: (listener) => {
-        this.mainListeners.add(listener);
-        return () => this.mainListeners.delete(listener);
-      },
-    },
+    containers: { inspector: this.appStore.inspector, main: this.mainArea },
     http: api,
     socket: this.appStore.client,
   };
@@ -65,7 +57,7 @@ export class AppShell extends LitElement {
   private quickOpenStore = new QuickOpenStore(this.appStore.sessionCache);
   private unsubscribeStore: (() => void) | null = null;
   private routes = new AppRouteController(this, {
-    onRouteChange: (route) => this.handleRouteChange(route),
+    onRouteChange: (route) => { this.currentRoute = route; },
   });
 
   @state() private currentRoute: Route = { name: "empty", params: {} };
@@ -76,11 +68,20 @@ export class AppShell extends LitElement {
   @query("image-lightbox") private imageLightbox!: ImageLightbox;
 
   override connectedCallback() {
-    this.disposeSdk = BUILT_IN_EXTENSIONS.map((extension) => this.appStore.extensions.activate(extension, createReinsSdk(extension, this.sdkHost)));
+    // The app's own views follow the main area through the SDK's workspace, as an extension would.
+    const { workspace } = createReinsSdk({ name: "app", label: "Reins" }, this.sdkHost);
+    this.disposeSdk = [
+      registerSessionViews(this.appStore.views, this.appStore),
+      registerNewSessionPage(this.appStore.views, this.appStore),
+      registerDiffFileTree(this.appStore.views, workspace, this.appStore.diffs),
+      openFilesOfShownSession(this.appStore.client, workspace, document),
+      this.quickOpenStore.followWorkspace(workspace),
+      ...BUILT_IN_EXTENSIONS.map((extension) => this.appStore.extensions.activate(extension, createReinsSdk(extension, this.sdkHost))),
+      // A page registered or gone changes the title of the page shown.
+      this.appStore.views.subscribe(() => this.updateDocumentTitle()),
+    ];
     // The file browser is app-shell's own overlay, not a registered extension, but it uses only the SDK.
-    this.fileBrowserStore = new FileBrowserStore(createReinsSdk({ name: "file-browser", label: "File browser" }, this.sdkHost), {
-      viewedSource: () => this.workspace?.store?.source ?? null,
-    });
+    this.fileBrowserStore = new FileBrowserStore(createReinsSdk({ name: "file-browser", label: "File browser" }, this.sdkHost));
     super.connectedCallback();
     this.unsubscribeStore = this.appStore.subscribe(() => {
       this.storeVersion += 1;
@@ -105,31 +106,26 @@ export class AppShell extends LitElement {
     this.appStore.dispose();
   }
 
+  /**
+   * The title of the view the main area shows alone, if any, after the activity across sessions. A tab's title
+   * names the tab, not the page, so a session's Chat and Changes leave it out.
+   */
   private updateDocumentTitle(): void {
     const { running, finished } = this.appStore.activitySummary;
-    if (running > 0) document.title = `(${running} running) REINS`;
-    else if (finished > 0) document.title = `(${finished} new) REINS`;
-    else document.title = "REINS";
+    const view = mainViewOf(this.currentRoute);
+    const alone = view && !this.appStore.views.rendererFor(view)?.tabOf;
+    const context = this.workspace?.mainContext();
+    const page = alone && context ? this.appStore.views.titleOf(view, context) : null;
+    const name = page ? `${page} · REINS` : "REINS";
+    if (running > 0) document.title = `(${running} running) ${name}`;
+    else if (finished > 0) document.title = `(${finished} new) ${name}`;
+    else document.title = name;
   }
 
-  private handleRouteChange(route: Route): void {
-    this.currentRoute = route;
-    if (route.name === "session" && route.params.sessionId) {
-      this.quickOpenStore.recordVisit(route.params.sessionId);
-    }
+  protected override updated(changed: PropertyValues): void {
+    if (changed.has("currentRoute")) this.updateDocumentTitle();
+    this.mainArea.changed();
   }
-
-  protected override updated(): void {
-    this.mainViewChanged();
-  }
-
-  /** Tells the SDK's `workspace.subscribe` listeners when the main area's view or subject changed. */
-  private mainViewChanged = () => {
-    const shown = JSON.stringify(this.workspace?.current() ?? null);
-    if (shown === this.mainShown) return;
-    this.mainShown = shown;
-    for (const listener of this.mainListeners) listener();
-  };
 
   private handleOpenInBrowser = (event: CustomEvent<OpenInBrowserDetail>) => {
     const { source, path, startLine, endLine, mode } = event.detail;
@@ -153,7 +149,8 @@ export class AppShell extends LitElement {
         @open-file-browser=${(event: CustomEvent<SourceDetail>) => this.fileBrowserStore?.open(event.detail.source)}
         @open-image-viewer=${this.handleOpenImageViewer}
         @open-settings=${() => openSettings()}
-        @main-view-change=${this.mainViewChanged}
+        @main-view-change=${() => this.mainArea.changed()}
+        @open-main-view=${(event: CustomEvent<View>) => this.mainArea.open(event.detail)}
       >
         ${!store.connected ? html`
           <div class="bg-yellow-800 text-yellow-200 text-xs text-center py-1">

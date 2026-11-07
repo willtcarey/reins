@@ -7,6 +7,7 @@
  */
 
 import type { PaletteItem } from "@backend/session-store.js";
+import type { Disposer, Workspace } from "@reins/sdk";
 import { api } from "../api.js";
 import { fuzzyMatch } from "../../helpers/fuzzy-match.js";
 import { SessionCache, type ActivityState } from "./session-cache.js";
@@ -144,6 +145,20 @@ export class QuickOpenStore {
   }
 
   // ---- Recent session tracking ----------------------------------------------
+
+  /**
+   * Records a visit each time the main area comes to be about another session (its `session` subject), from any
+   * view of it: its Chat, its Changes, an extension's.
+   */
+  followWorkspace(workspace: Pick<Workspace, "currentSubject" | "onDidChange">): Disposer {
+    let shown: string | null = null;
+    return workspace.onDidChange(() => {
+      const session = workspace.currentSubject("session");
+      if (session === shown) return;
+      shown = session;
+      if (session) this.recordVisit(session);
+    });
+  }
 
   /** Record a session as most recently viewed. */
   recordVisit(sessionId: string) {

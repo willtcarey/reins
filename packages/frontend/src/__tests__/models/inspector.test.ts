@@ -3,67 +3,66 @@ import type { Source, View } from "@reins/sdk";
 import { testInspector } from "../helpers/reins-sdk.js";
 
 const source: Source = { nodeId: "node", path: "/work" };
+const changes: View = { view: "diff-file-tree" };
+const readme: View = { view: "file", source, path: "README.md" };
 
 describe("Inspector", () => {
-  test("starts with the changes tab focused", () => {
+  test("starts with no tabs and none active", () => {
     const inspector = testInspector();
 
-    expect(inspector.tabs.map((tab) => tab.view)).toEqual([{ view: "diff-file-tree" }]);
-    expect(inspector.activeTab.view).toEqual({ view: "diff-file-tree" });
+    expect(inspector.tabs).toEqual([]);
+    expect(inspector.activeTab).toBeNull();
   });
 
   test("opening a view adds a tab after the others and focuses it", () => {
     const inspector = testInspector();
 
-    inspector.open({ view: "file", source, path: "README.md" });
+    inspector.open(readme);
     inspector.open({ view: "file", source, path: "docs/TODO.md", startLine: 3 });
 
-    expect(inspector.tabs.map((tab) => tab.view)).toEqual([
-      { view: "diff-file-tree" },
-      { view: "file", source, path: "README.md" },
-      { view: "file", source, path: "docs/TODO.md", startLine: 3 },
-    ]);
-    expect(inspector.activeTab.view).toEqual({ view: "file", source, path: "docs/TODO.md", startLine: 3 });
+    expect(inspector.tabs.map((tab) => tab.view)).toEqual([readme, { view: "file", source, path: "docs/TODO.md", startLine: 3 }]);
+    expect(inspector.activeTab?.view).toEqual({ view: "file", source, path: "docs/TODO.md", startLine: 3 });
   });
 
   test("opening a file that is already open focuses its tab and replaces its view", () => {
     const inspector = testInspector();
     inspector.open({ view: "file", source, path: "src/app.ts", startLine: 10, endLine: 12, mode: "preview" });
-    inspector.open({ view: "file", source, path: "README.md" });
+    inspector.open(readme);
 
     inspector.open({ view: "file", source, path: "src/app.ts", startLine: 40 });
 
-    expect(inspector.tabs).toHaveLength(3);
-    expect(inspector.activeTab.view).toEqual({ view: "file", source, path: "src/app.ts", startLine: 40 });
+    expect(inspector.tabs).toHaveLength(2);
+    expect(inspector.activeTab?.view).toEqual({ view: "file", source, path: "src/app.ts", startLine: 40 });
   });
 
   test("opening the same view again gives its tab the new view object, which shows it afresh", () => {
     const inspector = testInspector();
     inspector.open({ view: "file", source, path: "src/app.ts", startLine: 10 });
-    const first = inspector.activeTab.view;
-    const again = { view: "file" as const, source, path: "src/app.ts", startLine: 10 };
+    const first = inspector.activeTab?.view;
+    const again: View = { view: "file", source, path: "src/app.ts", startLine: 10 };
 
     inspector.open(again);
 
-    expect(inspector.activeTab.view).toBe(again);
-    expect(inspector.activeTab.view).not.toBe(first);
+    expect(inspector.activeTab?.view).toBe(again);
+    expect(inspector.activeTab?.view).not.toBe(first);
   });
 
-  test("closing the active tab focuses the tab before it", () => {
+  test("closing the active tab focuses the tab before it, or after it when it was first, or none when it was the last", () => {
     const inspector = testInspector();
     inspector.open({ view: "file", source, path: "a.ts" });
     inspector.open({ view: "file", source, path: "b.ts" });
     inspector.open({ view: "file", source, path: "c.ts" });
-    inspector.focus(inspector.tabs[2]!.key);
 
     inspector.close(inspector.tabs[2]!.key);
+    expect(inspector.activeTab?.view).toEqual({ view: "file", source, path: "b.ts" });
 
-    expect(inspector.tabs.map((tab) => tab.view)).toEqual([
-      { view: "diff-file-tree" },
-      { view: "file", source, path: "a.ts" },
-      { view: "file", source, path: "c.ts" },
-    ]);
-    expect(inspector.activeTab.view).toEqual({ view: "file", source, path: "a.ts" });
+    inspector.focus(inspector.tabs[0]!.key);
+    inspector.close(inspector.tabs[0]!.key);
+    expect(inspector.activeTab?.view).toEqual({ view: "file", source, path: "b.ts" });
+
+    inspector.close(inspector.tabs[0]!.key);
+    expect(inspector.tabs).toEqual([]);
+    expect(inspector.activeTab).toBeNull();
   });
 
   test("closing a background tab keeps the focused one", () => {
@@ -71,58 +70,91 @@ describe("Inspector", () => {
     inspector.open({ view: "file", source, path: "a.ts" });
     inspector.open({ view: "file", source, path: "b.ts" });
 
-    inspector.close(inspector.tabs[1]!.key);
+    inspector.close(inspector.tabs[0]!.key);
 
-    expect(inspector.activeTab.view).toEqual({ view: "file", source, path: "b.ts" });
-  });
-
-  test("the changes tab cannot be closed", () => {
-    const inspector = testInspector();
-    const changes = inspector.tabs[0]!;
-
-    expect(changes.closable).toBe(false);
-    inspector.close(changes.key);
-
-    expect(inspector.tabs.map((tab) => tab.view)).toEqual([{ view: "diff-file-tree" }]);
+    expect(inspector.activeTab?.view).toEqual({ view: "file", source, path: "b.ts" });
   });
 
   test("the same path in two sources is two tabs", () => {
     const inspector = testInspector();
 
-    inspector.open({ view: "file", source, path: "README.md" });
+    inspector.open(readme);
     inspector.open({ view: "file", source: { nodeId: "node", path: "/other" }, path: "README.md" });
 
-    expect(inspector.tabs).toHaveLength(3);
+    expect(inspector.tabs).toHaveLength(2);
+  });
+
+  describe("a pinned tab", () => {
+    test("comes before the other tabs, and is focused only when it is the first tab", () => {
+      const inspector = testInspector();
+      inspector.pin(changes);
+      expect(inspector.activeTab?.view).toEqual(changes);
+
+      inspector.open(readme);
+      const other = testInspector();
+      other.open(readme);
+      other.pin(changes);
+
+      expect(inspector.tabs.map((tab) => tab.view)).toEqual([changes, readme]);
+      expect(other.tabs.map((tab) => tab.view)).toEqual([changes, readme]);
+      expect(other.activeTab?.view).toEqual(readme);
+    });
+
+    test("cannot be closed, and is closed when every pin of it is released", () => {
+      const inspector = testInspector();
+      inspector.open(readme);
+      const unpinChat = inspector.pin(changes);
+      const unpinReview = inspector.pin(changes);
+      inspector.focus(inspector.tabs[0]!.key);
+
+      expect(inspector.tabs[0]!.pinned).toBe(true);
+      inspector.close(inspector.tabs[0]!.key);
+      unpinChat();
+      unpinChat();
+      expect(inspector.tabs.map((tab) => tab.view)).toEqual([changes, readme]);
+
+      unpinReview();
+      expect(inspector.tabs.map((tab) => tab.view)).toEqual([readme]);
+      expect(inspector.activeTab?.view).toEqual(readme);
+    });
+
+    test("opened like any view is focused and stays pinned", () => {
+      const inspector = testInspector();
+      inspector.pin(changes);
+      inspector.open(readme);
+
+      inspector.open(changes);
+
+      expect(inspector.activeTab?.view).toEqual(changes);
+      expect(inspector.tabs[0]!.pinned).toBe(true);
+    });
+
+    test("is not an open: open listeners do not hear it", () => {
+      const inspector = testInspector();
+      const opened: View[] = [];
+      inspector.onOpen((view) => opened.push(view));
+
+      inspector.pin(changes);
+
+      expect(opened).toEqual([]);
+    });
   });
 
   test("tells listeners about every change, and open listeners about each view opened", () => {
     const inspector = testInspector();
-    let changes = 0;
+    let changed = 0;
     const opened: View[] = [];
-    inspector.subscribe(() => { changes += 1; });
+    inspector.subscribe(() => { changed += 1; });
     inspector.onOpen((view) => opened.push(view));
-    const view: View = { view: "file", source, path: "README.md" };
 
-    inspector.open(view);
+    const unpin = inspector.pin(changes);
+    inspector.open(readme);
     inspector.focus(inspector.tabs[0]!.key);
     inspector.close(inspector.tabs[1]!.key);
+    unpin();
 
-    expect(changes).toBe(3);
-    expect(opened).toEqual([view]);
+    expect(changed).toBe(5);
+    expect(opened).toEqual([readme]);
   });
 
-  test("closes every closable tab when the viewed session's source changes to another", () => {
-    const inspector = testInspector();
-    inspector.open({ view: "file", source, path: "README.md" });
-    inspector.setViewedSource(source);
-    inspector.setViewedSource(null);
-    inspector.setViewedSource({ ...source });
-
-    expect(inspector.tabs).toHaveLength(2);
-
-    inspector.setViewedSource({ nodeId: "node", path: "/other" });
-
-    expect(inspector.tabs.map((tab) => tab.view)).toEqual([{ view: "diff-file-tree" }]);
-    expect(inspector.activeTab.view).toEqual({ view: "diff-file-tree" });
-  });
 });
