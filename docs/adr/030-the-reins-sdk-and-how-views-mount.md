@@ -3,7 +3,7 @@
 - **Status:** Accepted
 - **Date:** 2026-10-23
 - **Author:** Will (with Claude)
-- **Amended by:** [ADR-035](035-the-sidebar-is-a-stack-of-sections.md), [ADR-037](037-the-host-derives-a-main-area-views-url.md)
+- **Amended by:** [ADR-035](035-the-sidebar-is-a-stack-of-sections.md), [ADR-037](037-views-in-the-main-area-and-the-inspector.md)
 
 ## Context
 
