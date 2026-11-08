@@ -27,7 +27,9 @@ export type InboundMessage =
   | { type: "node_updated"; node: NodeView; pairingCodeId?: number }
   | { type: "node_removed"; nodeId: string }
   /** A backend extension's own message, under its name: its frontend part tells its messages apart. */
-  | { type: "extension"; extension: string; message: object };
+  | { type: "extension"; extension: string; message: object }
+  /** An extension was added, reloaded or removed, or the server loaded them: read the report again. */
+  | { type: "extensions_changed" };
 
 export type InboundMessageKind = InboundMessage["type"];
 export type InboundMessageOf<K extends InboundMessageKind> = Extract<InboundMessage, { type: K }>;
@@ -54,6 +56,7 @@ export function dispatchInboundMessage(handlers: InboundMessageHandlers, message
     case "node_updated": handlers.node_updated?.(message); break;
     case "node_removed": handlers.node_removed?.(message); break;
     case "extension": handlers.extension?.(message); break;
+    case "extensions_changed": handlers.extensions_changed?.(message); break;
   }
 }
 

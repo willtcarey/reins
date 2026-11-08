@@ -6,7 +6,7 @@
 
 import { Type } from "@sinclair/typebox";
 import type { ScriptNamespace } from "@reins/sdk/server";
-import type { ExtensionHost } from "../extensions/host.js";
+import type { ExtensionHost } from "../extension-system/host.js";
 import { collectImages } from "../tools/script-output.js";
 import { SignalSchema, sdkMethod, signalOf, type CallContext } from "./declaration.js";
 

@@ -22,7 +22,7 @@
       }
     },
     {
-      "files": ["packages/frontend/src/reins-sdk/**/*.ts"],
+      "files": ["packages/sdk/src/*.ts"],
       "rules": { "reins/sdk-isolation": "error" }
     },
     {
@@ -87,7 +87,7 @@
       "rules": { "reins/backend-extension-boundary": "off" }
     },
     {
-      "files": ["packages/backend/src/sdk/server/**/*.ts"],
+      "files": ["packages/sdk/src/server/**/*.ts"],
       "rules": { "reins/server-sdk-isolation": "error" }
     },
     {

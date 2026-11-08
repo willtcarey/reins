@@ -15,7 +15,7 @@ import { createTask } from "../../task-store.js";
 import { getDb } from "../../app-globals.js";
 import { upsertSource } from "../../node-store.js";
 import { buildRouter } from "../../routes/index.js";
-import type { ExtensionView } from "../../extensions/host.js";
+import type { ExtensionView } from "../../extension-system/report.js";
 
 /** What the session's user inputs carry: their text and metadata, in order. */
 const inputs = (sessionId: string) => getDb().query<{ text: string; metadata: string | null }, [string]>(`SELECT
@@ -250,7 +250,7 @@ describe("reins.sessions", () => {
   test("the host's report counts each extension's settlement listeners, gone once disposed", async () => {
     const dispose = automation.sessions.onSettled(() => {});
     const report = async () => {
-      const views: ExtensionView[] = await (await buildRouter().handle(makeRequest("GET", "/api/extensions"), state))!.json();
+      const views: ExtensionView[] = await (await buildRouter().handle(makeRequest("GET", "/api/installed-extensions"), state))!.json();
       return views.map(view => [view.name, view.registrations.settlementListeners]);
     };
 

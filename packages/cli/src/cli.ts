@@ -14,10 +14,14 @@ import { nodeStartCommand, nodeStatusCommand, nodeStopCommand } from "./node/con
 import { nodeRunCommand } from "./node/run.js";
 import { nodeSetupCommand } from "./node/setup.js";
 import { sourceListCommand } from "./source.js";
+import {
+  extensionAddCommand, extensionListCommand, extensionReloadCommand, extensionRemoveCommand, extensionEnableCommand, extensionDisableCommand,
+} from "./extension.js";
 
 const commands: readonly Command[] = [
   nodeSetupCommand, nodePairCommand, nodeRunCommand, nodeStartCommand, nodeStopCommand, nodeStatusCommand,
   nodeReloadCommand, sourceListCommand,
+  extensionAddCommand, extensionListCommand, extensionReloadCommand, extensionRemoveCommand, extensionEnableCommand, extensionDisableCommand,
 ];
 
 function commandList(): string {

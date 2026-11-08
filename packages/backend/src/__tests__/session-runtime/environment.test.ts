@@ -35,6 +35,7 @@ Current working directory: /project
 REINS documentation (read only when the user asks about REINS itself):
 - Feature docs: /home/u/.reins/builds/b/docs/features
 - Skills feature doc: /home/u/.reins/builds/b/docs/features/skills.md
+- Building extensions (extensions load from a directory; read before writing one): /home/u/.reins/builds/b/docs/features/building-extensions.md
 - Skills are listed in <available_skills>; read a skill's SKILL.md only when the task matches.`);
   });
 

@@ -1,6 +1,6 @@
 /**
  * Backend extensions' secrets (`extension_secrets`): each extension's values by key, encrypted with the server's
- * key. The host gives each extension its own as `ServerSdk.secrets` (`extensions/host.ts`, ADR-033).
+ * key. The host gives each extension its own as `ServerSdk.secrets` (`extension-system/extension-sdk.ts`, ADR-033).
  */
 
 import { decrypt, encrypt } from "./crypto.js";

@@ -1,0 +1,6 @@
+/* Reins scopes this sheet to the extension's views when it installs it. The app's own styles (its reset, its
+   font) reach those views, so only Tailwind's theme and utilities are here. */
+@layer theme, utilities;
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities) source(none);
+@source "./";

@@ -28,8 +28,10 @@ import type { NodeStream } from "./nodes/node-streams.js";
 import { createNodeHub, type NodeHubOptions } from "./nodes/node-hub.js";
 import { createNodeLinks, type NodeLinks } from "./nodes/node-link.js";
 import type { NodeBundleDelivery } from "./node-bundle/delivery.js";
-import { ExtensionHost, type ExtensionRegistration } from "./extensions/host.js";
+import { Extensions, type BuiltInBackendPart } from "./extension-system/extensions.js";
+import { createBroadcast } from "./models/broadcast.js";
 import { BUILT_IN_EXTENSIONS } from "./extensions/built-in.js";
+import { BUILT_IN_EXTENSION_NAMES } from "./extensions/built-in-names.js";
 import { API_FUNCTIONS, fnNamespace } from "./sdk-host/scripts.js";
 import type { PromptContext } from "@reins/sdk/server";
 import { logger } from "./logger.js";
@@ -143,9 +145,10 @@ export interface AppState {
   nodeLinks: NodeLinks;
   /** `/nodes/*`: the install script, manifest and bundle this app built (node-bundle/delivery.ts). */
   nodeBundle: NodeBundleDelivery;
-  /** What the app's extensions registered through the server SDK (docs/dev/server-sdk.md): registered when
-   * the app is built, disposed when it stops. */
-  extensions: ExtensionHost;
+  /** The app's extensions, built in and added, and every operation on them (docs/dev/extension-loading.md):
+   * the built-ins registered when the app is built, all disposed when it stops. What they registered is
+   * read through its `host`. */
+  extensions: Extensions;
 }
 
 /**
@@ -295,23 +298,36 @@ export interface ServerProcess {
 
 export interface AppStateOptions {
   hub?: NodeHubOptions;
-  /** The extensions it registers: the built-in ones by default. */
-  extensions?: readonly ExtensionRegistration[];
+  /** The built-in extensions' backend parts it registers: the built-in ones by default. */
+  extensions?: readonly BuiltInBackendPart[];
+  /** Every built-in extension's name, with only a frontend part too (`built-in-names.ts` by default). */
+  builtInNames?: readonly string[];
   /** Told an extension's failure to register, dispose or give its prompt section; logged by default. */
   onExtensionError?: (extension: string, error: unknown) => void;
 }
 
 /** One app's state: the process's, a new node hub, the `/nodes/link` endpoint handing its connections to
  * that hub, the node bundle the app serves and its extensions registered. */
-export function createAppState(serverProcess: ServerProcess, nodeBundle: NodeBundleDelivery, { hub, extensions = BUILT_IN_EXTENSIONS, onExtensionError = logExtensionError }: AppStateOptions = {}): AppState {
+export function createAppState(serverProcess: ServerProcess, nodeBundle: NodeBundleDelivery, {
+  hub, extensions = BUILT_IN_EXTENSIONS, builtInNames = BUILT_IN_EXTENSION_NAMES, onExtensionError = logExtensionError,
+}: AppStateOptions = {}): AppState {
   const state: AppState = {
     process: serverProcess,
     nodes: createNodeHub(() => state, hub),
     nodeLinks: createNodeLinks((socket, options) => state.nodes.accept(socket, options)),
     nodeBundle,
-    extensions: new ExtensionHost(() => state, new Set(API_FUNCTIONS.map(fnNamespace)), onExtensionError),
+    extensions: new Extensions({
+      app: () => state,
+      reservedNamespaces: new Set(API_FUNCTIONS.map(fnNamespace)),
+      builtIns: extensions,
+      builtInNames,
+      openStorage: name => serverProcess.extensionData.open(name),
+      buildsDir: serverProcess.extensionData.buildsDir,
+      broadcast: createBroadcast(serverProcess),
+      onError: onExtensionError,
+    }),
   };
-  for (const extension of extensions) state.extensions.register(extension);
+  state.extensions.start();
   return state;
 }
 

@@ -1,0 +1,14 @@
+{
+  "name": "@reins/sdk",
+  "version": "0.1.0",
+  "description": "The Reins SDKs: @reins/sdk for an extension's frontend part, @reins/sdk/server for its backend part. Types, and the few values Reins gives at runtime.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./server": "./src/server/index.ts",
+    "./package.json": "./package.json"
+  },
+  "peerDependencies": {
+    "@types/bun": "*"
+  }
+}

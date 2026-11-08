@@ -48,8 +48,8 @@ export function createApp(state: AppState): App & { stop(): void } {
     },
     searchScript: (sessionId, query, signal) => toolCalls(sessionId).searchScript(query, signal),
     createTask: (sessionId, input, signal) => toolCalls(sessionId).createTask(input, signal),
-    promptSections: context => state.extensions.promptSections(context),
-    sessionSettled: notice => state.extensions.sessionSettled(notice),
+    promptSections: context => state.extensions.host.promptSections(context),
+    sessionSettled: notice => state.extensions.host.sessionSettled(notice),
     stop() {
       stopped = true;
       for (const script of scripts) script.abort(new Error("The server reloaded"));

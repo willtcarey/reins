@@ -35,6 +35,11 @@ export function testExtensionsDir(): string {
   return extensions!.dir;
 }
 
+/** Where the current test's added extensions' built files are copied (`<data dir>/extension-builds`). */
+export function testExtensionBuildsDir(): string {
+  return testExtensionData().buildsDir;
+}
+
 /** An extension's own database in the current test (MCP's tables are in `mcp`'s). */
 export function extensionDb(name: string): Database {
   return testExtensionData().open(name).db;

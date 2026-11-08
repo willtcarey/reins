@@ -5,7 +5,7 @@ import { testSdk } from "../helpers/reins-sdk.js";
 const decorator: MessageDecorator = { decorate: () => [], onChange: () => () => {} };
 const pane = { title: () => "", description: () => "", icon: { mount: () => {} }, mount: () => {} };
 
-describe("Extensions", () => {
+describe("ExtensionHost", () => {
   test("records each extension, loaded, with what it registered through its own SDK; the app's own registrations are no extension's", () => {
     const sdk = testSdk();
     const icon = { mount: () => {} };
@@ -32,12 +32,12 @@ describe("Extensions", () => {
       },
     };
 
-    sdk.extensions.activate(viewer, sdk.sdkFor(viewer));
-    sdk.extensions.activate(commands, sdk.sdkFor(commands));
+    sdk.extensionHost.activate(viewer, sdk.sdkFor(viewer));
+    sdk.extensionHost.activate(commands, sdk.sdkFor(commands));
     sdk.views.register("diff-file-tree", { pane });
     sdk.commands.register({ name: "app", description: "", run: () => {} });
 
-    expect(sdk.extensions.list()).toEqual([
+    expect(sdk.extensionHost.list()).toEqual([
       {
         extension: viewer,
         status: "loaded",
@@ -67,32 +67,67 @@ describe("Extensions", () => {
     };
     const other: ExtensionRegistration = { name: "other", label: "Other", register: () => () => {} };
 
-    const disposeViewer = sdk.extensions.activate(viewer, sdk.sdkFor(viewer));
-    sdk.extensions.activate(other, sdk.sdkFor(other));
+    const disposeViewer = sdk.extensionHost.activate(viewer, sdk.sdkFor(viewer));
+    sdk.extensionHost.activate(other, sdk.sdkFor(other));
     removeView?.();
-    expect(sdk.extensions.list()[0]?.registrations).toEqual({ views: [], decorators: 1, commands: [], settingsPage: false, sidebarSections: [] });
+    expect(sdk.extensionHost.list()[0]?.registrations).toEqual({ views: [], decorators: 1, commands: [], settingsPage: false, sidebarSections: [] });
 
     disposeViewer();
-    expect(sdk.extensions.list().map(({ extension }) => extension.name)).toEqual(["other"]);
+    expect(sdk.extensionHost.list().map(({ extension }) => extension.name)).toEqual(["other"]);
   });
 
-  test("an extension whose register function throws is failed with its error, and the next one still loads", () => {
+  test("disposing an extension removes all it registered and stops its listeners, also what its disposer forgot", () => {
     const sdk = testSdk();
-    const broken: ExtensionRegistration = { name: "broken", label: "Broken", register: () => { throw new Error("cannot start"); } };
+    const heard: object[] = [];
+    const sloppy: ExtensionRegistration = {
+      name: "sloppy",
+      label: "Sloppy",
+      register: (reins: ReinsSdk) => {
+        reins.views.register("file", { pane });
+        reins.commands.register({ name: "sloppy", description: "", run: () => {} });
+        reins.settings.register({ mount: () => {} });
+        reins.sidebar.registerSection({ id: "sloppy", mount: () => {} });
+        reins.onMessage((message) => heard.push(message));
+        return () => {};
+      },
+    };
+
+    const dispose = sdk.extensionHost.activate(sloppy, sdk.sdkFor(sloppy));
+    dispose();
+    sdk.client.fireMessage({ type: "extension", extension: "sloppy", message: { after: true } });
+
+    expect(sdk.views.rendererFor({ view: "file" })).toBeNull();
+    expect(sdk.commands.list()).toEqual([]);
+    expect(sdk.settingsPages.page("sloppy")).toBeNull();
+    expect(sdk.sidebar.registeredBy("sloppy")).toEqual([]);
+    expect(heard).toEqual([]);
+  });
+
+  test("an extension whose register function throws is failed with its error and keeps nothing it registered; the next one still loads", () => {
+    const sdk = testSdk();
+    const broken: ExtensionRegistration = {
+      name: "broken",
+      label: "Broken",
+      register: (reins: ReinsSdk) => {
+        reins.views.register("file", { pane });
+        throw new Error("cannot start");
+      },
+    };
     const working: ExtensionRegistration = { name: "working", label: "Working", register: () => () => {} };
     const originalError = console.error;
     console.error = () => {};
 
     try {
-      sdk.extensions.activate(broken, sdk.sdkFor(broken));
-      sdk.extensions.activate(working, sdk.sdkFor(working));
+      sdk.extensionHost.activate(broken, sdk.sdkFor(broken));
+      sdk.extensionHost.activate(working, sdk.sdkFor(working));
     } finally {
       console.error = originalError;
     }
 
-    expect(sdk.extensions.list().map(({ extension, status, error }) => ({ name: extension.name, status, error }))).toEqual([
+    expect(sdk.extensionHost.list().map(({ extension, status, error }) => ({ name: extension.name, status, error }))).toEqual([
       { name: "broken", status: "failed", error: "cannot start" },
       { name: "working", status: "loaded", error: null },
     ]);
+    expect(sdk.views.rendererFor({ view: "file" })).toBeNull();
   });
 });

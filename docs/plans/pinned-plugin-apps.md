@@ -1,6 +1,6 @@
 # Pinned Plugin Apps
 
-Status: **deferred early design** — this is not the next implementation priority.
+Status: **in part built** — the Spoke acceptance case is met by an added extension (*Spoke acceptance story*); the rest is early design.
 
 ## Goal
 
@@ -174,6 +174,21 @@ A first useful plugin should be able to:
 10. Fail without making sessions and projects inaccessible.
 
 If the proposed interfaces cannot support this without Spoke-specific host branches, the interfaces are not ready.
+
+**Status (2026-11-07): met, with no Spoke-specific host code.** Spoke for Reins is an added extension in its own repository (`~/Workspaces/spoke-reins`, not yet on GitHub), loaded from its directory ([extension-loading.md](../dev/extension-loading.md), ADR-038):
+
+1. Done as a sidebar section (`reins.sidebar.registerSection`) whose row opens the inbox, a main-area page (`workspace.open({ view: "spoke-inbox" }, { in: "main" })`). A newly registered section comes last: the user moves it above Projects in Settings → Sidebar. No pinned-app region.
+2. Done: the section shows the unread pull request and issue counts.
+3. Done: a token in `reins.secrets`, by device flow or pasted on its Settings page. The device flow needs the OAuth App's client ID with Device Flow enabled; not yet tried against GitHub from Reins.
+4. Done: a `poller` service, with ETags and `X-Poll-Interval`.
+5. Done: its own database; `reins.broadcast` and `onMessage` to read again.
+6. Done.
+7. Done differently, by decision: Spoke keeps its own mapping of repositories to projects (its Settings page), and suggests mappings from each project's `origin` (`git remote get-url origin` in its default source, through `reins.nodes.run`). Reins' `ProjectInfo` has no remote URL.
+8. Done: `reins.sessions.start(prompt, { projectId, title })`, the session ID stored, "Open review" with `workspace.open({ view: "session", sessionId }, { in: "main" })`.
+9. Done: the page has its own URL; a reload of Spoke or Reins re-imports its frontend part in open browsers and reads the inbox again.
+10. Done: a failed build or load leaves the extension failed in Settings → Extensions, and the rest of Reins works.
+
+Slice 5 (*Externalize local plugin loading*) is built in that form. Left from this plan: the pinned-app region and sidebar accessories as such, a shared UI kit, and the other acceptance cases.
 
 ## Future acceptance case: Secrets
 

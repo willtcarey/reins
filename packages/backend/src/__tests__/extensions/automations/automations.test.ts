@@ -85,8 +85,8 @@ describe("the automations extension", () => {
   test("tells agents that can script when to make an automation, and when to run the command instead", async () => {
     const context = { session: { id: "s", projectId: null, taskId: null }, task: null };
 
-    const sections = await state.extensions.promptSections({ ...context, tools: null });
-    const withoutExecute = await state.extensions.promptSections({ ...context, tools: ["read", "bash"] });
+    const sections = await state.extensions.host.promptSections({ ...context, tools: null });
+    const withoutExecute = await state.extensions.host.promptSections({ ...context, tools: ["read", "bash"] });
 
     expect(sections.join("\n")).toContain("reins.automations.create");
     expect(sections.join("\n")).toContain("tell me when");
@@ -94,8 +94,8 @@ describe("the automations extension", () => {
   });
 
   test("search finds create by what an agent asks for", () => {
-    expect(searchScriptApi("monitor until merged", state.extensions).text).toContain("create(automation: {");
-    expect(searchScriptApi("every morning daily", state.extensions).text).toContain("create(automation: {");
+    expect(searchScriptApi("monitor until merged", state.extensions.host).text).toContain("create(automation: {");
+    expect(searchScriptApi("every morning daily", state.extensions.host).text).toContain("create(automation: {");
   });
 
   describe("a schedule", () => {

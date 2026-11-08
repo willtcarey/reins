@@ -40,7 +40,7 @@ function mockSettingsFetch(modelsResponse: Response | Promise<Response> = jsonRe
     if (url === "/api/oauth/providers") return jsonResponse([]);
     if (url === "/api/models") return modelsResponse;
     if (url === "/api/nodes") return jsonResponse([]);
-    if (url === "/api/extensions") return jsonResponse([]);
+    if (url === "/api/installed-extensions") return jsonResponse([]);
     return new Response("{}", { status: 500 });
   });
   return requests;
@@ -132,7 +132,7 @@ describe("SettingsPage", () => {
     const output = fullOutput(await showPage("extensions"));
 
     expect(output).toContain("<settings-extensions-section");
-    expect(requests).toEqual(["/api/extensions"]);
+    expect(requests).toEqual(["/api/installed-extensions"]);
   });
 
   test("an extension's details page is the Extensions section's: it loads the server's report and shows that extension", async () => {
@@ -145,7 +145,7 @@ describe("SettingsPage", () => {
     expect(output).toContain("<settings-extension-details");
     expect(collectTemplateProperties(page.render(), "name")).toEqual(["mcp"]);
     expect(templateToString(page.render())).toMatch(/aria-current=page[^<]*>(<[^>]*>)*Extensions</);
-    expect(requests).toEqual(["/api/extensions"]);
+    expect(requests).toEqual(["/api/installed-extensions"]);
   });
 
   test("shows the model settings once loaded while the model registry is still loading", async () => {

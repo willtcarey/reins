@@ -92,7 +92,7 @@ const PACKAGES = path.join(__dirname, "../packages");
 const EXTENSION_REGISTRATION = "extensions/built-in.ts";
 
 /** The backend extension a backend source (relative to `src/`) belongs to: `extensions/<name>/…`; null for
- * any other, the host's own `extensions/*.ts` included. */
+ * any other: the extension system is in `extension-system/`. */
 function backendExtensionOf(source) {
   return source?.match(/^extensions\/([^/]+)\//)?.[1] ?? null;
 }

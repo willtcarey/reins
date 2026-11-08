@@ -1,4 +1,4 @@
-import type { ServiceView } from "@backend/extensions/services.js";
+import type { ServiceView } from "@backend/extension-system/services.js";
 import { html } from "lit";
 import { statusDot, type StatusTone } from "../../ui/status-dot.js";
 

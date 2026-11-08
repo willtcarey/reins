@@ -33,7 +33,10 @@ export type ServerMessage =
   | { type: "node_updated"; node: NodeView; pairingCodeId?: number }
   | { type: "node_removed"; nodeId: string }
   /** A backend extension's own message (`reins.broadcast`), under the extension's name. */
-  | { type: "extension"; extension: string; message: object };
+  | { type: "extension"; extension: string; message: object }
+  /** An extension was added, reloaded or removed, or the app loaded them: browsers read the
+   * report again and load each frontend part whose build changed. */
+  | { type: "extensions_changed" };
 
 // ---------------------------------------------------------------------------
 // Broadcast function

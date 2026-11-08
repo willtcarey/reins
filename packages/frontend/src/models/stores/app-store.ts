@@ -1,10 +1,11 @@
 /** Long-lived application runtime and shared stores. */
 
+import type { ExtensionInfo } from "@reins/sdk";
 import type { ProjectView as ProjectInfo } from "@backend/routes/projects.js";
 import { CommandRegistry } from "../../sdk-host/commands.js";
 import { SendHandoff } from "../send-handoff.js";
 import { DecoratorRegistry } from "../../sdk-host/decorators.js";
-import { Extensions } from "../../sdk-host/extensions.js";
+import { ExtensionHost } from "../../extension-system/host.js";
 import { SettingsPages } from "../../sdk-host/settings-pages.js";
 import { SidebarSections, type SidebarLayout, type SidebarLayoutStorage } from "../../sdk-host/sidebar-sections.js";
 import { ViewRegistry } from "../../sdk-host/view-registry.js";
@@ -62,7 +63,7 @@ export class AppStore {
   /** The sidebar's sections, in the order the user gave them (Settings → Sidebar). */
   readonly sidebar: SidebarSections;
   /** The frontend extensions app-shell activated, and what each registered in the registries above. */
-  readonly extensions: Extensions;
+  readonly extensionHost: ExtensionHost;
   /** When this browser last opened each session: the sidebar's Recent. */
   readonly inspector = new Inspector(this.views);
   /** Each session's diff and review, while a view shows them. */
@@ -80,9 +81,10 @@ export class AppStore {
   private removeBrowserResumeHandlers: (() => void) | null = null;
   private serverReconcileInFlight: Promise<void> | null = null;
 
-  constructor(readonly client: IAppClient, sidebarLayout: SidebarLayoutStorage | null = sidebarLayoutSetting) {
+  /** `builtInExtensions`: the app's built-in extensions, which Settings names when one is turned off. */
+  constructor(readonly client: IAppClient, sidebarLayout: SidebarLayoutStorage | null = sidebarLayoutSetting, builtInExtensions: readonly ExtensionInfo[] = []) {
     this.sidebar = new SidebarSections(sidebarLayout);
-    this.extensions = new Extensions(this);
+    this.extensionHost = new ExtensionHost(this);
     this.sessionCache = new SessionCache();
     this.activeConversationsStore = new ConversationsStore({
       sessionCache: this.sessionCache,
@@ -91,7 +93,7 @@ export class AppStore {
     this.sessionOperations = new SessionOperations({ conversations: this.activeConversationsStore });
     this.projectsStore = new ProjectsStore(this.sessionCache, client);
     this.nodesStore = new NodesStore(client);
-    this.settingsStore = new SettingsStore(this.nodesStore, this.extensions, this.sidebar);
+    this.settingsStore = new SettingsStore(this.nodesStore, this.extensionHost, this.sidebar, client, builtInExtensions);
     this.files = new ProjectFiles(client, this.sessionCache, this.nodesStore);
 
     this.unsubscribers = [
@@ -138,7 +140,7 @@ export class AppStore {
     this.files.dispose();
     this.nodesStore.dispose();
     this.decorators.dispose();
-    this.extensions.dispose();
+    this.extensionHost.dispose();
     this.listeners.clear();
     this.reconcilers.clear();
   }

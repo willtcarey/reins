@@ -226,7 +226,7 @@ describe("the server SDK's host", () => {
       expect(JSON.parse(await run(`return await reins.notes.find("x", 2)`))).toEqual({ label: "found x" });
       await expect(run(`return await reins.notes.find(7)`)).rejects.toThrow("reins.notes.find: label: Expected string");
       expect(seen).toEqual([{ args: ["x", 2], context: { sessionId: "caller", projectId: project.id, taskId: task.id, signal: true } }]);
-      const docs = searchScriptApi("notes find", state.extensions).text;
+      const docs = searchScriptApi("notes find", state.extensions.host).text;
       expect(docs).toContain("find(label: string, limit?: number): Promise<Note>;");
       expect(docs).toContain("interface Note {");
     });
@@ -381,7 +381,7 @@ describe("the server SDK's host", () => {
       });
       const context = { session: { id: "s1", projectId: 1, taskId: 2 }, task: { id: 2, title: "T", description: null }, tools: null };
 
-      expect(await state.extensions.promptSections(context)).toEqual(["Section A", "Section D"]);
+      expect(await state.extensions.host.promptSections(context)).toEqual(["Section A", "Section D"]);
       expect(contexts).toEqual([context]);
     });
   });
@@ -469,7 +469,7 @@ describe("the server SDK's host", () => {
 
       expect(errors).toEqual(["broken: bad migration"]);
       expect(registered).toBe(false);
-      expect(await state.extensions.promptSections({ session: { id: "s", projectId: 1, taskId: null }, task: null, tools: null })).toEqual(["Working"]);
+      expect(await state.extensions.host.promptSections({ session: { id: "s", projectId: 1, taskId: null }, task: null, tools: null })).toEqual(["Working"]);
       expect(tables).toEqual([{ name: "kept" }]);
     });
 
@@ -526,7 +526,7 @@ describe("the server SDK's host", () => {
 
   describe("GET /api/extensions: each extension, its health, what it registered and what it stores", () => {
     const list = async (state: TestAppState) => {
-      const response = (await router.handle(makeRequest("GET", "/api/extensions"), state))!;
+      const response = (await router.handle(makeRequest("GET", "/api/installed-extensions"), state))!;
       expect(response.status).toBe(200);
       return response.json();
     };
@@ -558,6 +558,11 @@ describe("the server SDK's host", () => {
         name: "notes",
         status: "loaded",
         failure: null,
+        source: { kind: "built-in" },
+        manifest: null,
+        build: null,
+        backendPart: true,
+        frontendFailure: null,
         errors: [],
         registrations: {
           tools: { title: "Notes tools" },
@@ -629,7 +634,7 @@ describe("the server SDK's host", () => {
       await sdk!.secrets.set("servers/1/token", "s3cret-value");
       await sdk!.secrets.set("api-key", "other-value");
 
-      const response = (await router.handle(makeRequest("GET", "/api/extensions"), state))!;
+      const response = (await router.handle(makeRequest("GET", "/api/installed-extensions"), state))!;
       const text = await response.text();
 
       expect(JSON.parse(text)[0].storage.secrets).toBe(2);
@@ -653,7 +658,7 @@ describe("the server SDK's host", () => {
       });
 
       await removeSection?.();
-      await state.extensions.promptSections({ session: { id: "s", projectId: 1, taskId: null }, task: null, tools: null });
+      await state.extensions.host.promptSections({ session: { id: "s", projectId: 1, taskId: null }, task: null, tools: null });
       const [notes] = await list(state);
 
       expect(notes.status).toBe("loaded");
@@ -684,7 +689,7 @@ describe("the server SDK's host", () => {
 
       expect(kept.disposed).toBe(true);
       expect(disposed).toEqual(["forgetful"]);
-      expect(await state.extensions.promptSections({ session: { id: "s", projectId: 1, taskId: null }, task: null, tools: null })).toEqual([]);
+      expect(await state.extensions.host.promptSections({ session: { id: "s", projectId: 1, taskId: null }, task: null, tools: null })).toEqual([]);
       expect((await router.handle(makeRequest("POST", "/api/extensions/forgetful/x"), state))!.status).toBe(404);
       expect(script(state)(`return await reins.tools.call("kept__a__one", {})`)).rejects.toThrow("Unknown tool");
     });
@@ -703,7 +708,7 @@ describe("the server SDK's host", () => {
       });
 
       expect(errors).toEqual(["broken: cannot start"]);
-      expect(await state.extensions.promptSections({ session: { id: "s", projectId: 1, taskId: null }, task: null, tools: null })).toEqual([]);
+      expect(await state.extensions.host.promptSections({ session: { id: "s", projectId: 1, taskId: null }, task: null, tools: null })).toEqual([]);
     });
 
     test("a disposer removes only its own registration", async () => {
@@ -722,7 +727,7 @@ describe("the server SDK's host", () => {
 
       await remove?.();
 
-      expect(await state.extensions.promptSections({ session: { id: "s", projectId: 1, taskId: null }, task: null, tools: null })).toEqual(["Second"]);
+      expect(await state.extensions.host.promptSections({ session: { id: "s", projectId: 1, taskId: null }, task: null, tools: null })).toEqual(["Second"]);
     });
   });
 });

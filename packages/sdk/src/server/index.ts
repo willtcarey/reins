@@ -6,7 +6,7 @@
  *
  * Types only, and it imports only its own modules and the type of the database (`bun:sqlite`'s `Database`, which its own `Database` extends): an extension
  * uses only what its register function is given. Each member's comment states its behavior; keep them accurate when the host changes
- * (`extensions/host.ts`).
+ * (`extension-system/host.ts`).
  */
 
 import type { Database as BunDatabase } from "bun:sqlite";

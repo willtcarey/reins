@@ -6,7 +6,7 @@
  */
 import { Database } from "bun:sqlite";
 import { existsSync, mkdirSync } from "fs";
-import { join, resolve } from "path";
+import { dirname, join, resolve } from "path";
 
 /**
  * Resolve the data directory from an env-like record.
@@ -45,6 +45,9 @@ export interface ExtensionData {
   /** The extension's storage: its directory created and its database opened at the first call, the same
    * after. `name` is an extension's name (`[a-z][a-z0-9-]*`); another throws. */
   open(name: string): ExtensionStorage;
+  /** Where added extensions' built files are copied: beside the extensions' directories, not in them, since
+   * those are the extensions' own. */
+  readonly buildsDir: string;
 }
 
 const EXTENSION_NAME = /^[a-z][a-z0-9-]*$/;
@@ -54,6 +57,7 @@ const EXTENSION_NAME = /^[a-z][a-z0-9-]*$/;
 export function openExtensionData(root = extensionsDir()): ExtensionData & { close(): void } {
   const opened = new Map<string, ExtensionStorage>();
   return {
+    buildsDir: join(dirname(resolve(root)), "extension-builds"),
     open(name) {
       if (!EXTENSION_NAME.test(name)) throw new Error(`Not an extension name: ${name}`);
       let storage = opened.get(name);

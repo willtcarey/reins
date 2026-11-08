@@ -44,7 +44,7 @@ export type TestAppState = AppState & { process: TestProcess };
 export function testProcess({ clients = new Set(), frontendDir = "/tmp/nonexistent", ...options }: { clients?: Set<WsClient>; frontendDir?: string } & OpenSessionsOptions = {}): TestProcess {
   const serverProcess = createServerProcess({
     get db() { return getDb(); },
-    extensionData: { open: name => testExtensionData().open(name) },
+    extensionData: { open: name => testExtensionData().open(name), get buildsDir() { return testExtensionData().buildsDir; } },
     broadcast(frame) {
       for (const client of clients) {
         try { client.ws.send(frame); } catch { /* a closing socket */ }
@@ -74,17 +74,18 @@ export function stubRuntime(serverProcess: ServerProcess, sessionId: string, { b
 /** No node is connected unless the test connects one (`connectLoopbackNode`, a socket). `loopbackNode`:
  * an in-process node on the current test node database connects as the seeded node over the in-memory
  * loopback test utility. `hub`: hub options. `extensions`: those it registers (the built-in ones by default; disposed
- * before the test database closes), `onExtensionError` told their failures. `/nodes/*` serves `testNodeBundle()` unless `nodeBundle` is
+ * before the test database closes), then the only built-ins unless `builtInNames` names more; `onExtensionError` told their failures. `/nodes/*` serves `testNodeBundle()` unless `nodeBundle` is
  * given. Without `process`, the state's app is registered with a fresh test process (`clients` and
  * `frontendDir` are its). */
 export function createAppState(
   overrides?: { process?: TestProcess; clients?: Set<WsClient>; frontendDir?: string; nodeBundle?: NodeBundleDelivery },
-  { loopbackNode = false, ...options }: { loopbackNode?: boolean; hub?: NodeHubOptions } & Pick<AppStateOptions, "extensions" | "onExtensionError"> = {},
+  { loopbackNode = false, ...options }: { loopbackNode?: boolean; hub?: NodeHubOptions } & Pick<AppStateOptions, "extensions" | "builtInNames" | "onExtensionError"> = {},
 ): TestAppState {
   const nodeBundle = overrides?.nodeBundle ?? serveNodeBundle(Promise.resolve(testNodeBundle()), { bunVersion: Bun.version });
   const serverProcess = overrides?.process ?? testProcess({ clients: overrides?.clients, frontendDir: overrides?.frontendDir });
   // The same object the hub and `/nodes/link` hold, typed with its test process.
-  const state = Object.assign(buildAppState(serverProcess, nodeBundle, options), { process: serverProcess });
+  const builtInNames = options.builtInNames ?? options.extensions?.map(({ name }) => name);
+  const state = Object.assign(buildAppState(serverProcess, nodeBundle, { ...options, ...(builtInNames ? { builtInNames } : {}) }), { process: serverProcess });
   onTestDbTeardown(() => state.extensions.dispose());
   if (!overrides?.process) {
     serverProcess.registerApp(createApp(state));

@@ -1,0 +1,50 @@
+# ADR-038: Added extensions: built by their authors, loaded from a directory, run with full trust; every extension can be turned off
+
+- **Status:** Accepted
+- **Date:** 2026-11-07
+- **Author:** Will (with Claude)
+
+## Context
+
+Extensions had two SDKs (the server SDK, ADR-036; the Reins SDK, ADR-030) and every extension was built in: listed in `BUILT_IN_EXTENSIONS`, compiled with the app, its SDKs `tsconfig` path aliases. An extension that lives in its own repository (Spoke, the GitHub inbox of [pinned-plugin-apps.md](../plans/pinned-plugin-apps.md)) had no way in. BB loads plugins it builds itself, with a manifest in `package.json` and React shimmed from the host; Reins needed the same, for the server and the browser, with reloading while Reins runs.
+
+## Decision
+
+- **Where they come from: a directory on the server's disk.** The user adds an extension by its absolute path (`reins extension add <path>`, `POST /api/installed-extensions`). No registry or marketplace.
+- **Reins installs a copy and loads that.** Adding or reloading one copies its built files (the manifest, the backend file, the icon and the frontend directory; never its sources or `node_modules`) into `<data dir>/extension-builds/<name>/<build ID>/`, and every load uses the copy. So it runs when its directory is gone or half rebuilt, its files can be cached for good, and Reins has one place to process them (scoping its CSS, later) whatever the source (a git clone, later). A rebuild takes effect at the next reload.
+- **One record of every extension, built in or added.** The main database's `extensions` has a row for each: its name, `source_kind` (`'built-in'` or `'path'`; a git URL or GitHub repository, cloned into the data directory and updated, would be a later kind), an added one's path and reload `generation`, and `enabled`. A built-in's row is made the first time an app knows it, those with only a frontend part too (the server knows every built-in's name, `built-in-names.ts`). **Any extension can be turned off** (`reins extension disable`, Settings → Extensions): it is unregistered, its services stop, browsers drop its frontend part, and it does not load in the next apps until it is turned on. A built-in can be turned off, not removed. The report (`GET /api/installed-extensions`) lists every row, and the app activates its built-in frontend parts from it, as it does added ones.
+- **The manifest is the `reins` key of the extension's `package.json`** (as BB's `bb` key): `name`, `label`, `description`, `icon` (an SVG), `sdk` (a semver range of `@reins/sdk`), and `backend` and `frontend`, which name **built files**; and `node`, reserved for parts that run on nodes, which the server would install there (refused for now). The version is the package's. Not a separate `reins.json`: the package already has a name, a version and dependencies.
+- **Extensions deliver built artifacts; Reins builds nothing and runs no command of theirs.** The backend file is an ES module for Bun, the frontend file one for browsers (its directory is what browsers may load: its chunks). How they were made (Bun, Vite, Svelte's compiler, Tailwind) is the author's business. A missing file fails the extension at install with "build the extension first". A distributed extension (later) ships its built files.
+- **The server runs them.** The backend file is imported into the server process and started as built-ins are (`startBackend`, connected to the same `ExtensionHost`); browsers import the frontend file of the copy from `/extension-bundles/<name>/<build ID>/…` and activate it through the browser's `ExtensionHost.activate` with its own SDK. Nothing runs on nodes.
+- **The app provides Lit through an import map; everything else is bundled.** `index.html` maps `lit` and `lit/` to `/dist/vendor/lit/`, which the app's build writes (every public Lit module, sharing one copy). An extension's build leaves Lit out (`--external lit --external 'lit/*'`), so a Lit extension carries no copy of it. The map is static: the provided libraries are part of an SDK version (Lit 3 now; React could join later; Svelte not, as its compiled output is tied to its runtime's minor version). The backend bundles all it uses: import maps are a browser's, and the host checks schemas from the extension's own TypeBox (its `Kind` is a global symbol).
+- **The SDKs are a package**, `packages/sdk` (`@reins/sdk`, `@reins/sdk/server`), which Reins' packages alias and an extension depends on (as `file:` until it is published): types, and a few helpers it bundles. Its version is the one a manifest's `sdk` range is checked against.
+- **Reload without restarting Reins.** Reloading one (`reins extension reload <name>`) unregisters it (its services stopped, its disposer run, all it registered removed) and installs and loads its files again (the backend module imported anew, as another module instance); a broadcast (`extensions_changed`) makes each browser dispose the old frontend part (all it registered) and import the new one. A Reins reload or restart loads them all again.
+- **Reins scopes an extension's stylesheet; isolation goes one way.** The manifest may name a stylesheet in its frontend directory (`styles`). At install, Reins rewrites every selector to apply only inside `[data-reins-extension="<name>"]` (with `:where()`, so it adds no specificity; `:root`, `:host`, `html` and `body` mean the scope itself, so a theme's variables are set there), and refuses a sheet that imports another. Reins mounts each of the extension's views in an element with that attribute (`display: contents`) and links the scoped sheet while its frontend part is active. So its CSS cannot restyle the app or another extension, while the app's styles (its reset, its font, and later its tokens and components) reach its views, which are in the light DOM. As in BB, whose plugins work the same way.
+- **An extension's custom elements are its own.** The page's global registry binds a tag to one class for the page's life, so an extension that defines elements makes a scoped registry of its own at each evaluation of its module (the example's `src/elements.ts`), falling back to unique tags in older browsers. The host and the SDK know nothing of it.
+- **Full trust, as built-ins.** An added extension runs in the server process and in the page with all their authority: it can read the database file, run commands, reach every node, and read anything the page can. Adding one is trusting its code, as installing a BB plugin is. The SDKs are module boundaries for locality and compatibility, not a sandbox.
+
+## Alternatives considered
+
+- **Reins building extensions** (the first version of this decision: `Bun.build` of each entry in a process of its own, Tailwind generated for it, Lit and TypeBox given through shim modules). Reins would have had to know every author's tool chain: a Svelte extension needed a Svelte step in Reins.
+- **Reins running the extension's own build command** before each load. It still ties loading to building, and runs a command the extension chose on every reload.
+- **Git sources now.** Deferred: a local directory is what an author works on, and the record keeps a kind for git.
+- **`reins.json`.** A second file with a name and version beside `package.json`'s.
+- **Bundling Lit into each extension.** It works (an extension's elements are in its own registry), but every extension would carry it; the import map costs nothing until a module is imported.
+- **A `styles` field with the stylesheet added to the page as it is.** The extension's CSS (a Tailwind reset) would apply to the whole document.
+- **Each view in a shadow root, with the extension's CSS adopted there** (the second version of this decision). It isolated both ways, so the app's components and styles could not work inside an extension's views, and every extension carried the code to make the shadow root (its `elements.ts`). Portals, `document` queries and "click outside" code also break at a shadow boundary.
+- **Scoping with `@scope`.** BB measured it far slower to style in Safari than `:where()` selectors.
+- **Extensions adding import map entries.** A page's import map must come before its first module script; a static map of what the SDK version provides keeps the contract small.
+- **Loading built-ins the same way.** Built-ins stay built in: they are compiled with the app and checked by its lint and types. They share the record and the switch, not the loading.
+- **A table of added extensions only**, built-ins always on (the first version of this decision). Then a built-in could not be turned off, and Reins had two notions of an extension.
+- **Recording a frontend-only built-in when the browser first activates it.** The server would learn the app's extensions from browsers, and could not check a name it is asked to turn off.
+- **Sandboxing (a worker, an iframe).** Not now: the SDKs keep their values serializable and their calls async where practical, so a process boundary can come later for the backend; the frontend mounts into the page.
+
+## Consequences
+
+- Each load of a backend part is a new module instance in the server process, and the old ones stay in memory until the process restarts.
+- An author builds before each reload (or runs a watching build). Reins ships no template: the guide (building-extensions.md) gives every file of a working extension, which a test keeps equal to `examples/hello-extension`, so an agent can set one up anywhere.
+- Upgrading Lit to another major version is a breaking SDK change.
+- The app's built-in frontend parts wait for the server's report before they activate, so a turned-off one never appears. Without a report, all are on.
+- A new built-in frontend extension needs its name in `built-in-names.ts` as well (its type will not compile otherwise).
+- Settings → Extensions shows where each extension came from and offers Reload and Remove for external ones. Removing one keeps its data directory, database and secrets (ADR-032, ADR-033).
+- Details: [extension-loading.md](../dev/extension-loading.md), [building-extensions.md](../features/building-extensions.md).

@@ -10,6 +10,11 @@
   <link rel="manifest" href="/manifest.json" />
   <meta name="theme-color" content="#18181b" />
   <link rel="stylesheet" href="/dist/app.css" />
+  <!-- Libraries the app provides to extensions' frontend parts, which leave them out of their bundles
+       (docs/dev/extension-loading.md). Before any module script: a page's import map must come first. -->
+  <script type="importmap">
+  { "imports": { "lit": "/dist/vendor/lit/index.js", "lit/": "/dist/vendor/lit/" } }
+  </script>
 </head>
 <body class="bg-zinc-900 text-zinc-100 m-0 p-0">
   <app-shell></app-shell>

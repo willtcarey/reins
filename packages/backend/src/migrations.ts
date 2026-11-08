@@ -818,6 +818,23 @@ export const MIGRATIONS: Migration[] = [
     "064_project_default_source",
     "ALTER TABLE projects RENAME COLUMN home_source_id TO default_source_id",
   ],
+  [
+    // Every extension (docs/dev/extension-loading.md): the built-in ones, recorded the first time an app knows
+    // them, and those added from a directory (`path`), under the name their manifest gave. `enabled` is the
+    // user's switch: a disabled one is not loaded. `generation` counts explicit reloads, so browsers import an
+    // added one's frontend part again. A git source would be another `source_kind`.
+    "065_extensions",
+    `CREATE TABLE extensions (
+      name TEXT PRIMARY KEY,
+      source_kind TEXT NOT NULL CHECK (source_kind IN ('built-in', 'path')),
+      path TEXT UNIQUE,
+      enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+      generation INTEGER NOT NULL DEFAULT 0,
+      build_id TEXT,
+      added_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+      CHECK ((source_kind = 'path') = (path IS NOT NULL))
+    )`,
+  ],
 ];
 
 /** Applies those of `migrations` (all of them by default; a test may stop earlier) not applied yet, in order. */

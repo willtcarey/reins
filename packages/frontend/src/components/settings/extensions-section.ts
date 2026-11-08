@@ -5,10 +5,11 @@ import { StoreController } from "../../controllers/store-controller.js";
 import type { ExtensionSummary, ExtensionsStore } from "../../models/stores/extensions-store.js";
 import { showSettingsExtensionDetails } from "../../routing/app-router.js";
 import { statusDot } from "../../ui/status-dot.js";
-import { serviceState } from "./service-status.js";
+import { statusTone } from "./extension-status.js";
 import "../view-mount.js";
 
-/** Settings' Extensions section: a card for each extension, which opens Reins' page about it. Read-only. */
+/** Settings' Extensions section: a card for each extension, which opens Reins' page about it. Every card has
+ * the same rows, its description cut to two lines, so all are one size; the details page has the rest. */
 @customElement("settings-extensions-section")
 export class SettingsExtensionsSection extends LitElement {
   override createRenderRoot() {
@@ -31,7 +32,7 @@ export class SettingsExtensionsSection extends LitElement {
     return html`
       <button
         type="button"
-        class="flex w-full cursor-pointer flex-col gap-1 rounded-lg border px-3 py-2.5 text-left transition-colors ${failed
+        class="flex h-full w-full cursor-pointer flex-col gap-1 rounded-lg border px-3 py-2.5 text-left transition-colors ${failed
           ? "border-red-500/40 bg-red-950/10 hover:bg-red-950/20"
           : "border-zinc-700 bg-zinc-800/40 hover:bg-zinc-800/80"}"
         @click=${() => showSettingsExtensionDetails(extension.name)}
@@ -41,14 +42,12 @@ export class SettingsExtensionsSection extends LitElement {
             ? html`<reins-view-mount class="block size-3.5 shrink-0 overflow-hidden" aria-hidden="true" .presentation=${extension.icon}></reins-view-mount>`
             : nothing}
           <span class="truncate text-sm font-medium text-zinc-200">${extension.label}</span>
-          <span class="ml-auto flex shrink-0 items-center gap-1.5 text-[10px] text-zinc-400">${statusDot(failed ? "danger" : "success")}${failed ? "failed" : "loaded"}</span>
+          <span class="ml-auto flex shrink-0 items-center gap-1.5 text-[10px] text-zinc-400">${statusDot(statusTone(extension))}${extension.status}</span>
         </span>
-        ${extension.description ? html`<span class="line-clamp-2 text-[11px] text-zinc-500">${extension.description}</span>` : nothing}
-        ${extension.backend?.services.length
-          ? html`<span class="flex flex-wrap gap-x-3 gap-y-0.5 text-[10px] text-zinc-400">
-              ${extension.backend.services.map((service) => html`<span class="inline-flex items-center gap-1"><span class="font-mono text-zinc-500">${service.name}</span> ${serviceState(service)}</span>`)}
-            </span>`
-          : nothing}
+        <span class="line-clamp-2 min-h-[2lh] text-[11px] text-zinc-500" title=${extension.description ?? nothing}>${extension.description ?? ""}</span>
+        ${extension.source.kind === "path"
+          ? html`<span class="truncate font-mono text-[10px] text-zinc-500" title=${extension.source.path}>${extension.source.path}</span>`
+          : html`<span class="text-[10px] text-zinc-500">Built in</span>`}
       </button>
     `;
   }

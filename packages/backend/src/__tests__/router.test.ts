@@ -1,11 +1,14 @@
-import { describe, test, expect } from "bun:test";
+import { beforeEach, describe, test, expect } from "bun:test";
 import { createRouter, type Middleware } from "../router.js";
 import { HttpError, RequestRefused } from "../errors.js";
-import { createAppState } from "./helpers/app-state.js";
+import { createAppState, type TestAppState } from "./helpers/app-state.js";
+import { useTestDb } from "./helpers/test-db.js";
 import { makeRequest } from "./helpers/request.js";
 
 describe("createRouter", () => {
-  const state = createAppState();
+  useTestDb();
+  let state: TestAppState;
+  beforeEach(() => { state = createAppState(undefined, { extensions: [] }); });
 
   test("matches a GET route and returns response", async () => {
     const router = createRouter();

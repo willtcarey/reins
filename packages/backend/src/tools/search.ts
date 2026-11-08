@@ -10,7 +10,7 @@
  */
 
 import { searchFunctions, referencedTypes, scriptingApi, type NamedType } from "../sdk-host/scripts.js";
-import type { ExtensionHost } from "../extensions/host.js";
+import type { ExtensionHost } from "../extension-system/host.js";
 import type { ScriptFunction } from "../sdk-host/projection.js";
 import { formatApiInterfaces, formatTypeDeclaration, type SchemaNameMap } from "../sdk-host/schema-formatter.js";
 
