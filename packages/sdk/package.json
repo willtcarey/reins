@@ -9,6 +9,9 @@
     "./lit": "./src/lit/index.ts",
     "./package.json": "./package.json"
   },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
   "peerDependencies": {
     "@types/bun": "*",
     "lit": "^3"
@@ -19,6 +22,8 @@
     }
   },
   "devDependencies": {
-    "lit": "3.3.2"
+    "@types/bun": "^1.3.11",
+    "lit": "3.3.2",
+    "typescript": "^5.9.3"
   }
 }

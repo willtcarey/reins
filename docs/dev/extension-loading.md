@@ -7,7 +7,7 @@ How Reins records its extensions, built in and added, turns each on or off, and 
 ## Where it lives
 
 ```
-packages/sdk/                              # @reins/sdk (src/index.ts) and @reins/sdk/server (src/server/index.ts): the SDK package
+packages/sdk/                              # @reins/sdk (src/index.ts), @reins/sdk/server (src/server/index.ts) and @reins/sdk/lit: the SDK package, typechecked on its own (its tsconfig)
 packages/backend/src/
   extensions-store.ts                      # the `extensions` table: rows, the switch, generation
   extension-system/                        # the system (extensions/ holds only the built-ins)
