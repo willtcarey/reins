@@ -2,7 +2,7 @@
 import type { ReinsSdk } from "@reins/sdk";
 import { html } from "lit";
 import type { Api } from "./api.js";
-import { ScopedElement, defineElement, mountElement } from "./elements.js";
+import { ScopedElement, defineElement, mountElement } from "@reins/sdk/lit";
 
 class Settings extends ScopedElement {
   static override properties = { message: { state: true } };

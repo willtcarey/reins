@@ -2,310 +2,84 @@
 
 An **extension** adds to Reins from outside it: a directory with a `package.json` and the files you built, which Reins loads. Reins builds nothing: you build your extension with any tools you like (Bun, Vite, Svelte, Tailwind), and its manifest names the results. It can give agents tools and script functions, run background services, keep its own database and secrets, answer HTTP calls, and add sidebar sections, pages, views, commands and a Settings page to the app. Reins' own features (MCP servers, automations, Recent sessions…) are extensions too ([extensions.md](extensions.md)); an extension you build uses the same two SDKs.
 
-This guide is for a person, or an agent helping one, writing an extension: *Set up an extension* gives every file of a working one. Spoke, a GitHub notifications inbox, is a complete example outside this repository (its shape is at the end).
+This guide is for a person, or an agent helping one, writing an extension: *Set up an extension* says what Reins requires and the steps to follow. Spoke, a GitHub notifications inbox, is a complete example outside this repository (its shape is at the end).
 
 **Trust:** an extension runs inside the Reins server and inside the browser with their full authority (it can run commands on nodes, read Reins' data, and see what the page sees). Add only code you trust.
 
 ## Set up an extension
 
-These steps make a working extension: a backend part with its own database and an HTTP method, a frontend part with a Settings page that calls it, a test, and a build. Follow them in a new directory outside Reins. They are `examples/hello-extension` in a Reins checkout, file for file (a test keeps them the same), so you may copy that directory instead.
+You write and build the extension; Reins builds nothing. It copies the files you built and loads the copy. Work in a new directory outside the Reins checkout. For a working reference, read `examples/hello-extension` in a Reins checkout: Reins typechecks, tests and loads it with its own code.
 
-1. **Choose its name and label.** The name is lowercase letters, digits and hyphens (`hello`), the label what Settings shows (`Hello`). In the files below, put your name in `package.json` (`name` and `reins.name`) and in the element's tag in `src/frontend.ts` (`hello-settings` becomes `<name>-settings`), and your label in `reins.label`.
-2. **Write the files.** Lit, Tailwind and TypeBox are at the versions Reins uses: keep them, so your classes, elements and schemas match the app's. `@reins/sdk` is not published yet: point it at the `packages/sdk` directory of a Reins checkout on your machine.
+### Requirements
 
-<!-- example: package.json -->
-```json
-{
-  "name": "hello",
-  "version": "0.1.0",
-  "private": true,
-  "type": "module",
-  "scripts": {
-    "build": "tailwindcss -i src/styles.css -o dist/styles.css --minify && bun build src/server.ts --target bun --outfile dist/server.js && bun build src/frontend.ts --target browser --outfile dist/frontend.js --external lit --external 'lit/*'",
-    "test": "bun test",
-    "typecheck": "tsc --noEmit"
-  },
-  "reins": {
-    "name": "hello",
-    "label": "Hello",
-    "description": "An example extension: a Settings page that greets, counting greetings in its own database.",
-    "sdk": "^0.1.0",
-    "backend": "./dist/server.js",
-    "frontend": "./dist/frontend.js",
-    "styles": "./dist/styles.css"
-  },
-  "devDependencies": {
-    "@reins/sdk": "file:<Reins checkout>/packages/sdk",
-    "@sinclair/typebox": "0.34.48",
-    "lit": "3.3.2",
-    "tailwindcss": "4.1.18",
-    "@tailwindcss/cli": "4.1.18",
-    "@types/bun": "^1.3.11",
-    "typescript": "^5.9.3"
-  }
-}
-```
+**The package**
 
-<!-- example: tsconfig.json -->
-```json
-{
-  "compilerOptions": {
-    "target": "ESNext",
-    "module": "ESNext",
-    "moduleResolution": "bundler",
-    "lib": [
-      "ESNext",
-      "DOM",
-      "DOM.Iterable"
-    ],
-    "types": [
-      "bun"
-    ],
-    "strict": true,
-    "skipLibCheck": true,
-    "noEmit": true
-  },
-  "include": [
-    "src"
-  ]
-}
-```
+- `package.json` has `"type": "module"` and a `reins` key, the manifest (*The manifest*). Reins refuses a manifest with a key the table does not list.
+- `reins.name` is the extension's name. The package's own `name` can be anything: Reins does not read it.
+- Use these versions of the libraries an extension shares with the app (a test keeps this table equal to the app's):
 
-<!-- example: .gitignore -->
-```
-node_modules/
-dist/
-```
+<!-- versions -->
+| Package | Version | Why |
+|---|---|---|
+| `lit` | 3.3.2 | The page gives this Lit to your frontend part: do not use a newer API. |
+| `@sinclair/typebox` | 0.34.48 | Reins checks your HTTP schemas with its own TypeBox. |
+| `tailwindcss`, `@tailwindcss/cli` | 4.1.18 | Only if you use Tailwind. The app's classes also apply in your views, so a class of the same name must have the same rules. |
+<!-- /versions -->
 
-The HTTP API, schemas only, which both parts import (the frontend with `import type`, so its bundle holds no TypeBox):
+- `@reins/sdk` gives the types of both SDKs and `@reins/sdk/lit`. It is not published yet: depend on it as `file:<Reins checkout>/packages/sdk`.
 
-<!-- example: src/api.ts -->
-```ts
-/** The backend part's HTTP API: what the frontend part calls with `reins.http.call`. Schemas only. */
-import { Type } from "@sinclair/typebox";
+**The backend file** (`reins.backend`)
 
-export const api = {
-  greet: {
-    input: Type.Object({ name: Type.String({ minLength: 1, maxLength: 100 }) }),
-    output: Type.Object({ message: Type.String(), count: Type.Number() }),
-  },
-};
+- One ES module for Bun that holds all the code it uses. Reins copies only this file, not its directory or `node_modules`: do not split it into chunks, and do not read other files of your package at run time. Keep your own files in `reins.dataDir`.
+- Its default export is `{ migrations?, register(reins) }`, a `ServerExtension` from `@reins/sdk/server`. `register` returns a disposer, or nothing.
 
-export type Api = typeof api;
-```
+**The frontend file** (`reins.frontend`)
 
-The backend part (*The backend part*):
+- One ES module for browsers, in a directory of its own (`dist/`). Reins copies that whole directory, and browsers can read each file in it: put no secrets there.
+- Leave out `lit` and `lit/*` (`--external lit --external 'lit/*'`): the page gives them through an import map, so all extensions share one Lit. Bundle every other library, `@reins/sdk` and Svelte too.
+- Import the module with your HTTP API's schemas with `import type`, so TypeBox stays out of the bundle.
+- Its default export is a function `register(reins)` that returns a disposer.
 
-<!-- example: src/server.ts -->
-```ts
-/** The backend part: runs in the Reins server, with its own database. Its build bundles all it uses. */
-import type { ServerExtension, ServerSdk } from "@reins/sdk/server";
-import { api } from "./api.js";
+**Custom elements** (only if you define them, as a Lit frontend does)
 
-/** Greets `name`, counting how often it was greeted; tells browsers. */
-export function greet(reins: Pick<ServerSdk, "db" | "broadcast">, name: string) {
-  reins.db.query("INSERT INTO greetings (name) VALUES (?)").run(name);
-  const { count } = reins.db.query<{ count: number }, [string]>("SELECT COUNT(*) AS count FROM greetings WHERE name = ?").get(name) ?? { count: 0 };
-  reins.broadcast({ type: "greeted", name });
-  return { message: `Hello, ${name}!`, count };
-}
+- Do not define them in the global `customElements` registry. A reload evaluates your module again with new classes, and the global registry cannot define a tag twice; its tags are also shared with Reins and other extensions.
+- Use `@reins/sdk/lit`: `defineElement(name, class)` defines an element in a registry of your bundle's own and gives the tag to create it with; extend `ScopedElement`, which makes the elements in your templates through that registry and draws in the light DOM; `mountElement(target, tag, class, setup)` is a mount function's body.
+- Draw in the light DOM, not in a shadow root: your scoped styles and the app's reach only the light DOM.
+- Use `static properties` with `declare` fields, and set their values in the constructor: a class field initializer hides Lit's reactive property.
 
-export default {
-  migrations: [
-    { id: "001_greetings", up: db => db.exec("CREATE TABLE greetings (name TEXT NOT NULL)") },
-  ],
-  register(reins) {
-    return reins.http.handle(api, {
-      greet: ({ input }) => greet(reins, input.name),
-    });
-  },
-} satisfies ServerExtension;
-```
+**The stylesheet** (`reins.styles`, optional)
 
-Its test, through a fake of the SDK parts it uses (*Testing*):
+- One file in the frontend directory. It must not `@import` other files.
+- Reins scopes each rule to your views; `:root` and `:host` become the element your view is in.
+- The app's reset and font apply in your views, but the app's sheet holds only the classes the app uses. So, with Tailwind, build only its theme and the utilities your files use:
 
-<!-- example: src/server.test.ts -->
-```ts
-import { Database } from "bun:sqlite";
-import { expect, test } from "bun:test";
-import extension, { greet } from "./server.js";
+  ```css
+  @layer theme, utilities;
+  @import "tailwindcss/theme.css" layer(theme);
+  @import "tailwindcss/utilities.css" layer(utilities) source(none);
+  @source "./";
+  ```
 
-/** The part of the SDK `greet` uses: a database with the extension's migrations, and broadcasts recorded. */
-function fakeReins() {
-  const db = new Database(":memory:");
-  for (const migration of extension.migrations) migration.up(db);
-  const broadcasts: object[] = [];
-  return { db, broadcast: (message: object) => { broadcasts.push(message); }, broadcasts };
-}
+### Steps
 
-test("greeting counts each name and tells browsers", () => {
-  const reins = fakeReins();
+1. Choose the name (lowercase letters, digits and hyphens, a letter first) and the label Settings shows.
+2. Write `package.json` with the manifest, the dependencies above and the scripts `build`, `test` and `typecheck`. Any build tool that writes the files the manifest names works. The example's build is:
 
-  greet(reins, "Ada");
-  const second = greet(reins, "Ada");
+   ```sh
+   tailwindcss -i src/styles.css -o dist/styles.css --minify
+   bun build src/server.ts --target bun --outfile dist/server.js
+   bun build src/frontend.ts --target browser --outfile dist/frontend.js --external lit --external 'lit/*'
+   ```
 
-  expect(second).toEqual({ message: "Hello, Ada!", count: 2 });
-  expect(reins.broadcasts).toEqual([{ type: "greeted", name: "Ada" }, { type: "greeted", name: "Ada" }]);
-});
-```
-
-The frontend part (*The frontend part*):
-
-<!-- example: src/frontend.ts -->
-```ts
-/** The frontend part: runs in the browser. Its build leaves Lit out: the app provides it. */
-import type { ReinsSdk } from "@reins/sdk";
-import { html } from "lit";
-import type { Api } from "./api.js";
-import { ScopedElement, defineElement, mountElement } from "./elements.js";
-
-class Settings extends ScopedElement {
-  static override properties = { message: { state: true } };
-  declare message: string;
-  reins: ReinsSdk<Api> | null = null;
-
-  constructor() {
-    super();
-    this.message = "";
-  }
-
-  private async greet(event: SubmitEvent) {
-    event.preventDefault();
-    const form = event.currentTarget;
-    if (!(form instanceof HTMLFormElement) || !this.reins) return;
-    const name = String(new FormData(form).get("name") ?? "");
-    const { message, count } = await this.reins.http.call("greet", { name });
-    this.message = `${message} (${count})`;
-  }
-
-  override render() {
-    return html`
-      <form class="flex gap-2" @submit=${this.greet}>
-        <input name="name" aria-label="Name" class="rounded border border-zinc-700 bg-zinc-800 px-2 py-1 text-sm text-zinc-100" />
-        <button class="rounded bg-zinc-700 px-2.5 py-1 text-xs text-zinc-100 hover:bg-zinc-600">Greet</button>
-      </form>
-      <p class="mt-2 text-xs text-zinc-400">${this.message}</p>
-    `;
-  }
-}
-const SETTINGS = defineElement("hello-settings", Settings);
-
-export default function register(reins: ReinsSdk<Api>) {
-  return reins.settings.register({
-    mount: target => mountElement(target, SETTINGS, Settings, settings => { settings.reins = reins; }),
-  });
-}
-```
-
-Its own custom element registry, which a Lit extension needs (*Custom elements*):
-
-<!-- example: src/elements.ts -->
-```ts
-/**
- * This extension's own custom element registry. A page's global registry binds a tag to one class for the page's
- * life, and a reload of the extension evaluates this module anew with new classes; it would also share tags
- * with Reins and other extensions. So each evaluation of this module makes a registry of its own
- * (`new CustomElementRegistry()`, scoped registries: Chrome 146, Safari 26, Firefox 159), defines the extension's
- * elements there under their plain names, and creates them through it. Reins knows nothing of it: it is the
- * extension's own code.
- *
- * Lit clones its templates with `document.importNode`, which uses the global registry, so the extension's elements
- * give Lit a `creationScope` that clones through this registry.
- *
- * In a browser without scoped registries, the elements go in the global registry under a tag unique to this
- * evaluation (`hello-settings-k3x9…`), which works the same apart from the names.
- *
- * Its styles need nothing here: Reins scopes its stylesheet (`reins.styles` in package.json) to the elements it
- * mounts its views in.
- */
-import { LitElement } from "lit";
-
-type ScopedDocument = Document & {
-  createElement(tag: string, options: { customElementRegistry: CustomElementRegistry }): HTMLElement;
-  importNode(node: Node, options: { customElementRegistry: CustomElementRegistry; selfOnly: boolean }): Node;
-};
-
-function scopedRegistry(): CustomElementRegistry | null {
-  try {
-    return Reflect.construct(CustomElementRegistry, []);
-  } catch {
-    return null;
-  }
-}
-
-const registry = scopedRegistry();
-const scopedDocument = (): ScopedDocument => Object.assign(document);
-/** What Lit clones templates with: through the extension's registry when it has one. */
-const creationScope = registry
-  ? { importNode: (node: Node, deep?: boolean) => scopedDocument().importNode(node, { customElementRegistry: registry, selfOnly: !deep }) }
-  : undefined;
-const suffix = registry ? "" : `-${Math.random().toString(36).slice(2, 10)}`;
-
-/** Defines `element` under `name` (in the global registry only as the fallback, with this evaluation's suffix);
- * returns the tag to create it with. */
-export function defineElement(name: string, element: CustomElementConstructor): string {
-  const tag = `${name}${suffix}`;
-  (registry ?? customElements).define(tag, element);
-  return tag;
-}
-
-/** A new element of `tag`, made through the extension's registry. */
-export function createElement(tag: string): HTMLElement {
-  return registry ? scopedDocument().createElement(tag, { customElementRegistry: registry }) : document.createElement(tag);
-}
-
-/** The extension's elements: their templates' elements made through its registry, drawn in the light DOM, where
- * its scoped styles and the app's reach them. */
-export class ScopedElement extends LitElement {
-  constructor() {
-    super();
-    if (creationScope) this.renderOptions.creationScope = creationScope;
-  }
-
-  override createRenderRoot() {
-    return this;
-  }
-}
-
-/** Mounts a new element of `tag`, set up by `setup`, into `target` (the element Reins mounts the view in). */
-export function mountElement<T extends HTMLElement>(target: HTMLElement, tag: string, type: abstract new () => T, setup: (element: T) => void) {
-  const element = createElement(tag);
-  if (element instanceof type) setup(element);
-  target.append(element);
-  return { dispose: () => element.remove() };
-}
-```
-
-Its stylesheet, which Reins scopes to its views (*Styles*):
-
-<!-- example: src/styles.css -->
-```css
-/* Reins scopes this sheet to the extension's views when it installs it. The app's own styles (its reset, its
-   font) reach those views, so only Tailwind's theme and utilities are here. */
-@layer theme, utilities;
-@import "tailwindcss/theme.css" layer(theme);
-@import "tailwindcss/utilities.css" layer(utilities) source(none);
-@source "./";
-```
-
-Add a `README.md` saying what it is and how to build it.
-
-3. **Install, test, build, add.** `reins …` is `bun run reins …` from a Reins checkout; add `--local` on a machine paired as a node, or `--server <url>`:
-
-```sh
-bun install && bun test && bun run typecheck
-bun run build                          # dist/: what Reins installs
-reins extension add "$PWD"             # once: Reins copies dist/ and loads it
-bun run build && reins extension reload hello   # after each change
-```
-
-`reins extension list` says whether it loaded, and why not (*Loading and reloading*). Open Settings → Hello to see its page.
-
-The build is any tool that writes the files the manifest names; the example's is Tailwind and `bun build`. The backend bundle holds everything it uses. The frontend bundle leaves Lit out, as Reins provides it (*Provided libraries*).
+3. Write the backend part, the frontend part, and a test of the backend part through a fake of the SDK (*Testing*). Write a README that says how to build and reload it.
+4. Install, check and build: `bun install && bun test && bun run typecheck && bun run build`.
+5. Add it, once, from its directory: `reins extension add "$PWD"`. If the CLI cannot reach the server, add `--local` (the server on this machine) or `--server <url>`.
+6. After each change, build, then `reins extension reload <name>`. Reins runs its copy, so a build alone changes nothing; nothing watches your directory.
+7. Check that it loaded: `reins extension list` shows its status, and why it failed (a failure a browser reported too). Open Settings → <label>.
 
 ## The manifest
 
-The `reins` key of the extension's `package.json`; its `version` is the package's:
+The `reins` key of the extension's `package.json`; its version is the package's `version` (`0.0.0` without one). A key the table does not list makes the manifest invalid. Every file it names must be inside the extension's directory.
 
 ```json
 {
@@ -319,21 +93,22 @@ The `reins` key of the extension's `package.json`; its `version` is the package'
     "icon": "./icon.svg",
     "sdk": "^0.1.0",
     "backend": "./dist/server.js",
-    "frontend": "./dist/frontend.js"
+    "frontend": "./dist/frontend.js",
+    "styles": "./dist/styles.css"
   }
 }
 ```
 
 | Field | |
 |---|---|
-| `name` | Required. Lowercase letters, digits and hyphens. Its HTTP API, messages, data directory and Settings page are under it. It cannot be a built-in extension's name. |
-| `label` | Required. What Settings shows. |
-| `description` | Optional, one or two sentences. |
+| `name` | Required. Lowercase letters, digits and hyphens, a letter first; 64 characters at most. Its HTTP API, messages, data directory and Settings page are under it. It cannot be a built-in extension's name, nor `app` or `file-browser` (the browser keeps them). |
+| `label` | Required, 80 characters at most. What Settings shows. |
+| `description` | Optional, 300 characters at most: one or two sentences. |
 | `icon` | Optional: an SVG file (at most 16 KiB), drawn in `currentColor` beside the label. |
 | `sdk` | Required: the range of `@reins/sdk` versions it was written for (`^0.1.0`). Reins refuses to load it when its SDK is outside the range. |
 | `backend` | The backend part: a built ES module for Bun, which runs in the server. |
 | `frontend` | The frontend part: a built ES module for browsers, in a directory of its own (`dist/`). Browsers may load any file in that directory (its chunks), but not the backend file. At least one of `backend` and `frontend`. |
-| `styles` | Optional: a stylesheet in the frontend's directory. Reins scopes it to your views when it installs the extension (*Styles*). |
+| `styles` | Optional: a stylesheet in the frontend's directory; it needs a `frontend`. Reins scopes it to your views when it installs the extension (*Requirements*). |
 | `node` | Reserved for parts that run on nodes. Not supported yet: a manifest with it does not load. |
 
 ## The backend part
@@ -370,13 +145,11 @@ What `reins` gives (each in depth in [server-sdk.md](../dev/server-sdk.md), in a
 
 The frontend entry's default export is a register function, which gets the Reins SDK (`@reins/sdk`) and returns a disposer. Type it with the backend part's API, so `http.call` is typed (`src/frontend.ts` above).
 
-**Custom elements go in the extension's own registry.** The page's global registry (`customElements`) binds a tag to one class for the page's life, so a reloaded module could not define its new classes there, and it would share tags with Reins and other extensions. `src/elements.ts` (above) is the extension's own code: each evaluation of the module makes a `new CustomElementRegistry()` (scoped registries: Chrome 146, Safari 26, Firefox 159), `defineElement` defines there, `mountElement` mounts a view's element made through it, and `ScopedElement` (a light-DOM `LitElement`, so the app's styles and your scoped ones reach it) gives Lit a `creationScope`, so the elements its templates contain are made through it too. In an older browser it falls back to the global registry with tags unique to that evaluation. Reins knows nothing of any of it. An extension that defines no custom elements (Svelte, React, Vue, Solid, Lit's `render()`) needs none of this.
+Everything an extension draws is a **mount function**: `mount(target)` draws into an element Reins made and returns `{ dispose }` (views also `update`). Any framework works: Lit, Svelte's `mount`, React's `createRoot`, plain DOM. Reins puts that element in your extension's scope (`SCOPE_ATTRIBUTE`), where your stylesheet applies.
 
-Everything an extension draws is a **mount function**: `mount(target)` draws into an element Reins made and returns `{ dispose }` (views also `update`). Any framework works: Lit, Svelte's `mount`, React's `createRoot`, plain DOM. Prefer `static properties` with `declare` fields to Lit's decorators, which depend on your `tsconfig`.
+**Styles** (*Requirements* above). Something you draw outside your views (a dialog appended to `document.body`) gets your styles when you put `SCOPE_ATTRIBUTE` (from `@reins/sdk`) on it, with your extension's name as its value. Do not add styles to the document's `<head>` yourself. Reins' design tokens and a UI kit for extensions are planned ([plan](../plans/extension-design-tokens-and-ui-kit.md)).
 
-**Styles.** Name your stylesheet in the manifest (`"styles": "./dist/styles.css"`). When Reins installs the extension it scopes the sheet: every rule applies only inside the elements Reins mounts your views in, which carry `data-reins-extension="<name>"` (`:root` and `:host` mean that element, so a theme's variables are set there). So your CSS cannot restyle Reins or another extension, while Reins' own styles reach your views: its reset and font, and its Tailwind classes. The example's `src/styles.css` therefore builds only Tailwind's theme and the utilities your files use, at the app's Tailwind version (`@import "tailwindcss/theme.css" layer(theme); @import "tailwindcss/utilities.css" layer(utilities) source(none);`). Use the app's classes (`bg-zinc-900`, `text-zinc-400`…) to look like it. A sheet must be one file: one that `@import`s another fails the install. Something you draw outside your views (a dialog appended to `document.body`) gets your styles when you put the attribute on it (`SCOPE_ATTRIBUTE` from `@reins/sdk`, with your extension's name). Do not add styles to the document's `<head>` yourself. Reins' design tokens and a UI kit for extensions are planned ([plan](../plans/extension-design-tokens-and-ui-kit.md)).
-
-**Provided libraries.** Reins' page provides **Lit 3** through an import map: `lit` and every `lit/…` module. Leave them out of your frontend bundle (`--external lit --external 'lit/*'`), and the browser loads Reins' copy. Bundle everything else, Svelte included (its compiled code must match its own runtime's version). A new major version of a provided library is a new SDK version.
+**Provided libraries.** The page provides only **Lit 3** (*Requirements*); bundle everything else, Svelte included (its compiled code must match its own runtime's version). A new major version of a provided library is a new SDK version.
 
 What `reins` gives (in depth in [reins-sdk.md](../dev/reins-sdk.md)):
 
@@ -416,7 +189,7 @@ A build or load that fails shows the extension as failed with the error (in Sett
 - *Its backend file dist/server.js does not exist: build the extension first*: run your build.
 - *Its backend module's default export must be { register, migrations? }*, *Its frontend module's default export is not a register function*.
 - *Failed to resolve module specifier "…"* in a browser: the frontend bundle left out a library Reins does not provide; bundle it.
-- *… has already been defined* or a frontend element that does not change after a reload: the element was defined in the global `customElements` registry. Define it in the extension's own registry (`src/elements.ts`, above).
+- *… has already been defined* or a frontend element that does not change after a reload: the element was defined in the global `customElements` registry. Define it with `@reins/sdk/lit`'s `defineElement` (*Requirements*).
 - *crypto.randomUUID is not a function* (or another API missing) in one browser only: the page is not a secure context (plain http on another host than localhost), which lacks `crypto.randomUUID`, the clipboard and more. Do not depend on them.
 
 A frontend part fails in a browser, not on the server, so each browser reports how it loaded: `reins extension list` shows the latest failure a browser reported, with its stack (*frontend failed in a browser at …*), and so do Settings → Extensions and `GET /api/installed-extensions` (`frontendFailure`). A browser that loads it, or a reload, clears it. An agent debugging an extension reads it there.
@@ -427,11 +200,11 @@ Test the backend part with `bun test` in the extension's directory, through what
 
 ## Example: Spoke
 
-Spoke (`~/Workspaces/spoke-reins` for its author) is a GitHub notifications inbox:
+Spoke, a GitHub notifications inbox, is an added extension in a repository of its own:
 
 - **Backend** (`src/backend.ts`, `src/sync.ts`): migrations for the inbox, a `poller` service that syncs with GitHub (ETags, GitHub's `X-Poll-Interval`), an HTTP API (`src/api.ts`: `state`, `sync`, `archive`, `markRead`, `investigate`, the OAuth device flow, settings, repository mappings), the token in `secrets`, a `broadcast` after each change, and "Review", which calls `reins.sessions.start(prompt, { projectId, title })` in the project mapped to the repository and stores the session ID. It suggests mappings by running `git remote get-url origin` in each project's default source with `reins.nodes.run`.
 - **Build** (`bun run build`): `dist/server.js`, `dist/frontend.js` (Lit left out) and `dist/styles.css` (its Tailwind theme and utilities, which Reins scopes).
-- **Frontend** (`src/frontend/`): a store shared by its views (reads `state` on `onMessage` and `onReconnect`), a sidebar section with the unread counts that opens the inbox (`workspace.open({ view: "spoke-inbox" }, { in: "main" })`), the inbox page (a `pane` view), and a Settings page (connect GitHub, a token, the poll interval, repositories → projects). Lit, with Tailwind classes like the app's, its elements in a registry of its own (`src/frontend/elements.ts`).
+- **Frontend** (`src/frontend/`): a store shared by its views (reads `state` on `onMessage` and `onReconnect`), a sidebar section with the unread counts that opens the inbox (`workspace.open({ view: "spoke-inbox" }, { in: "main" })`), the inbox page (a `pane` view), and a Settings page (connect GitHub, a token, the poll interval, repositories → projects). Lit, with Tailwind classes like the app's, its elements defined with `@reins/sdk/lit`.
 - **Tests** (`test/`): the BB version's server tests, ported to a fake host.
 
 ## Not yet

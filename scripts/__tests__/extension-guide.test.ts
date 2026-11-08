@@ -1,62 +1,38 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { join, relative } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 
-// The guide is how an extension is set up: an agent writes the files it shows. They are the example
-// extension's, which Reins typechecks, tests and loads, so the guide cannot drift from what works.
+// The guide tells an agent which versions of the libraries an extension shares with the app to use. They must
+// be the app's, and the example extension (which Reins typechecks, tests and loads) uses them too.
 
 const REPO = join(import.meta.dir, "../..");
-const EXAMPLE = join(REPO, "examples/hello-extension");
 const GUIDE = readFileSync(join(REPO, "docs/features/building-extensions.md"), "utf8");
-/** The libraries an extension must have at the app's version: Lit (which the page provides), Tailwind (whose
- * output must match the app's classes) and TypeBox (whose schemas the host checks). */
-const APP_LIBRARIES = ["lit", "tailwindcss", "@tailwindcss/cli", "@sinclair/typebox"];
+const EXAMPLE = JSON.parse(readFileSync(join(REPO, "examples/hello-extension/package.json"), "utf8"));
 
-/** Each file the guide shows, by its path in the example: the fenced block after `<!-- example: <path> -->`. */
-function guideFiles(): Map<string, string> {
-  const files = new Map<string, string>();
-  for (const match of GUIDE.matchAll(/<!-- example: (\S+) -->\n+```[a-z]*\n([\s\S]*?)```/g)) {
-    files.set(match[1] ?? "", match[2] ?? "");
+/** The guide's version table: each row's packages (one or more, in backticks) and its version. */
+function guideVersions(): Record<string, string> {
+  const table = GUIDE.slice(GUIDE.indexOf("<!-- versions -->"), GUIDE.indexOf("<!-- /versions -->"));
+  const versions: Record<string, string> = {};
+  for (const [, packages = "", version = ""] of table.matchAll(/^\| ([^|]+) \| (\d[^|\s]*) \|/gm)) {
+    for (const [, name = ""] of packages.matchAll(/`([^`]+)`/g)) versions[name] = version;
   }
-  return files;
-}
-
-function exampleFiles(dir = EXAMPLE): string[] {
-  return readdirSync(dir, { withFileTypes: true })
-    .filter(entry => entry.name !== "node_modules" && entry.name !== "dist")
-    .flatMap(entry => entry.isDirectory() ? exampleFiles(join(dir, entry.name)) : [relative(EXAMPLE, join(dir, entry.name))]);
+  return versions;
 }
 
 /** The version of `name` installed for the app (the frontend's or the backend's). */
 function appVersion(name: string): string {
-  const file = ["packages/frontend", "packages/backend", "."]
+  const file = ["packages/frontend", "packages/backend", "packages/sdk", "."]
     .map(dir => join(REPO, dir, "node_modules", name, "package.json")).find(path => existsSync(path));
   return file ? JSON.parse(readFileSync(file, "utf8")).version : "not installed";
 }
 
 describe("the extension guide", () => {
-  test("shows every file of the example extension but its README, which is about the example", () => {
-    expect([...guideFiles().keys()].toSorted()).toEqual(exampleFiles().filter(file => file !== "README.md").toSorted());
-  });
+  test("gives the app's versions of the libraries an extension shares with it, which the example uses", () => {
+    const versions = guideVersions();
 
-  test("shows each file as the example has it; package.json with the SDK from a checkout, as an extension outside Reins has it", () => {
-    for (const [path, text] of guideFiles()) {
-      const actual = readFileSync(join(EXAMPLE, path), "utf8");
-      if (path !== "package.json") {
-        expect({ path, text }).toEqual({ path, text: actual });
-        continue;
-      }
-      const shown = JSON.parse(text);
-      const example = JSON.parse(actual);
-      expect(shown.devDependencies["@reins/sdk"]).toBe("file:<Reins checkout>/packages/sdk");
-      expect({ ...shown, name: example.name, devDependencies: { ...shown.devDependencies, "@reins/sdk": "workspace:*" } }).toEqual(example);
+    expect(Object.keys(versions).toSorted()).toEqual(["@sinclair/typebox", "@tailwindcss/cli", "lit", "tailwindcss"]);
+    for (const [name, version] of Object.entries(versions)) {
+      expect({ name, guide: version, example: EXAMPLE.devDependencies[name] }).toEqual({ name, guide: appVersion(name), example: appVersion(name) });
     }
-  });
-
-  test("the example uses the app's versions of the libraries it shares with it", () => {
-    const { devDependencies } = JSON.parse(readFileSync(join(EXAMPLE, "package.json"), "utf8"));
-
-    expect(Object.fromEntries(APP_LIBRARIES.map(name => [name, devDependencies[name]])))
-      .toEqual(Object.fromEntries(APP_LIBRARIES.map(name => [name, appVersion(name)])));
   });
 });

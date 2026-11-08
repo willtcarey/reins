@@ -30,7 +30,8 @@ packages/frontend/src/
     host.ts                                #   ExtensionHost: activates one with its own SDK, keeps what it registered
   sdk-host/create-sdk.ts                   # sdkDisposers: what an extension's SDK made, which its disposal removes
 packages/cli/src/extension.ts              # reins extension add | list | reload | remove | enable | disable
-examples/hello-extension/                  # the example: what the guide sets up, file for file; typechecked, tested and linted with Reins
+examples/hello-extension/                  # the example: a working reference for the guide; typechecked, tested, linted and loaded with Reins
+packages/sdk/src/lit/                      # @reins/sdk/lit: an extension's custom elements in its bundle's own registry
 ```
 
 `extensions/` holds only the built-ins and their two lists: lint treats `extensions/<name>/` as a built-in extension (`reins/backend-extension-boundary`), so system code lives in `extension-system/`.
@@ -94,7 +95,7 @@ The app provides Lit to extensions' frontend parts, which leave it out of their 
 
 ## CLI
 
-`packages/cli/src/extension.ts`: `add <path>` (resolved against the working directory; exit 1 when it was added but failed, with `reins extension reload <name>` as the next step), `list` (every extension: `name`, `status`, the path or `built in`, and under it why it failed: its stage, or a browser's report), `reload <name>`, `remove <name>`, `enable <name>`, `disable <name>`. There is no `new`: an agent sets an extension up from the guide (building-extensions.md *Set up an extension*), whose files a test (`scripts/__tests__/extension-guide.test.ts`) keeps equal to `examples/hello-extension`'s. Which server: `server.ts` (`--server`, else a paired node's server, else the local one; `--local` for the local one on a paired machine).
+`packages/cli/src/extension.ts`: `add <path>` (resolved against the working directory; exit 1 when it was added but failed, with `reins extension reload <name>` as the next step), `list` (every extension: `name`, `status`, the path or `built in`, and under it why it failed: its stage, or a browser's report), `reload <name>`, `remove <name>`, `enable <name>`, `disable <name>`. There is no `new`: an agent sets an extension up from the guide (building-extensions.md *Set up an extension*: requirements and steps). Which server: `server.ts` (`--server`, else a paired node's server, else the local one; `--local` for the local one on a paired machine).
 
 ## Tests
 
@@ -112,7 +113,7 @@ Each module of the system has one test file, at its public boundary:
 | `frontend/…/models/stores/extensions-store.test.ts`, `components/settings/extensions-section.test.ts` | Settings: the cards, the details page, the switch, reload and remove. |
 | `frontend/…/vendor/build.test.ts` | Every public Lit module in the import map is a module the vendor build wrote. |
 | `cli/src/extension.test.ts` | Each command against a stand-in server. |
-| `scripts/__tests__/extension-guide.test.ts` | The guide shows every file of the example as it is, and the example has the app's versions of Lit, Tailwind and TypeBox. |
+| `scripts/__tests__/extension-guide.test.ts` | The guide's version table (Lit, TypeBox, Tailwind) is the app's installed versions, and the example uses them. |
 | `examples/hello-extension` | The example's own test, typecheck and lint run with Reins'. |
 
 The test helper's `createAppState` makes the given `extensions` the only built-ins unless `builtInNames` names more.

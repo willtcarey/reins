@@ -69,7 +69,7 @@ Open [http://localhost:3100](http://localhost:3100), add a project, and create a
 | `packages/frontend` | Lit + Tailwind CSS v4 SPA | [architecture](docs/dev/frontend-architecture.md) |
 | `packages/tauri` | Optional Tauri v2 desktop wrapper that loads the backend URL without bundling frontend files | [setup](docs/dev/tauri.md) |
 | `packages/sdk` | `@reins/sdk` and `@reins/sdk/server`: what extensions get, the types they build against | [extensions overview](docs/dev/extensions-overview.md) |
-| `examples/hello-extension` | The example extension, which the extension guide sets up file for file; typechecked, tested and linted with Reins | [building extensions](docs/features/building-extensions.md) |
+| `examples/hello-extension` | The example extension, a working reference for the extension guide; typechecked, tested and linted with Reins | [building extensions](docs/features/building-extensions.md) |
 
 ## Configuration
 

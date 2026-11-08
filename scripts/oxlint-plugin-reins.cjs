@@ -435,14 +435,18 @@ module.exports = {
     "sdk-isolation": {
       meta: {
         type: "problem",
-        docs: { description: "The Reins SDK imports only its own modules, so it can become a package of its own (docs/dev/reins-sdk.md)." },
+        docs: { description: "The Reins SDK imports only its own modules, so it can become a package of its own (docs/dev/reins-sdk.md). An entry for a library the page provides (`@reins/sdk/lit`) may import that library: `{ allow: [\"lit\"] }`." },
         messages: { forbidden: "The Reins SDK must not import {{specifier}}: it imports only its own modules (./), and its values are Reins values defined in it." },
+        schema: [{ type: "object", properties: { allow: { type: "array", items: { type: "string" } } }, additionalProperties: false }],
       },
       create(context) {
+        const allowed = context.options?.[0]?.allow ?? [];
         const check = (node) => {
           if (!node.source) return;
           const specifier = node.source.value;
-          if (typeof specifier !== "string" || !specifier.startsWith("./")) context.report({ node, messageId: "forbidden", data: { specifier: typeof specifier === "string" ? specifier : "a computed specifier" } });
+          const ok = typeof specifier === "string"
+            && (specifier.startsWith("./") || allowed.some(library => specifier === library || specifier.startsWith(`${library}/`)));
+          if (!ok) context.report({ node, messageId: "forbidden", data: { specifier: typeof specifier === "string" ? specifier : "a computed specifier" } });
         };
         return { ImportDeclaration: check, ImportExpression: check, ExportNamedDeclaration: check, ExportAllDeclaration: check };
       },

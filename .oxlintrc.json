@@ -26,6 +26,10 @@
       "rules": { "reins/sdk-isolation": "error" }
     },
     {
+      "files": ["packages/sdk/src/lit/*.ts"],
+      "rules": { "reins/sdk-isolation": ["error", { "allow": ["lit"] }] }
+    },
+    {
       "files": [
         "packages/frontend/src/components/file-browser/**/*.ts",
         "packages/frontend/src/components/file-viewer/**/*.ts",
