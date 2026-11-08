@@ -67,6 +67,8 @@ export class AppShell extends LitElement {
         .catch((failure: unknown) => console.error(`Could not report how ${name}'s frontend loaded:`, failure));
     },
   });
+  /** Counts report requests, so a late answer to an older one is dropped. */
+  private extensionsRequest = 0;
   private fileBrowserStore: FileBrowserStore | null = null;
   private quickOpenStore = new QuickOpenStore(this.appStore.sessionCache);
   private unsubscribeStore: (() => void) | null = null;
@@ -84,12 +86,14 @@ export class AppShell extends LitElement {
   /** Brings the extensions' frontend parts in line with the server's report. Without one, the built-in parts
    * are activated as if all were on, so the app works; the next report turns off what is off. */
   private syncExtensions(): void {
+    // Only the latest request's report applies: an older one that answers later would undo a newer one.
+    const request = ++this.extensionsRequest;
     void api.installedExtensions.list()
       .catch((error: unknown) => {
         console.error("Loading the server's extensions failed:", error);
         return [];
       })
-      .then((report) => this.extensions.sync(report));
+      .then((report) => { if (request === this.extensionsRequest) return this.extensions.sync(report); });
   }
 
   override connectedCallback() {

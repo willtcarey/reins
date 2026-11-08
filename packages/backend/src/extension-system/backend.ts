@@ -47,6 +47,7 @@ export function startBackend(name: string, extension: ServerExtension, { host, o
     // An added extension's register function may return nothing, whatever its type says.
     dispose = extension.register(connection.sdk);
   } catch (error) {
+    // Not awaited: its services never started (`connection.start()` comes after), so nothing here is slow.
     void connection.disconnect();
     throw new BackendFailure("register", storage, migrations, error);
   }

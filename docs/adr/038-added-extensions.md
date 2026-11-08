@@ -6,7 +6,7 @@
 
 ## Context
 
-Extensions had two SDKs (the server SDK, ADR-036; the Reins SDK, ADR-030) and every extension was built in: listed in `BUILT_IN_EXTENSIONS`, compiled with the app, its SDKs `tsconfig` path aliases. An extension that lives in its own repository (Spoke, the GitHub inbox of [pinned-plugin-apps.md](../plans/pinned-plugin-apps.md)) had no way in. BB loads plugins it builds itself, with a manifest in `package.json` and React shimmed from the host; Reins needed the same, for the server and the browser, with reloading while Reins runs.
+Extensions had two SDKs (the server SDK, ADR-036; the Reins SDK, ADR-030) and every extension was built in: listed in `BUILT_IN_EXTENSIONS`, compiled with the app, its SDKs `tsconfig` path aliases. An extension that lives in its own repository (the GitHub inbox of [pinned-plugin-apps.md](../plans/pinned-plugin-apps.md)) had no way in. BB loads plugins it builds itself, with a manifest in `package.json` and React shimmed from the host; Reins needed the same, for the server and the browser, with reloading while Reins runs.
 
 ## Decision
 

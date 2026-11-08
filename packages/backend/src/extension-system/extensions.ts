@@ -118,7 +118,11 @@ export class Extensions {
 
   private async loadAllAdded(): Promise<void> {
     const rows = listAddedExtensions();
-    await Promise.all(rows.map(row => this.serial(row.name, () => this.loadAdded(row))));
+    // Settled, not all: one that throws must not keep browsers from hearing that the others loaded.
+    const results = await Promise.allSettled(rows.map(row => this.serial(row.name, () => this.loadAdded(row))));
+    results.forEach((result, index) => {
+      if (result.status === "rejected") logger.error(`Loading extension ${rows[index]!.name} failed:`, result.reason);
+    });
     if (rows.length > 0 && !this.disposed) this.changed();
   }
 
@@ -259,9 +263,13 @@ export class Extensions {
       extension = await pkg.importBackend();
     } catch (error) {
       if (!this.current(record)) return;
-      if (!(error instanceof PackageFailure)) throw error;
-      record.origin = { ...unread, manifest: error.manifest && manifestView(error.manifest) };
-      this.fail(record, error.stage, error.cause, null);
+      // The next apps must not run the build a failed reload was to replace: they install from its directory
+      // again, so it stays failed until its files are fixed.
+      if (install) setExtensionBuild(name, null);
+      // Any other error is a load failure too: a record left `loading` would never change.
+      const failure = error instanceof PackageFailure ? error : null;
+      record.origin = { ...unread, manifest: failure?.manifest ? manifestView(failure.manifest) : null };
+      this.fail(record, failure?.stage ?? "load", failure ? failure.cause : error, null);
       return;
     }
     if (!this.current(record)) return;

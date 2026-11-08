@@ -112,6 +112,29 @@ describe("Extensions", () => {
     expect(sdk.settingsPages.page("spoke")).toBeNull();
   });
 
+  test("a report that fails to apply does not stop the next ones", async () => {
+    const sdk = testSdk();
+    const calls: string[] = [];
+    let broken = true;
+    const sdkFor: typeof sdk.sdkFor = (extension, scope) => {
+      if (broken) throw new Error("no SDK");
+      return sdk.sdkFor(extension, scope);
+    };
+    const frontends = new Extensions({ host: sdk.extensionHost, sdkFor, importModule: modules(calls), builtIns: [], reserved: new Set(), report: () => {}, addStyles: noStyles });
+    const originalError = console.error;
+    console.error = () => {};
+
+    try {
+      await frontends.sync([added("spoke", "b1")]);
+    } finally {
+      console.error = originalError;
+    }
+    broken = false;
+    await frontends.sync([added("spoke", "b2")]);
+
+    expect(calls).toEqual(["register /extension-bundles/spoke/b2/frontend.js?g=0"]);
+  });
+
   test("tells the server how each part loaded: null when it did, else the error with its stack", async () => {
     const sdk = testSdk();
     const reports: Array<[string, string, string | null]> = [];

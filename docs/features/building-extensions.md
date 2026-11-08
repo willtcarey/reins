@@ -2,7 +2,7 @@
 
 An **extension** adds to Reins from outside it: a directory with a `package.json` and the files you built, which Reins loads. Reins builds nothing: you build your extension with any tools you like (Bun, Vite, Svelte, Tailwind), and its manifest names the results. It can give agents tools and script functions, run background services, keep its own database and secrets, answer HTTP calls, and add sidebar sections, pages, views, commands and a Settings page to the app. Reins' own features (MCP servers, automations, Recent sessions…) are extensions too ([extensions.md](extensions.md)); an extension you build uses the same two SDKs.
 
-This guide is for a person, or an agent helping one, writing an extension: *Set up an extension* says what Reins requires and the steps to follow. Spoke, a GitHub notifications inbox, is a complete example outside this repository (its shape is at the end).
+This guide is for a person, or an agent helping one, writing an extension: *Set up an extension* says what Reins requires and the steps to follow.
 
 **Trust:** an extension runs inside the Reins server and inside the browser with their full authority (it can run commands on nodes, read Reins' data, and see what the page sees). Add only code you trust.
 
@@ -35,7 +35,7 @@ You write and build the extension; Reins builds nothing. It copies the files you
 
 **The frontend file** (`reins.frontend`)
 
-- One ES module for browsers, in a directory of its own (`dist/`). Reins copies that whole directory, and browsers can read each file in it: put no secrets there.
+- One ES module for browsers, in a directory of its own (`dist/web/`). Reins copies that whole directory, and browsers can read each file in it: put no secrets there. Build the backend file into another directory (`dist/server/`), so its source map and anything else your backend build writes stay out of what browsers can read.
 - Leave out `lit` and `lit/*` (`--external lit --external 'lit/*'`): the page gives them through an import map, so all extensions share one Lit. Bundle every other library, `@reins/sdk` and Svelte too.
 - Import the module with your HTTP API's schemas with `import type`, so TypeBox stays out of the bundle.
 - Its default export is a function `register(reins)` that returns a disposer.
@@ -50,7 +50,7 @@ You write and build the extension; Reins builds nothing. It copies the files you
 **The stylesheet** (`reins.styles`, optional)
 
 - One file in the frontend directory. It must not `@import` other files.
-- Reins scopes each rule to your views; `:root` and `:host` become the element your view is in.
+- Reins scopes each rule to your views; `:root` and `:host` become the element your view is in. A state of the page's root (`html.dark`, `:root[data-theme=dark]`) stays on the page's root, so a class-based dark theme still works.
 - The app's reset and font apply in your views, but the app's sheet holds only the classes the app uses. So, with Tailwind, build only its theme and the utilities your files use:
 
   ```css
@@ -66,9 +66,9 @@ You write and build the extension; Reins builds nothing. It copies the files you
 2. Write `package.json` with the manifest, the dependencies above and the scripts `build`, `test` and `typecheck`. Any build tool that writes the files the manifest names works. For example, with Tailwind and Bun:
 
    ```sh
-   tailwindcss -i src/styles.css -o dist/styles.css --minify
-   bun build src/server.ts --target bun --outfile dist/server.js
-   bun build src/frontend.ts --target browser --outfile dist/frontend.js --external lit --external 'lit/*'
+   tailwindcss -i src/styles.css -o dist/web/styles.css --minify
+   bun build src/server.ts --target bun --outfile dist/server/index.js
+   bun build src/frontend.ts --target browser --outfile dist/web/index.js --external lit --external 'lit/*'
    ```
 
 3. Write the backend part, the frontend part, and a test of the backend part through a fake of the SDK (*Testing*). Write a README that says how to build and reload it.
@@ -83,18 +83,18 @@ The `reins` key of the extension's `package.json`; its version is the package's 
 
 ```json
 {
-  "name": "spoke",
+  "name": "inbox",
   "version": "0.1.0",
   "type": "module",
   "reins": {
-    "name": "spoke",
-    "label": "Spoke",
+    "name": "inbox",
+    "label": "Inbox",
     "description": "A local inbox for GitHub pull request and issue notifications.",
     "icon": "./icon.svg",
     "sdk": "^0.1.0",
-    "backend": "./dist/server.js",
-    "frontend": "./dist/frontend.js",
-    "styles": "./dist/styles.css"
+    "backend": "./dist/server/index.js",
+    "frontend": "./dist/web/index.js",
+    "styles": "./dist/web/styles.css"
   }
 }
 ```
@@ -107,13 +107,13 @@ The `reins` key of the extension's `package.json`; its version is the package's 
 | `icon` | Optional: an SVG file (at most 16 KiB), drawn in `currentColor` beside the label. |
 | `sdk` | Required: the range of `@reins/sdk` versions it was written for (`^0.1.0`). Reins refuses to load it when its SDK is outside the range. |
 | `backend` | The backend part: a built ES module for Bun, which runs in the server. |
-| `frontend` | The frontend part: a built ES module for browsers, in a directory of its own (`dist/`). Browsers may load any file in that directory (its chunks), but not the backend file. At least one of `backend` and `frontend`. |
+| `frontend` | The frontend part: a built ES module for browsers, in a directory of its own (`dist/web/`), without the backend file. Browsers may load any file in that directory (its chunks). At least one of `backend` and `frontend`. |
 | `styles` | Optional: a stylesheet in the frontend's directory; it needs a `frontend`. Reins scopes it to your views when it installs the extension (*Requirements*). |
 | `node` | Reserved for parts that run on nodes. Not supported yet: a manifest with it does not load. |
 
 ## The backend part
 
-The backend entry's default export is a `ServerExtension`: its database migrations and a register function, which gets the server SDK (`@reins/sdk/server`) and returns a disposer (`src/server.ts` above).
+The backend entry's default export is a `ServerExtension`: its database migrations and a register function, which gets the server SDK (`@reins/sdk/server`) and returns a disposer (`src/server.ts` above). It must register synchronously: an `async` register function fails the extension at `register`. Start async work in a service.
 
 What `reins` gives (each in depth in [server-sdk.md](../dev/server-sdk.md), in a Reins checkout's `docs/dev`):
 
@@ -177,7 +177,7 @@ Removing an extension keeps its data and secrets: adding it again finds them.
 
 ## Loading and reloading
 
-- **`reins extension add <dir>`** records the directory, copies its built files into Reins (the manifest, the backend file, the icon and the frontend file's directory, which must be a directory of its own such as `dist/`) and loads the copy. Reins loads that copy at every start, so the extension runs even when your directory is gone or half rebuilt.
+- **`reins extension add <dir>`** records the directory, copies its built files into Reins (the manifest, the backend file, the icon and the frontend file's directory, which must be a directory of its own such as `dist/web/`) and loads the copy. Reins loads that copy at every start, so the extension runs even when your directory is gone or half rebuilt.
 - **`reins extension reload <name>`** copies its built files again and loads them: its services stop and start on the new code, everything it registered is removed and registered again, and every open browser drops its frontend part and loads the new one. Build, then reload: a rebuild alone changes nothing, as Reins runs its copy. Nothing watches the directory.
 - **`reins extension list`** and **`remove <name>`**.
 - **`reins extension disable <name>`** and **`enable <name>`** turn it off and on (any extension, built in too): off, it stops, browsers drop its frontend part, it stays off after a restart, and it cannot be reloaded until it is on.
@@ -186,7 +186,7 @@ Removing an extension keeps its data and secrets: adding it again finds them.
 A build or load that fails shows the extension as failed with the error (in Settings and from `add`/`reload`, exit 1); Reins and the other extensions go on. Common failures:
 
 - *needs SDK ^x; this Reins provides y*: the `sdk` range.
-- *Its backend file dist/server.js does not exist: build the extension first*: run your build.
+- *Its backend file dist/server/index.js does not exist: build the extension first*: run your build.
 - *Its backend module's default export must be { register, migrations? }*, *Its frontend module's default export is not a register function*.
 - *Failed to resolve module specifier "…"* in a browser: the frontend bundle left out a library Reins does not provide; bundle it.
 - *… has already been defined* or a frontend element that does not change after a reload: the element was defined in the global `customElements` registry. Define it with `@reins/sdk/lit`'s `defineElement` (*Requirements*).
@@ -196,16 +196,7 @@ A frontend part fails in a browser, not on the server, so each browser reports h
 
 ## Testing
 
-Test the backend part with `bun test` in the extension's directory, through what its register function registers: give it a fake of the SDK parts it uses (an in-memory `bun:sqlite` database with its migrations applied, secrets in a `Map`, broadcasts recorded, `http.handle` keeping the handlers so a test calls them) and stub `globalThis.fetch` for outside services. Type the part of the SDK it uses (`Pick<ServerSdk, "db" | "secrets" | …>`) so the fake is checked. Spoke's `test/fake-reins.ts` shows both. `bun run typecheck` checks both parts against the SDK.
-
-## Example: Spoke
-
-Spoke, a GitHub notifications inbox, is an added extension in a repository of its own:
-
-- **Backend** (`src/backend.ts`, `src/sync.ts`): migrations for the inbox, a `poller` service that syncs with GitHub (ETags, GitHub's `X-Poll-Interval`), an HTTP API (`src/api.ts`: `state`, `sync`, `archive`, `markRead`, `investigate`, the OAuth device flow, settings, repository mappings), the token in `secrets`, a `broadcast` after each change, and "Review", which calls `reins.sessions.start(prompt, { projectId, title })` in the project mapped to the repository and stores the session ID. It suggests mappings by running `git remote get-url origin` in each project's default source with `reins.nodes.run`.
-- **Build** (`bun run build`): `dist/server.js`, `dist/frontend.js` (Lit left out) and `dist/styles.css` (its Tailwind theme and utilities, which Reins scopes).
-- **Frontend** (`src/frontend/`): a store shared by its views (reads `state` on `onMessage` and `onReconnect`), a sidebar section with the unread counts that opens the inbox (`workspace.open({ view: "spoke-inbox" }, { in: "main" })`), the inbox page (a `pane` view), and a Settings page (connect GitHub, a token, the poll interval, repositories → projects). Lit, with Tailwind classes like the app's, its elements defined with `@reins/sdk/lit`.
-- **Tests** (`test/`): the BB version's server tests, ported to a fake host.
+Test the backend part with `bun test` in the extension's directory, through what its register function registers: give it a fake of the SDK parts it uses (an in-memory `bun:sqlite` database with its migrations applied, secrets in a `Map`, broadcasts recorded, `http.handle` keeping the handlers so a test calls them) and stub `globalThis.fetch` for outside services. Type the part of the SDK it uses (`Pick<ServerSdk, "db" | "secrets" | …>`) so the fake is checked. `bun run typecheck` checks both parts against the SDK.
 
 ## Not yet
 

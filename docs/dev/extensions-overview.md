@@ -50,13 +50,15 @@ The rest of Reins (the core) reads extensions only through a host: `reins.tools`
                                                                      │ the app reads (views, commands, sidebar…)
 ```
 
-## Walk-through: adding Spoke
+## Walk-through: adding an extension
 
-1. `reins extension add ~/Workspaces/spoke-reins` asks the server (`POST /api/installed-extensions`). `Extensions.add` reads the manifest, checks the name, and inserts a row (`source_kind = path`, enabled).
-2. It installs and loads the extension: a record in `loading`; `openPackage` hashes the built files (the build ID), `installPackage` copies them into `extension-builds/spoke/<build ID>/`, and Reins imports `dist/server.js` from the copy.
-3. `startBackend` opens Spoke's own directory and database, applies its migrations, connects it to the host (its SDK object), calls its `register(reins)`, then starts its services. The record is now `loaded`.
-4. The server broadcasts `extensions_changed`. Each browser reads the report again; its `Extensions.sync` sees Spoke's frontend script (`/extension-bundles/spoke/<build ID>/frontend.js?g=<generation>`), imports it, and activates it with its own SDK. It tells the server how that went (`POST /api/installed-extensions/spoke/frontend`).
-5. Spoke's sidebar section and pages appear, each mounted in a `spoke` scope, where its stylesheet (scoped at install, linked before it registers) applies. Its frontend part calls its backend part through `reins.http.call`, which is `POST /api/extensions/spoke/<method>`.
+An extension named `inbox`, with a backend part, a frontend part and a stylesheet:
+
+1. `reins extension add <dir>` asks the server (`POST /api/installed-extensions`). `Extensions.add` reads the manifest, checks the name, and inserts a row (`source_kind = path`, enabled).
+2. It installs and loads the extension: a record in `loading`; `openPackage` finds the built files, `installPackage` reads them, hashes those bytes (the build ID) and copies them into `extension-builds/inbox/<build ID>/`, and Reins imports the backend file (`dist/server/index.js`) from the copy.
+3. `startBackend` opens the extension's own directory and database, applies its migrations, connects it to the host (its SDK object), calls its `register(reins)`, then starts its services. The record is now `loaded`.
+4. The server broadcasts `extensions_changed`. Each browser reads the report again; its `Extensions.sync` sees the frontend script (`/extension-bundles/inbox/<build ID>/index.js?g=<generation>`), imports it, and activates it with its own SDK. It tells the server how that went (`POST /api/installed-extensions/inbox/frontend`).
+5. Its sidebar section and pages appear, each mounted in an `inbox` scope, where its stylesheet (scoped at install, linked before it registers) applies. Its frontend part calls its backend part through `reins.http.call`, which is `POST /api/extensions/inbox/<method>`.
 
 Reload, turn off and turn on follow the same steps: the record is deleted, its backend part disposed (services stopped, everything it registered removed), and a new record made.
 

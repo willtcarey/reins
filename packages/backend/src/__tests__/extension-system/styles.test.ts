@@ -21,10 +21,17 @@ describe("scopeStyles", () => {
   });
 
   test("the page's roots (:root, :host, html, body) mean the scope itself, so a theme's variables are set there", () => {
-    expect(scoped(":root, :host { --c: red } html.dark .x { color: red } body > div { color: green }")).toEqual([
+    expect(scoped(":root, :host { --c: red } body > div { color: green }")).toEqual([
       `${SCOPE},${SCOPE}{--c:red}`,
-      `${SCOPE}.dark .x{color:red}`,
       `${SCOPE}>div{color:green}`,
+    ]);
+  });
+
+  test("a page root's state (a theme's class or attribute) stays on the page's root, and the rule applies in the scope under it", () => {
+    expect(scoped("html.dark .x { color: red } :root[data-theme=dark] { --c: black } :host(.dark) { --c: gray }")).toEqual([
+      ":where(html.dark [data-reins-extension=spoke]) .x{color:red}",
+      ":where(:root[data-theme=dark] [data-reins-extension=spoke]){--c:black}",
+      ":where(:root.dark [data-reins-extension=spoke]){--c:gray}",
     ]);
   });
 

@@ -31,7 +31,7 @@ export const extensionAddCommand = defineCommand({
   words: ["extension", "add"],
   args: ["path"],
   options: { ...serverOptions },
-  summary: "Add the extension in a directory on the server's machine: Reins loads its built files",
+  summary: "Add the extension in a directory on the server's machine: Reins loads its built files. With a remote server, give the absolute path on that machine",
   async run({ args: [path], options }, context) {
     const { serverUrl, client } = await resolveServer(options, context.env);
     let view;

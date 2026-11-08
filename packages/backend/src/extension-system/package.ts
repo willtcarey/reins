@@ -5,7 +5,7 @@
 
 import { createHash } from "node:crypto";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
-import { cp, mkdir, readFile, readdir, rename, rm, stat } from "node:fs/promises";
+import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import type { Migration, ServerExtension } from "@reins/sdk/server";
 import { ManifestError, readManifest, type Manifest } from "./manifest.js";
 import { scopeStyles } from "./styles.js";
@@ -110,6 +110,12 @@ async function importBackend(file: string): Promise<ServerExtension> {
     migrations,
     register: sdk => {
       const dispose: unknown = Reflect.apply(register, extension, [sdk]);
+      if (isThenable(dispose)) {
+        // Not awaited: what it registers after its first await would be registered after it was started, and
+        // its errors would be unhandled. Its rejection is dropped, as the load fails with this error.
+        void Promise.resolve(dispose).catch(() => {});
+        throw new Error("Its register function returned a promise: it must register synchronously (start async work in a service)");
+      }
       return async () => { if (typeof dispose === "function") await Reflect.apply(dispose, undefined, []); };
     },
   };
@@ -121,19 +127,28 @@ async function importBackend(file: string): Promise<ServerExtension> {
  * aside and renamed into place, so a failed or interrupted one is never loaded.
  */
 export async function installPackage(pkg: ExtensionPackage, buildsDir: string): Promise<ExtensionPackage> {
-  const { name } = pkg.manifest;
-  const target = join(buildsDir, name, pkg.buildId);
+  const { name, styles } = pkg.manifest;
+  // Each file is read once, and its build ID and its copy are made of those bytes: a build writing the files
+  // meanwhile must not give a copy whose content is not its ID's, which every later install would reuse.
+  let contents: Uint8Array[];
+  try {
+    contents = await Promise.all(pkg.files.map(file => readFile(join(pkg.dir, file))));
+  } catch (error) {
+    throw new PackageFailure("load", pkg.manifest, error);
+  }
+  const buildId = contentsHash(pkg.files, contents);
+  const target = join(buildsDir, name, buildId);
   if (!(await stat(target).catch(() => null))) {
     const partial = `${target}.partial-${Math.random().toString(36).slice(2)}`;
     try {
-      for (const file of pkg.files) {
+      for (const [index, file] of pkg.files.entries()) {
         await mkdir(dirname(join(partial, file)), { recursive: true });
-        await cp(join(pkg.dir, file), join(partial, file));
+        await writeFile(join(partial, file), contents[index]!);
       }
-      const { styles } = pkg.manifest;
       if (styles) {
+        const css = contents[pkg.files.indexOf(relative(pkg.dir, styles))]!;
         await mkdir(dirname(join(partial, SCOPED_STYLES_FILE)), { recursive: true });
-        await Bun.write(join(partial, SCOPED_STYLES_FILE), scopeStyles(await readFile(styles, "utf8"), name));
+        await writeFile(join(partial, SCOPED_STYLES_FILE), scopeStyles(new TextDecoder().decode(css), name));
       }
       await rename(partial, target);
     } catch (error) {
@@ -141,7 +156,7 @@ export async function installPackage(pkg: ExtensionPackage, buildsDir: string): 
       if (!(await stat(target).catch(() => null))) throw new PackageFailure("load", pkg.manifest, error);
     }
   }
-  return openPackage(target, name, { buildId: pkg.buildId });
+  return openPackage(target, name, { buildId });
 }
 
 /** The installed copy of `buildId`, or null when there is none (never installed, or deleted). */
@@ -159,7 +174,7 @@ export async function removeBuilds(buildsDir: string, name: string, keep: string
 }
 
 async function packageFiles(dir: string, manifest: Manifest): Promise<string[]> {
-  for (const [part, file] of [["backend", manifest.backend], ["frontend", manifest.frontend]] as const) {
+  for (const [part, file] of [["backend", manifest.backend], ["frontend", manifest.frontend], ["styles", manifest.styles]] as const) {
     if (file && !(await stat(file).catch(() => null))?.isFile()) {
       throw new Error(`Its ${part} file ${relative(dir, file)} does not exist: build the extension first`);
     }
@@ -177,10 +192,18 @@ async function packageFiles(dir: string, manifest: Manifest): Promise<string[]> 
 
 /** Part of every build ID: raise it when an install processes files differently (how it scopes styles), so
  * that a copy made the old way is not used again. */
-const INSTALL_VERSION = 1;
+const INSTALL_VERSION = 2;
 
 async function filesHash(dir: string, files: readonly string[]): Promise<string> {
+  return contentsHash(files, await Promise.all(files.map(file => readFile(join(dir, file)))));
+}
+
+function contentsHash(files: readonly string[], contents: readonly Uint8Array[]): string {
   const hash = createHash("sha256").update(`reins-install:${INSTALL_VERSION}\0`);
-  for (const file of files) hash.update(file).update("\0").update(await readFile(join(dir, file))).update("\0");
+  files.forEach((file, index) => hash.update(file).update("\0").update(contents[index]!).update("\0"));
   return hash.digest("hex").slice(0, 16);
+}
+
+function isThenable(value: unknown): value is PromiseLike<unknown> {
+  return typeof value === "object" && value !== null && "then" in value && typeof value.then === "function";
 }

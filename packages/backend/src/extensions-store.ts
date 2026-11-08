@@ -47,7 +47,8 @@ export function bumpExtensionGeneration(name: string): void {
   getDb().query("UPDATE extensions SET generation = generation + 1 WHERE name = ?").run(name);
 }
 
-export function setExtensionBuild(name: string, buildId: string): void {
+/** Null: the next load installs from the extension's directory, as after a reload that failed. */
+export function setExtensionBuild(name: string, buildId: string | null): void {
   getDb().query("UPDATE extensions SET build_id = ? WHERE name = ?").run(buildId, name);
 }
 

@@ -36,7 +36,8 @@ export class Extensions {
 
   /** Reports apply in order: an older one must not undo a newer one. */
   sync(report: readonly ExtensionView[]): Promise<void> {
-    this.chain = this.chain.then(() => this.apply(report));
+    // Caught: a rejected chain would skip every later report until the page reloads.
+    this.chain = this.chain.then(() => this.apply(report)).catch((error: unknown) => console.error("Applying the server's extensions failed:", error));
     return this.chain;
   }
 

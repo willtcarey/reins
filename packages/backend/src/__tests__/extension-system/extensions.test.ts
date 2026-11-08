@@ -313,6 +313,24 @@ describe("extensions", () => {
       expect(after.build.frontend.script).toBe(`/extension-bundles/greeter/${after.build.id}/frontend.js?g=1`);
       expect(frames).toEqual([{ type: "extensions_changed" }]);
     });
+
+    test("a reload that fails stays failed in the next apps, which do not run the build it was to replace", async () => {
+      const dir = extensionDir({ "dist/server.js": GREETER_BACKEND });
+      const first = createAppState(undefined, { extensions: [] });
+      await request(first, "POST", "/api/installed-extensions", { path: dir });
+      rmSync(join(dir, "dist/server.js"));
+      const missing = { stage: "load", message: "Its backend file dist/server.js does not exist: build the extension first" };
+
+      expect(await (await request(first, "POST", "/api/installed-extensions/greeter/reload")).json()).toMatchObject({ status: "failed", failure: missing });
+      await first.extensions.dispose();
+      const next = createAppState(undefined, { extensions: [] });
+      await next.extensions.loaded;
+
+      expect(await viewOf(next, "greeter")).toMatchObject({ status: "failed", failure: missing });
+      expect((await request(next, "POST", "/api/extensions/greeter/hello")).status).toBe(404);
+      writeFileSync(join(dir, "dist/server.js"), GREETER_BACKEND);
+      expect(await (await request(next, "POST", "/api/installed-extensions/greeter/reload")).json()).toMatchObject({ status: "loaded" });
+    });
   });
 
   describe("turning one off and on", () => {

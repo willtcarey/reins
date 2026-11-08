@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { installPackage, openPackage, PackageFailure } from "../../extension-system/package.js";
@@ -64,6 +64,13 @@ describe("openPackage", () => {
     expect({ stage: odd.stage, message: odd.message }).toEqual({ stage: "load", message: "Its backend module's default export must be { register, migrations? }" });
   });
 
+  test("a register function that returns a promise fails: an extension registers synchronously", async () => {
+    const pkg = await openPackage(packageDir({ "dist/server.js": "export default { register: async () => {} };", "dist/frontend.js": "" }), "greeter");
+    const extension = await pkg.importBackend();
+
+    expect(() => Reflect.apply(extension!.register, extension, [{}])).toThrow("Its register function returned a promise: it must register synchronously (start async work in a service)");
+  });
+
   test("without a backend file it has no backend part", async () => {
     const pkg = await openPackage(packageDir({ "dist/frontend.js": "" }, { backend: undefined }), "greeter");
 
@@ -93,5 +100,18 @@ describe("openPackage", () => {
     expect(readdirSync(join(builds, "greeter"))).toEqual([pkg.buildId]);
     expect(again.dir).toBe(installed.dir);
     expect(await installed.importBackend()).not.toBeNull();
+  });
+
+  test("a copy's build ID is that of the files it copied, though they changed after the package was opened", async () => {
+    const dir = packageDir({ "dist/server.js": "export default { register: () => {} };", "dist/frontend.js": "1" });
+    const builds = mkdtempSync(join(tmpdir(), "reins-builds-"));
+    const pkg = await openPackage(dir, "greeter");
+    writeFileSync(join(dir, "dist/frontend.js"), "2");
+
+    const installed = await installPackage(pkg, builds);
+
+    expect(installed.buildId).not.toBe(pkg.buildId);
+    expect(installed.buildId).toBe((await openPackage(installed.dir, "greeter")).buildId);
+    expect(readFileSync(join(installed.dir, "dist/frontend.js"), "utf8")).toBe("2");
   });
 });
