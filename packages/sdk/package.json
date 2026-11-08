@@ -1,0 +1,29 @@
+{
+  "name": "@reins/sdk",
+  "version": "0.1.0",
+  "description": "The Reins SDKs: @reins/sdk for an extension's frontend part, @reins/sdk/server for its backend part, @reins/sdk/lit for a Lit frontend's custom elements. Types, and the few values an extension bundles.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./server": "./src/server/index.ts",
+    "./lit": "./src/lit/index.ts",
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "peerDependencies": {
+    "@types/bun": "*",
+    "lit": "^3"
+  },
+  "peerDependenciesMeta": {
+    "lit": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.11",
+    "lit": "3.3.2",
+    "typescript": "^5.9.3"
+  }
+}

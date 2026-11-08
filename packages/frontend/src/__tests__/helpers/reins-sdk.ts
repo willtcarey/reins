@@ -15,7 +15,7 @@ import { appRouter, mainViewHash, mainViewOf } from "../../routing/app-router.js
 import { RoutedMainArea, type MainHistory } from "../../routing/main-area.js";
 import { CommandRegistry } from "../../sdk-host/commands.js";
 import { DecoratorRegistry } from "../../sdk-host/decorators.js";
-import { Extensions } from "../../sdk-host/extensions.js";
+import { ExtensionHost } from "../../extension-system/host.js";
 import { createReinsSdk, type SdkHost } from "../../sdk-host/create-sdk.js";
 import { SettingsPages } from "../../sdk-host/settings-pages.js";
 import { SdkSessions } from "../../sdk-host/sessions.js";
@@ -107,7 +107,7 @@ export function testNode(id: string, name: string, connected = true): NodeView {
  * Projects, tasks and sessions are the app's over a real `ProjectsStore` (`projectsStore`) and session cache
  * (`sessions`), which a test fills; `showMain` changes what the main area shows. `sidebar` is the sidebar's
  * sections, its layout kept in `sidebarLayout` (`memoryLayout`; none by default).
- * `sdkFor` builds another extension's SDK over the same app, and `extensions` activates extensions there.
+ * `sdkFor` builds another extension's SDK over the same app, and `extensionHost` activates extensions there.
  */
 export function testSdk<A extends HttpApi = HttpApi>({ source = { nodeId: "node", path: "/work" }, projectId = 1, available = true, sessions: sessionOverrides = {}, current = null, extension = { name: "test", label: "Test" }, sidebarLayout = null }: {
   source?: Source;
@@ -129,7 +129,7 @@ export function testSdk<A extends HttpApi = HttpApi>({ source = { nodeId: "node"
   const commands = new CommandRegistry();
   const settingsPages = new SettingsPages();
   const sidebar = new SidebarSections(sidebarLayout);
-  const extensions = new Extensions({ views, decorators, commands, settingsPages, sidebar });
+  const extensionHost = new ExtensionHost({ views, decorators, commands, settingsPages, sidebar });
   const projectsStore = new ProjectsStore(sessions, client);
   const live = new SdkSessions({ sessionCache: sessions, projectsStore, sessionOperations: new SessionOperations({ conversations: new ConversationsStore({ sessionCache: sessions }) }) });
   const opened: OpenedView[] = [];
@@ -168,8 +168,8 @@ export function testSdk<A extends HttpApi = HttpApi>({ source = { nodeId: "node"
     socket: client,
   };
   const reins = createReinsSdk<A>(extension, host);
-  const sdkFor = (other: ExtensionInfo) => createReinsSdk(other, host);
-  return { client, sessions, projectsStore, files, views, decorators, commands, settingsPages, sidebar, extensions, reins, sdkFor, source, opened, shownViews, mainHistory, sessionCalls, showMain };
+  const sdkFor = (other: ExtensionInfo, scope?: string) => createReinsSdk(other, host, { scope });
+  return { client, sessions, projectsStore, files, views, decorators, commands, settingsPages, sidebar, extensionHost, reins, sdkFor, source, opened, shownViews, mainHistory, sessionCalls, showMain };
 }
 
 /** An Inspector over views that know the file viewer's `file` view, as the app's do. */

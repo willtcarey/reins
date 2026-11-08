@@ -86,7 +86,9 @@ export function createServices(mode: SupervisorMode, repoRoot = process.cwd()): 
       cwd: frontendRoot,
       onExit: { restart: WATCHER_RESTART },
       env: { REINS_DEV: "1" },
-      command: [bun, "build", ...FRONTEND_ENTRYPOINTS, "--outdir", FRONTEND_DIST_DIR, "--splitting", "--define", "REINS_DEV=true", "--watch"],
+      // The libraries the app provides to extensions first (dist/vendor, index.html's import map): once, they do not change.
+      command: ["sh", "-c", 'bun_bin="$1"; shift; "$bun_bin" src/vendor/build.ts && exec "$bun_bin" "$@"', "sh", bun,
+        "build", ...FRONTEND_ENTRYPOINTS, "--outdir", FRONTEND_DIST_DIR, "--splitting", "--define", "REINS_DEV=true", "--watch"],
     },
     {
       name: "frontend:css",

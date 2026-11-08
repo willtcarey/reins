@@ -10,7 +10,7 @@ import type { CredentialStore } from "@earendil-works/pi-ai";
 import type { AppState } from "../state.js";
 import { createDbCredentialStore } from "../pi/credential-store.js";
 import { createBroadcast, type Broadcast } from "./broadcast.js";
-import type { ExtensionHost } from "../extensions/host.js";
+import type { ExtensionHost } from "../extension-system/host.js";
 import { Nodes } from "./nodes.js";
 import { ProjectModel, Projects } from "./projects.js";
 import { Sessions } from "./sessions.js";
@@ -34,7 +34,7 @@ export class Models {
 
   /** What the app's extensions registered (`reins.tools`, their script functions, prompt sections, routes). */
   get extensions(): ExtensionHost {
-    return this.state.extensions;
+    return this.state.extensions.host;
   }
 
   get nodes(): Nodes {

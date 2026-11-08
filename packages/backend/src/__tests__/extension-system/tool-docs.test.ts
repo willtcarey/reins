@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { Tool } from "@reins/sdk/server";
-import { matchTools, toolSearchDocs } from "../../extensions/tool-docs.js";
+import { matchTools, toolSearchDocs } from "../../extension-system/tool-docs.js";
 
 const tool = (id: string, description: string, inputSchema: Tool["inputSchema"] = { type: "object" }): Tool =>
   ({ id, name: id.replace(/^\w+?__/, ""), description, inputSchema });

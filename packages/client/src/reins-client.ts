@@ -1,7 +1,7 @@
 import type { DiffFileResponse, DiffPatchQuery, DiffQuery } from "@reins/backend/routes/diff.js";
 import type { DirectoryEntry } from "@reins/backend/models/sources.js";
 import type { FileKind } from "@reins/backend/models/file-system.js";
-import type { ExtensionView } from "@reins/backend/extensions/host.js";
+import type { ExtensionView } from "@reins/backend/extension-system/report.js";
 import type { SpreadResponse } from "@reins/backend/routes/git.js";
 import type { OAuthProviderInfo, OAuthStartResponse } from "@reins/backend/routes/oauth.js";
 import type { ArchivedSessionPage, SessionCreateRequest } from "@reins/backend/routes/project-sessions.js";
@@ -222,10 +222,20 @@ export class ReinsClient {
     disconnect: (providerId: string, options?: RequestOptions) => this.none("DELETE", `/api/oauth/${this.segment(providerId)}`, undefined, options),
   };
 
-  /** The host's report of each backend extension (not an extension's own API). */
-  readonly extensions = {
-    /** Each extension of the server's app, in the order of registration: its health, what it registered and what it stores. */
-    list: (options?: RequestOptions) => this.json<ExtensionView[]>("GET", "/api/extensions", undefined, options),
+  /** The server's installed extensions, built in and added (docs/dev/extensions-overview.md). */
+  readonly installedExtensions = {
+    /** The report: each one, its state, what it registered and what it stores. */
+    list: (options?: RequestOptions) => this.json<ExtensionView[]>("GET", "/api/installed-extensions", undefined, options),
+    /** Adds the extension in directory `path` (absolute, on the server's machine) and loads its built files. */
+    add: (path: string, options?: RequestOptions) => this.json<ExtensionView>("POST", "/api/installed-extensions", { path }, options),
+    /** Turns it on or off, built in or added: off, it stops and browsers drop it, until it is turned on. */
+    setEnabled: (name: string, enabled: boolean, options?: RequestOptions) => this.none("PATCH", `/api/installed-extensions/${this.segment(name)}`, { enabled }, options),
+    /** Loads an added one's built files anew (its services restart; browsers import its frontend part again). */
+    reload: (name: string, options?: RequestOptions) => this.json<ExtensionView>("POST", `/api/installed-extensions/${this.segment(name)}/reload`, undefined, options),
+    /** A browser's report of how its frontend part at `script` loaded: `error` null, or why not. */
+    reportFrontend: (name: string, input: { script: string; error: string | null }, options?: RequestOptions) => this.none("POST", `/api/installed-extensions/${this.segment(name)}/frontend`, input, options),
+    /** Unloads an added one and forgets it; its data stays. */
+    remove: (name: string, options?: RequestOptions) => this.none("DELETE", `/api/installed-extensions/${this.segment(name)}`, undefined, options),
   };
 
   /** The HTTP API of backend extension `name`. */

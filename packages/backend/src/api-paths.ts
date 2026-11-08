@@ -14,6 +14,7 @@ export const API = {
   extensionsApi: "/api/extensions",
   /** Outside `/api`: each extension's pages for the browser, under its name (routes/extensions.ts). */
   extensionPages: "/extensions",
+  installedExtensions: "/api/installed-extensions",
   /** The browser's WebSocket. */
   ws: "/ws",
   /** Outside `/api`: what a remote node's machine reaches, the node link and the install script, manifest

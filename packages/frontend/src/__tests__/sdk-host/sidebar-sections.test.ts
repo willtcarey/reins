@@ -42,12 +42,12 @@ describe("reins.sidebar.registerSection", () => {
   });
 
   test("records the sections each extension registered", () => {
-    const { reins, extensions, sdkFor } = testSdk();
+    const { reins, extensionHost, sdkFor } = testSdk();
     const other = { name: "notes", label: "Notes" };
-    extensions.activate({ ...other, register: (sdk) => sdk.sidebar.registerSection(section("notes")) }, sdkFor(other));
+    extensionHost.activate({ ...other, register: (sdk) => sdk.sidebar.registerSection(section("notes")) }, sdkFor(other));
     reins.sidebar.registerSection(section("recent"));
 
-    expect(extensions.list()[0]?.registrations.sidebarSections).toEqual(["notes"]);
+    expect(extensionHost.list()[0]?.registrations.sidebarSections).toEqual(["notes"]);
   });
 });
 

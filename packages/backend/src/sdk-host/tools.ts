@@ -6,7 +6,7 @@
 
 import { Type } from "@sinclair/typebox";
 import type { ScriptNamespace } from "@reins/sdk/server";
-import { ToolResultSchema, toolSearchDocs } from "../extensions/tool-docs.js";
+import { ToolResultSchema, toolSearchDocs } from "../extension-system/tool-docs.js";
 import { SignalSchema, sdkMethod, signalOf, type CallContext } from "./declaration.js";
 
 const FiltersSchema = Type.Record(Type.String(), Type.Unknown(), {

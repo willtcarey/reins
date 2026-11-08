@@ -9,7 +9,7 @@ import { useTestDb } from "../helpers/test-db.js";
 const router = buildRouter();
 
 async function services(state: TestAppState, extension: string) {
-  const response = (await router.handle(makeRequest("GET", "/api/extensions"), state))!;
+  const response = (await router.handle(makeRequest("GET", "/api/installed-extensions"), state))!;
   const views: { name: string; services: unknown[] }[] = await response.json();
   return views.find(view => view.name === extension)!.services;
 }

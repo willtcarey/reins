@@ -24,6 +24,13 @@ export function sameSource(a: Source | null, b: Source | null): boolean {
   return a.nodeId === b.nodeId && a.path === b.path;
 }
 
+/**
+ * The attribute on the element each of an added extension's views is mounted in, with its name: its
+ * stylesheet, as Reins scoped it, applies only inside such elements. Put it on what the extension draws
+ * elsewhere (a dialog appended to `document.body`) for its styles to reach that too.
+ */
+export const SCOPE_ATTRIBUTE = "data-reins-extension";
+
 /** A source's file listing as it loads. A reload keeps `data` while it runs and when it fails. */
 export interface FileListing {
   /** Paths relative to the source's root. */

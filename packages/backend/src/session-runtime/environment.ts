@@ -61,6 +61,7 @@ REINS documentation (read only when the user asks about REINS itself):${devDocs 
 - Developer workflow docs: ${posix.join(dir, "dev")}` : ""}
 - Feature docs: ${posix.join(dir, "features")}
 - Skills feature doc: ${posix.join(dir, "features/skills.md")}
+- Building extensions (extensions load from a directory; read before writing one): ${posix.join(dir, "features/building-extensions.md")}
 - Skills are listed in <available_skills>; read a skill's SKILL.md only when the task matches.`;
   }
 

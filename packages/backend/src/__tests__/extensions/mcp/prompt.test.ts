@@ -29,7 +29,7 @@ describe("the MCP extension's prompt section", () => {
     await servers.create({ name: "vercel", url: "https://vercel.example.com/mcp", authKind: "none" });
     await servers.create({ name: "slack", url: "https://slack.example.com/mcp", authKind: "none", enabled: false });
 
-    expect(await state.extensions.promptSections(context(null))).toEqual([`MCP servers (through execute): find their tools with reins.tools.search(query), or reins.tools.search(query, { filters: { server } }) for one server's; call one with reins.tools.call(id, args). A tool's ID is mcp__<server>__<tool>. search does not list them.
+    expect(await state.extensions.host.promptSections(context(null))).toEqual([`MCP servers (through execute): find their tools with reins.tools.search(query), or reins.tools.search(query, { filters: { server } }) for one server's; call one with reins.tools.call(id, args). A tool's ID is mcp__<server>__<tool>. search does not list them.
 - executor: Integrations: github_com, sentry_io.
   Find their tools with search_<integration>.
 - vercel`]);
@@ -37,11 +37,11 @@ describe("the MCP extension's prompt section", () => {
 
   test("no enabled server, or no execute, means no section", async () => {
     const { state, servers } = mcpState();
-    expect(await state.extensions.promptSections(context(null))).toEqual([]);
+    expect(await state.extensions.host.promptSections(context(null))).toEqual([]);
 
     await servers.create({ name: "vercel", url: "https://vercel.example.com/mcp", authKind: "none" });
-    expect(await state.extensions.promptSections(context(["bash"]))).toEqual([]);
-    expect(await state.extensions.promptSections(context(["execute"]))).toHaveLength(1);
+    expect(await state.extensions.host.promptSections(context(["bash"]))).toEqual([]);
+    expect(await state.extensions.host.promptSections(context(["execute"]))).toHaveLength(1);
   });
 
   test("reaches an agent session's prompt when its runtime opens", async () => {
@@ -51,7 +51,7 @@ describe("the MCP extension's prompt section", () => {
     const created = createSession(state, { projectId: project.id, model: { provider: "anthropic", modelId: "claude-haiku-4-5" } });
     const row = getSession(created.id)!;
 
-    const { systemPrompt } = (await new SessionModel(row, state.nodes).context(getSource(row.source_id)!, ctx => state.extensions.promptSections(ctx))).runtime;
+    const { systemPrompt } = (await new SessionModel(row, state.nodes).context(getSource(row.source_id)!, ctx => state.extensions.host.promptSections(ctx))).runtime;
 
     expect(systemPrompt).toContain("- vercel: vercel tools");
   });

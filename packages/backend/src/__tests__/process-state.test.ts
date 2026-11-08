@@ -22,7 +22,7 @@ const app = (name: string): App & { name: string } => ({
 
 /** A process with no database, browsers or node socket of use. */
 const newProcess = (options?: OpenSessionsOptions) =>
-  createServerProcess({ db: new Database(":memory:"), extensionData: { open: () => { throw new Error("no extensions here"); } }, broadcast: () => {}, frontendDir: "/tmp/nonexistent", nodeSocket: "/tmp/unused.sock" }, options);
+  createServerProcess({ db: new Database(":memory:"), extensionData: { open: () => { throw new Error("no extensions here"); }, buildsDir: "/tmp/unused-builds" }, broadcast: () => {}, frontendDir: "/tmp/nonexistent", nodeSocket: "/tmp/unused.sock" }, options);
 
 describe("the process's live runtimes", () => {
   test("the idle sweep closes a runtime idle for 3 minutes, never one still streaming or used since", () => {

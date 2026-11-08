@@ -3,7 +3,7 @@
  * extensions by name.
  */
 import { afterEach, describe, expect, test } from "bun:test";
-import type { ExtensionView } from "@backend/extensions/host.js";
+import type { ExtensionView } from "@backend/extension-system/report.js";
 import type { ExtensionRegistration, ReinsSdk } from "@reins/sdk";
 import { ExtensionsStore } from "../../../models/stores/extensions-store.js";
 import { mockFetch, restoreFetch } from "../../helpers/mock-fetch.js";
@@ -14,6 +14,11 @@ function backendExtension(name: string, overrides: Partial<ExtensionView> = {}):
     name,
     status: "loaded",
     failure: null,
+    source: { kind: "built-in" },
+    manifest: null,
+    backendPart: true,
+    frontendFailure: null,
+    build: null,
     errors: [],
     registrations: { tools: null, promptSections: 0, settlementListeners: 0, scriptFunctions: [], httpMethods: [], pages: [] },
     services: [],
@@ -38,15 +43,15 @@ describe("ExtensionsStore", () => {
     const sdk = testSdk();
     const mcp: ExtensionRegistration = { name: "mcp", label: "MCP", description: "Remote MCP servers.", register: (reins: ReinsSdk) => reins.settings.register({ mount: () => {} }) };
     const viewer: ExtensionRegistration = { name: "file-viewer", label: "File viewer", register: () => () => {} };
-    sdk.extensions.activate(mcp, sdk.sdkFor(mcp));
-    sdk.extensions.activate(viewer, sdk.sdkFor(viewer));
+    sdk.extensionHost.activate(mcp, sdk.sdkFor(mcp));
+    sdk.extensionHost.activate(viewer, sdk.sdkFor(viewer));
     const backendMcp = backendExtension("mcp", { registrations: { tools: { title: "MCP servers" }, promptSections: 1, settlementListeners: 0, scriptFunctions: ["mcp.list"], httpMethods: ["list"], pages: [] } });
     const requests = serveBackend(() => Response.json([backendMcp, backendExtension("audit")]));
-    const store = new ExtensionsStore(sdk.extensions);
+    const store = new ExtensionsStore(sdk.extensionHost);
 
     await store.load();
 
-    expect(requests).toEqual(["/api/extensions"]);
+    expect(requests).toEqual(["/api/installed-extensions"]);
     expect(store.extensions.map(({ name, label, description, parts, status }) => ({ name, label, description, parts, status }))).toEqual([
       { name: "audit", label: "audit", description: null, parts: { backend: true, frontend: false }, status: "loaded" },
       { name: "file-viewer", label: "File viewer", description: null, parts: { backend: false, frontend: true }, status: "loaded" },
@@ -60,9 +65,9 @@ describe("ExtensionsStore", () => {
   test("an extension is failed when either part failed, with each part's error", async () => {
     const sdk = testSdk();
     const notes: ExtensionRegistration = { name: "notes", label: "Notes", register: () => () => {} };
-    sdk.extensions.activate(notes, sdk.sdkFor(notes));
+    sdk.extensionHost.activate(notes, sdk.sdkFor(notes));
     serveBackend(() => Response.json([backendExtension("notes", { status: "failed", failure: { stage: "migration", message: "bad migration" } })]));
-    const store = new ExtensionsStore(sdk.extensions);
+    const store = new ExtensionsStore(sdk.extensionHost);
 
     await store.load();
 
@@ -74,9 +79,9 @@ describe("ExtensionsStore", () => {
   test("while the backend's report cannot be loaded, the frontend's extensions are still listed, and the error is kept", async () => {
     const sdk = testSdk();
     const notes: ExtensionRegistration = { name: "notes", label: "Notes", register: () => () => {} };
-    sdk.extensions.activate(notes, sdk.sdkFor(notes));
+    sdk.extensionHost.activate(notes, sdk.sdkFor(notes));
     serveBackend(() => Response.json({ error: "server down" }, { status: 500 }));
-    const store = new ExtensionsStore(sdk.extensions);
+    const store = new ExtensionsStore(sdk.extensionHost);
 
     const result = await store.load();
 
@@ -85,12 +90,85 @@ describe("ExtensionsStore", () => {
     expect(store.extensions.map(({ name, parts }) => ({ name, parts }))).toEqual([{ name: "notes", parts: { backend: false, frontend: true } }]);
   });
 
+  test("an added extension is labelled from its manifest, says where it came from, and loading is not failed", async () => {
+    serveBackend(() => Response.json([backendExtension("spoke", {
+      status: "loading",
+      source: { kind: "path", path: "/home/me/spoke" },
+      manifest: { label: "Spoke", description: "GitHub inbox.", version: "0.2.0", icon: null },
+    })]));
+    const store = new ExtensionsStore(testSdk().extensionHost);
+
+    await store.load();
+
+    expect(store.extensions.map(({ name, label, description, source, version, status }) => ({ name, label, description, source, version, status }))).toEqual([
+      { name: "spoke", label: "Spoke", description: "GitHub inbox.", source: { kind: "path", path: "/home/me/spoke" }, version: "0.2.0", status: "loading" },
+    ]);
+  });
+
+  test("an extension turned off is disabled, without problems, labelled from the app's built-in parts when it is one", async () => {
+    serveBackend(() => Response.json([
+      backendExtension("file-viewer", { status: "disabled", backendPart: false }),
+      backendExtension("spoke", { status: "disabled", source: { kind: "path", path: "/home/me/spoke" }, manifest: { label: "Spoke", description: null, version: "0.2.0", icon: null } }),
+      backendExtension("mcp"),
+    ]));
+    const store = new ExtensionsStore(testSdk().extensionHost, undefined, [{ name: "file-viewer", label: "File viewer", description: "Shows files." }]);
+
+    await store.load();
+
+    expect(store.extensions.map(({ name, label, description, enabled, status, parts }) => ({ name, label, description, enabled, status, parts }))).toEqual([
+      { name: "file-viewer", label: "File viewer", description: "Shows files.", enabled: false, status: "disabled", parts: { backend: false, frontend: false } },
+      { name: "mcp", label: "mcp", description: null, enabled: true, status: "loaded", parts: { backend: true, frontend: false } },
+      { name: "spoke", label: "Spoke", description: null, enabled: false, status: "disabled", parts: { backend: false, frontend: false } },
+    ]);
+  });
+
+  test("a frontend failure a browser reported is a problem, unless this browser's own part failed", async () => {
+    serveBackend(() => Response.json([backendExtension("spoke", {
+      source: { kind: "path", path: "/home/me/spoke" },
+      frontendFailure: { message: "TypeError: x is not a function", at: "2026-01-01T00:00:00.000Z" },
+    })]));
+    const store = new ExtensionsStore(testSdk().extensionHost);
+
+    await store.load();
+
+    expect(store.extensions.map(({ status, problems }) => ({ status, problems }))).toEqual([
+      { status: "failed", problems: ["Frontend: it failed in a browser: TypeError: x is not a function"] },
+    ]);
+  });
+
+  test("reloading, removing and turning an extension on or off ask the server, and the report is read again when the server says extensions changed", async () => {
+    const sdk = testSdk();
+    const requests: string[] = [];
+    mockFetch((url, init) => {
+      requests.push(`${init?.method ?? "GET"} ${url}`);
+      if (url === "/api/installed-extensions") return Response.json([]);
+      if (url.endsWith("/reload")) return Response.json(backendExtension("spoke"));
+      return new Response(null, { status: 204 });
+    });
+    const store = new ExtensionsStore(sdk.extensionHost, sdk.client);
+    await store.load();
+
+    await store.reload("spoke");
+    await store.remove("spoke");
+    await store.setEnabled("file-viewer", false);
+    sdk.client.fireMessage({ type: "extensions_changed" });
+    await Bun.sleep(0);
+
+    expect(requests).toEqual([
+      "GET /api/installed-extensions",
+      "POST /api/installed-extensions/spoke/reload",
+      "DELETE /api/installed-extensions/spoke",
+      "PATCH /api/installed-extensions/file-viewer",
+      "GET /api/installed-extensions",
+    ]);
+  });
+
   test("a registration made or disposed on the frontend reaches the list and its listeners", async () => {
     const sdk = testSdk();
     let reins: ReinsSdk | undefined;
     const notes: ExtensionRegistration = { name: "notes", label: "Notes", register: (sdkOfNotes: ReinsSdk) => { reins = sdkOfNotes; return () => {}; } };
-    sdk.extensions.activate(notes, sdk.sdkFor(notes));
-    const store = new ExtensionsStore(sdk.extensions);
+    sdk.extensionHost.activate(notes, sdk.sdkFor(notes));
+    const store = new ExtensionsStore(sdk.extensionHost);
     let changes = 0;
     store.subscribe(() => { changes += 1; });
 

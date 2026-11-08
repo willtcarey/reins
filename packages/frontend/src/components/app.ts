@@ -3,7 +3,7 @@
 import { LitElement, html, type PropertyValues } from "lit";
 import { customElement, query, state } from "lit/decorators.js";
 import { AppRouteController } from "../controllers/app-route-controller.js";
-import { BUILT_IN_EXTENSIONS } from "../extensions/built-in.js";
+import { BUILT_IN_EXTENSION_INFO, BUILT_IN_EXTENSIONS } from "../extensions/built-in.js";
 import { api } from "../models/api.js";
 import { AppStore } from "../models/stores/app-store.js";
 import { FileBrowserStore } from "../models/stores/file-browser-store.js";
@@ -11,6 +11,7 @@ import { QuickOpenStore } from "../models/stores/quick-open-store.js";
 import { createReinsSdk, type SdkHost } from "../sdk-host/create-sdk.js";
 import { SdkSessions } from "../sdk-host/sessions.js";
 import { SdkUi } from "../sdk-host/ui.js";
+import { Extensions } from "../extension-system/extensions.js";
 import { SdkNodes, SdkProjects, SdkTasks } from "../sdk-host/projects.js";
 import { AppClient } from "../models/ws-client.js";
 import { mainViewOf, openSettings, renderRoutePage } from "../routing/app-router.js";
@@ -36,7 +37,7 @@ export class AppShell extends LitElement {
     return this;
   }
 
-  private appStore = new AppStore(new AppClient());
+  private appStore = new AppStore(new AppClient(), undefined, BUILT_IN_EXTENSION_INFO);
   /** The main area is the workspace routes' page, which knows what the view it shows is about. */
   private mainArea = new RoutedMainArea(this.appStore.views, () => this.workspace);
   /** What each extension's SDK is built over. */
@@ -53,6 +54,21 @@ export class AppShell extends LitElement {
     socket: this.appStore.client,
   };
   private disposeSdk: Array<() => void> = [];
+  /** The extensions' frontend parts, built in and added, as the server's report says they should be. */
+  private extensions = new Extensions({
+    host: this.appStore.extensionHost,
+    sdkFor: (extension, scope) => createReinsSdk(extension, this.sdkHost, { scope }),
+    addStyles: linkStylesheet,
+    importModule: (url) => import(url),
+    builtIns: BUILT_IN_EXTENSIONS,
+    reserved: new Set(["app", "file-browser"]),
+    report: (name, script, error) => {
+      void api.installedExtensions.reportFrontend(name, { script, error })
+        .catch((failure: unknown) => console.error(`Could not report how ${name}'s frontend loaded:`, failure));
+    },
+  });
+  /** Counts report requests, so a late answer to an older one is dropped. */
+  private extensionsRequest = 0;
   private fileBrowserStore: FileBrowserStore | null = null;
   private quickOpenStore = new QuickOpenStore(this.appStore.sessionCache);
   private unsubscribeStore: (() => void) | null = null;
@@ -67,6 +83,19 @@ export class AppShell extends LitElement {
   @query("app-workspace") private workspace!: AppWorkspace | null;
   @query("image-lightbox") private imageLightbox!: ImageLightbox;
 
+  /** Brings the extensions' frontend parts in line with the server's report. Without one, the built-in parts
+   * are activated as if all were on, so the app works; the next report turns off what is off. */
+  private syncExtensions(): void {
+    // Only the latest request's report applies: an older one that answers later would undo a newer one.
+    const request = ++this.extensionsRequest;
+    void api.installedExtensions.list()
+      .catch((error: unknown) => {
+        console.error("Loading the server's extensions failed:", error);
+        return [];
+      })
+      .then((report) => { if (request === this.extensionsRequest) return this.extensions.sync(report); });
+  }
+
   override connectedCallback() {
     // The app's own views follow the main area through the SDK's workspace, as an extension would.
     const { workspace } = createReinsSdk({ name: "app", label: "Reins" }, this.sdkHost);
@@ -76,9 +105,13 @@ export class AppShell extends LitElement {
       registerDiffFileTree(this.appStore.views, workspace, this.appStore.diffs),
       openFilesOfShownSession(this.appStore.client, workspace, document),
       this.quickOpenStore.followWorkspace(workspace),
-      ...BUILT_IN_EXTENSIONS.map((extension) => this.appStore.extensions.activate(extension, createReinsSdk(extension, this.sdkHost))),
       // A page registered or gone changes the title of the page shown.
       this.appStore.views.subscribe(() => this.updateDocumentTitle()),
+      // Extensions load as the server's report says, at each connect (a server may have changed them while the
+      // browser was away) and when the server says they changed: the user may have turned one off.
+      this.appStore.client.onConnection((connected) => { if (connected) this.syncExtensions(); }),
+      this.appStore.client.subscribe({ extensions_changed: () => this.syncExtensions() }),
+      () => this.extensions.dispose(),
     ];
     // The file browser is app-shell's own overlay, not a registered extension, but it uses only the SDK.
     this.fileBrowserStore = new FileBrowserStore(createReinsSdk({ name: "file-browser", label: "File browser" }, this.sdkHost));
@@ -173,4 +206,22 @@ declare global {
   interface HTMLElementTagNameMap {
     "app-shell": AppShell;
   }
+}
+
+/** A `<link>` in the page's head for an added extension's scoped stylesheet; resolves once it loaded or failed
+ * (logged), so the extension's views show either way. */
+function linkStylesheet(name: string, url: string): Promise<() => void> {
+  const link = document.createElement("link");
+  link.rel = "stylesheet";
+  link.href = url;
+  link.dataset.reinsExtensionStyles = name;
+  const loaded = new Promise<void>((resolve) => {
+    link.addEventListener("load", () => resolve(), { once: true });
+    link.addEventListener("error", () => {
+      console.error(`The ${name} extension's stylesheet could not be loaded: ${url}`);
+      resolve();
+    }, { once: true });
+  });
+  document.head.append(link);
+  return loaded.then(() => () => link.remove());
 }

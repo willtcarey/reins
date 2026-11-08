@@ -1,13 +1,16 @@
 import { LitElement, html, nothing, type TemplateResult } from "lit";
-import { customElement, property } from "lit/decorators.js";
+import { customElement, property, state } from "lit/decorators.js";
 import { StoreController } from "../../controllers/store-controller.js";
 import { formatBytes } from "../../helpers/format-bytes.js";
 import type { ExtensionSummary, ExtensionsStore } from "../../models/stores/extensions-store.js";
 import { showSettingsExtension, showSettingsSection } from "../../routing/app-router.js";
 import { chevronLeftIcon } from "../../ui/icons.js";
 import { statusDot } from "../../ui/status-dot.js";
+import { statusTone } from "./extension-status.js";
 import "../view-mount.js";
 import { serviceState } from "./service-status.js";
+import { confirmDialog } from "../../ui/confirm-dialog.js";
+import { showToast } from "../../ui/toast.js";
 
 /** A labelled row; nothing for an empty value, so only what an extension has is shown. */
 function row(label: string, value: TemplateResult | string | null) {
@@ -38,8 +41,8 @@ function group(title: string, body: TemplateResult) {
   `;
 }
 
-/** Reins' page about one extension: its identity and health, what it gives agents and users, and its HTTP
- * methods and pages (its frontend part's, scripts' and callbacks' way in). Its migrations are not shown. Read-only. */
+/** Reins' page about one extension: its identity and health, its switch, what it gives agents and users, and
+ * its HTTP methods and pages (its frontend part's, scripts' and callbacks' way in). Its migrations are not shown. */
 @customElement("settings-extension-details")
 export class SettingsExtensionDetails extends LitElement {
   override createRenderRoot() {
@@ -59,6 +62,60 @@ export class SettingsExtensionDetails extends LitElement {
 
   /** The extension's name, from the route. */
   @property({ attribute: false }) name = "";
+
+  /** A reload or removal in progress. */
+  @state() private _busy = false;
+
+  /** Where it came from; its switch; and for an added one its reload (while it is on) and removal. */
+  private _renderSource(extension: ExtensionSummary) {
+    const { source } = extension;
+    const added = source.kind === "path";
+    const button = "cursor-pointer rounded px-2.5 py-1.5 text-xs disabled:cursor-default disabled:opacity-50";
+    const secondary = `${button} bg-zinc-700 text-zinc-100 hover:bg-zinc-600`;
+    return html`
+      <dl class="mt-3 text-xs">
+        ${row("From", added ? html`<code class="font-mono text-[11px] select-all">${source.path}</code>` : "Built into Reins")}
+        ${row("Version", extension.version)}
+      </dl>
+      <div class="mt-2 flex gap-2">
+        <button type="button" class=${secondary} ?disabled=${this._busy}
+          @click=${() => this._act(extension, extension.enabled ? "disable" : "enable")}>${extension.enabled ? "Turn off" : "Turn on"}</button>
+        ${added && extension.enabled
+          ? html`<button type="button" class=${secondary} ?disabled=${this._busy}
+              @click=${() => this._act(extension, "reload")}>Reload</button>`
+          : nothing}
+        ${added
+          ? html`<button type="button" class="${button} bg-red-900/60 text-red-100 hover:bg-red-800/70" ?disabled=${this._busy}
+              @click=${() => this._act(extension, "remove")}>Remove</button>`
+          : nothing}
+      </div>
+      ${extension.enabled
+        ? nothing
+        : html`<p class="mt-2 text-xs text-zinc-500">Turned off: Reins does not load it, and agents and the app do not have what it gives. Its data stays.</p>`}
+    `;
+  }
+
+  private async _act(extension: ExtensionSummary, action: "reload" | "remove" | "enable" | "disable") {
+    const store = this.store;
+    if (!store || this._busy) return;
+    if (action === "remove" && !(await confirmDialog({
+      title: `Remove ${extension.label}?`,
+      message: "Reins stops loading it. Its directory, data and secrets stay, and adding it again finds them.",
+      confirmLabel: "Remove",
+      destructive: true,
+    }))) return;
+    this._busy = true;
+    try {
+      if (action === "enable" || action === "disable") await store.setEnabled(extension.name, action === "enable");
+      else await store[action](extension.name);
+      if (action === "remove") showSettingsSection("extensions");
+    } catch (error) {
+      const what = { reload: "Reload", remove: "Removal", enable: "Turning on", disable: "Turning off" }[action];
+      showToast(`${what} failed: ${error instanceof Error ? error.message : String(error)}`, "error");
+    } finally {
+      this._busy = false;
+    }
+  }
 
   /** What agents get from it: all from its backend part. */
   private _renderForAgents(extension: ExtensionSummary) {
@@ -154,7 +211,6 @@ export class SettingsExtensionDetails extends LitElement {
   }
 
   private _renderExtension(extension: ExtensionSummary) {
-    const failed = extension.status === "failed";
     return html`
       <header class="flex items-center gap-2">
         ${extension.icon
@@ -162,9 +218,10 @@ export class SettingsExtensionDetails extends LitElement {
           : nothing}
         <h2 class="truncate text-base font-semibold text-zinc-100">${extension.label}</h2>
         ${extension.label !== extension.name ? html`<code class="truncate font-mono text-xs text-zinc-500">${extension.name}</code>` : nothing}
-        <span class="ml-auto flex shrink-0 items-center gap-1.5 text-xs text-zinc-400">${statusDot(failed ? "danger" : "success")}${failed ? "failed" : "loaded"}</span>
+        <span class="ml-auto flex shrink-0 items-center gap-1.5 text-xs text-zinc-400">${statusDot(statusTone(extension))}${extension.status}</span>
       </header>
       ${extension.description ? html`<p class="mt-1 text-xs text-zinc-500">${extension.description}</p>` : nothing}
+      ${this._renderSource(extension)}
       ${extension.problems.map((problem) => html`<p class="mt-3 text-xs text-red-400/90 break-words" role="status">${problem}</p>`)}
       ${extension.frontend?.registrations.settingsPage
         ? html`<button
@@ -175,7 +232,7 @@ export class SettingsExtensionDetails extends LitElement {
         : nothing}
       ${this._renderForAgents(extension)}
       ${this._renderInTheApp(extension)}
-      ${this._renderForAgents(extension) === nothing && this._renderInTheApp(extension) === nothing
+      ${extension.enabled && this._renderForAgents(extension) === nothing && this._renderInTheApp(extension) === nothing
         ? html`<p class="mt-6 text-xs text-zinc-500">It gives agents and users nothing now.</p>`
         : nothing}
       ${this._renderServices(extension)}

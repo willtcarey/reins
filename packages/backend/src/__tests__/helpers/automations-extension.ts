@@ -4,12 +4,12 @@
  * `tick`.
  */
 
-import type { ExtensionRegistration } from "../../extensions/host.js";
+import type { BuiltInBackendPart } from "../../extension-system/extensions.js";
 import type { Automations } from "../../extensions/automations/automations.js";
 import { automations, startAutomations } from "../../extensions/automations/index.js";
 
 export interface TestAutomations {
-  registration: ExtensionRegistration;
+  registration: BuiltInBackendPart;
   /** The fake clock's time. */
   now: Date;
   /** Sets the clock to `iso`. */

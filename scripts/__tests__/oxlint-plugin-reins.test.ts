@@ -1,10 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import plugin from "../oxlint-plugin-reins.cjs";
 
-function runRule(ruleName: keyof typeof plugin.rules, visitorName: string, node: Record<string, unknown>) {
+function runRule(ruleName: keyof typeof plugin.rules, visitorName: string, node: Record<string, unknown>, options: unknown[] = []) {
   const reports: unknown[] = [];
   const rule = plugin.rules[ruleName];
   const visitor = rule.create({
+    options,
     report(diagnostic: unknown) {
       reports.push(diagnostic);
     },
@@ -349,6 +350,14 @@ describe("reins/sdk-isolation", () => {
   test("it imports its own modules", () => {
     expect(runRule("sdk-isolation", "ImportDeclaration", { source: { value: "./events.js" } })).toHaveLength(0);
     expect(runRule("sdk-isolation", "ExportNamedDeclaration", { source: null })).toHaveLength(0);
+  });
+
+  test("an entry for a provided library (@reins/sdk/lit) imports that library too, and nothing else", () => {
+    const lit = [{ allow: ["lit"] }];
+    expect(runRule("sdk-isolation", "ImportDeclaration", { source: { value: "lit" } }, lit)).toHaveLength(0);
+    expect(runRule("sdk-isolation", "ImportDeclaration", { source: { value: "lit/directives/repeat.js" } }, lit)).toHaveLength(0);
+    expect(runRule("sdk-isolation", "ImportDeclaration", { source: { value: "lit-html" } }, lit)).toHaveLength(1);
+    expect(runRule("sdk-isolation", "ImportDeclaration", { source: { value: "../models/inspector.js" } }, lit)).toHaveLength(1);
   });
 });
 

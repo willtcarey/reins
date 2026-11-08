@@ -5,9 +5,10 @@
 
 import type { ExtensionClient } from "@reins/client";
 import type {
-  Command, Commands, ContainerId, CurrentView, Disposer, ExtensionInfo, Files, HttpApi, HttpCallArgs, HttpOutput, MessageDecorator, Messages, Nodes, OpenOptions, Projects,
+  Command, Commands, ContainerId, CurrentView, Disposer, ExtensionInfo, Files, HttpApi, HttpCallArgs, HttpOutput, MessageDecorator, Messages, Nodes, OpenOptions, PanePresentation, Projects,
   ReinsSdk, Sessions, SettingsPage, SidebarSection, Subject, SubjectTypes, Tasks, Ui, View, ViewRenderer, Views, ViewTypes,
 } from "@reins/sdk";
+import { SCOPE_ATTRIBUTE } from "@reins/sdk";
 import type { IAppClient } from "../models/ws-client.js";
 import type { CommandRegistry } from "./commands.js";
 import type { DecoratorRegistry } from "./decorators.js";
@@ -65,30 +66,61 @@ export interface SdkHost {
   socket: Pick<IAppClient, "subscribe" | "onConnection">;
 }
 
-/** `A` is the extension's HTTP API, which only types `http.call`: the host calls any method by its name. */
-export function createReinsSdk<A extends HttpApi = HttpApi>(extension: ExtensionInfo, { app, sessions, projects, tasks, nodes, ui, containers, http, socket }: SdkHost): ReinsSdk<A> {
+/** What each SDK object's registrations and subscriptions return, so its extension's disposal can undo them. */
+const owned = new WeakMap<object, Disposer[]>();
+
+/** The disposers of everything made through `sdk` so far: its registrations and its listeners. */
+export function sdkDisposers(sdk: object): Disposer[] {
+  return owned.get(sdk) ?? [];
+}
+
+/**
+ * `A` is the extension's HTTP API, which only types `http.call`: the host calls any method by its name.
+ * `scope`: mount each of its views in an element with `SCOPE_ATTRIBUTE`, where its scoped stylesheet applies.
+ */
+export function createReinsSdk<A extends HttpApi = HttpApi>(
+  extension: ExtensionInfo,
+  { app, sessions, projects, tasks, nodes, ui, containers, http, socket }: SdkHost,
+  { scope }: { scope?: string } = {},
+): ReinsSdk<A> {
+  const scoped = <T extends { mount: (target: HTMLElement, ...rest: never[]) => unknown }>(mountable: T): T =>
+    scope ? { ...mountable, mount: inScope(mountable.mount.bind(mountable), scope) } : mountable;
+  const scopedPane = <V extends View>(pane: PanePresentation<V>): PanePresentation<V> => ({
+    ...scoped(pane),
+    icon: scoped(pane.icon),
+    ...(pane.toolbar ? { toolbar: scoped(pane.toolbar) } : {}),
+  });
   const { main } = containers;
+  const disposers: Disposer[] = [];
+  const own = (dispose: Disposer): Disposer => {
+    disposers.push(dispose);
+    return dispose;
+  };
   const currentSubject = <K extends keyof SubjectTypes>(type: K): SubjectTypes[K] | null => {
     const found = main.current()?.subject.find((subject): subject is Subject & { type: K; id: SubjectTypes[K] } => subject.type === type);
     return found ? found.id : null;
   };
   const api = http.extension(extension.name);
-  return Object.freeze({
+  const sdk = Object.freeze({
     files: app.files,
     workspace: Object.freeze({
       open: (view: View, { in: container = "inspector" }: OpenOptions = {}) => containers[container].open(view),
       current: () => main.current(),
       currentSubject,
-      onDidChange: (listener: () => void) => main.subscribe(listener),
+      onDidChange: (listener: () => void) => own(main.subscribe(listener)),
     }),
     views: Object.freeze({
-      register: <K extends keyof ViewTypes>(name: K, renderer: ViewRenderer<ViewTypes[K]>) => app.views.register(name, renderer, extension.name),
+      register: <K extends keyof ViewTypes>(name: K, renderer: ViewRenderer<ViewTypes[K]>) => own(app.views.register(name, scope ? {
+        ...renderer,
+        ...(renderer.pane ? { pane: scopedPane(renderer.pane) } : {}),
+        ...(renderer.inline ? { inline: scoped(renderer.inline) } : {}),
+      } : renderer, extension.name)),
     } satisfies Views),
-    messages: Object.freeze({ registerDecorator: (decorator: MessageDecorator) => app.decorators.registerDecorator(decorator, extension.name) } satisfies Messages),
-    commands: Object.freeze({ register: (command: Command) => app.commands.register(command, extension.name) } satisfies Commands),
+    messages: Object.freeze({ registerDecorator: (decorator: MessageDecorator) => own(app.decorators.registerDecorator(decorator, extension.name)) } satisfies Messages),
+    commands: Object.freeze({ register: (command: Command) => own(app.commands.register(command, extension.name)) } satisfies Commands),
     projects: Object.freeze({
       list: () => projects.list(),
-      onDidChange: projects.onDidChange.bind(projects),
+      onDidChange: (listener: Parameters<Projects["onDidChange"]>[0]) => own(projects.onDidChange(listener)),
       create: projects.create.bind(projects),
       update: projects.update.bind(projects),
       remove: projects.remove.bind(projects),
@@ -96,7 +128,7 @@ export function createReinsSdk<A extends HttpApi = HttpApi>(extension: Extension
     tasks: Object.freeze({
       list: tasks.list.bind(tasks),
       loaded: tasks.loaded.bind(tasks),
-      onDidChange: tasks.onDidChange.bind(tasks),
+      onDidChange: (listener: Parameters<Tasks["onDidChange"]>[0]) => own(tasks.onDidChange(listener)),
       create: tasks.create.bind(tasks),
       update: tasks.update.bind(tasks),
       remove: tasks.remove.bind(tasks),
@@ -107,7 +139,7 @@ export function createReinsSdk<A extends HttpApi = HttpApi>(extension: Extension
       send: sessions.send.bind(sessions),
       compact: sessions.compact.bind(sessions),
       list: sessions.list.bind(sessions),
-      onDidChange: sessions.onDidChange.bind(sessions),
+      onDidChange: (listener: Parameters<Sessions["onDidChange"]>[0]) => own(sessions.onDidChange(listener)),
       setUnread: sessions.setUnread.bind(sessions),
       setPinned: sessions.setPinned.bind(sessions),
       setArchived: sessions.setArchived.bind(sessions),
@@ -116,27 +148,40 @@ export function createReinsSdk<A extends HttpApi = HttpApi>(extension: Extension
       move: sessions.move.bind(sessions),
     } satisfies Sessions),
     nodes: Object.freeze({ list: () => nodes.list() } satisfies Nodes),
-    sidebar: Object.freeze({ registerSection: (section: SidebarSection) => app.sidebar.register(section, extension.name) }),
+    sidebar: Object.freeze({ registerSection: (section: SidebarSection) => own(app.sidebar.register(scoped(section), extension.name)) }),
     ui: Object.freeze({ renameSession: ui.renameSession.bind(ui) } satisfies Ui),
-    settings: Object.freeze({ register: (page: SettingsPage) => app.settingsPages.register(extension, page) }),
+    settings: Object.freeze({ register: (page: SettingsPage) => own(app.settingsPages.register(extension, scoped(page))) }),
     http: Object.freeze({
       call: <K extends keyof A & string>(method: K, ...[input, options]: HttpCallArgs<A[K]>) => api.call<HttpOutput<A[K]>>(method, input, options),
     }),
-    onMessage: (listener: (message: object) => void): Disposer => socket.subscribe({
+    onMessage: (listener: (message: object) => void): Disposer => own(socket.subscribe({
       extension: ({ extension: sender, message }) => {
         if (sender === extension.name) listener(message);
       },
-    }),
+    })),
     onReconnect: (listener: () => void): Disposer => {
       // The client tells a lost connection only after it was connected, so the first connect is not a return.
       let lost = false;
-      return socket.onConnection((connected) => {
+      return own(socket.onConnection((connected) => {
         if (!connected) lost = true;
         else if (lost) {
           lost = false;
           listener();
         }
-      });
+      }));
     },
   } satisfies ReinsSdk<A>);
+  owned.set(sdk, disposers);
+  return sdk;
+}
+
+/** Mounts into a `display: contents` element of its own with the scope, which the host's own content around it never has. */
+function inScope<R extends unknown[], T>(mount: (target: HTMLElement, ...rest: R) => T, scope: string) {
+  return (target: HTMLElement, ...rest: R): T => {
+    const element = target.ownerDocument.createElement("div");
+    element.setAttribute(SCOPE_ATTRIBUTE, scope);
+    element.style.display = "contents";
+    target.append(element);
+    return mount(element, ...rest);
+  };
 }

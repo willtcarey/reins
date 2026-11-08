@@ -1,10 +1,11 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import type { ExtensionView } from "@backend/extensions/host.js";
+import type { ExtensionView } from "@backend/extension-system/report.js";
 import { SettingsExtensionDetails } from "../../../components/settings/extension-details.js";
 import { SettingsExtensionsSection } from "../../../components/settings/extensions-section.js";
 import { Loadable } from "../../../helpers/loadable.js";
 import { ExtensionsStore } from "../../../models/stores/extensions-store.js";
 import { clickButton, templateToString } from "../../helpers/lit-template.js";
+import { setConfirmHostForTesting } from "../../../ui/confirm-dialog.js";
 
 const originalLocation = globalThis.location;
 const originalHistory = globalThis.history;
@@ -28,6 +29,11 @@ function backendExtension(name: string, overrides: Partial<ExtensionView> = {}):
     name,
     status: "loaded",
     failure: null,
+    source: { kind: "built-in" },
+    manifest: null,
+    backendPart: true,
+    frontendFailure: null,
+    build: null,
     errors: [],
     registrations: { tools: null, promptSections: 0, settlementListeners: 0, scriptFunctions: [], httpMethods: [], pages: [] },
     services: [],
@@ -53,26 +59,35 @@ describe("SettingsExtensionsSection", () => {
     section.store = loadedStore([
       backendExtension("notes", { status: "failed", failure: { stage: "migration", message: "no such table: notes" } }),
       backendExtension("audit"),
+      backendExtension("clock", { status: "disabled" }),
     ]);
 
     const text = visibleText(section);
-    clickButton(section.render(), "notes failed");
+    clickButton(section.render(), "notes failed Built in");
 
     expect(text).toContain("audit loaded");
     expect(text).toContain("notes failed");
+    expect(text).toContain("clock disabled");
     expect(location.hash).toBe("#/settings/extensions/notes/details");
   });
 
-  test("a card shows each of its services' state", () => {
+  test("a card shows its label, status, description (the whole of it on hover) and where it comes from, not its services", () => {
+    const description = "Keeps notes for every session, and a very long description that a card cuts to two lines.";
     const section = new SettingsExtensionsSection();
-    section.store = loadedStore([backendExtension("notes", {
-      services: [
-        { name: "poll", state: "running", since: "2026-01-01T00:00:00.000Z", restarts: 0, nextAttemptAt: null, lastError: null },
-        { name: "sync", state: "restarting", since: "2026-01-01T00:00:00.000Z", restarts: 2, nextAttemptAt: "2026-01-01T00:00:04.000Z", lastError: { message: "offline", at: "2026-01-01T00:00:00.000Z" } },
-      ],
-    })]);
+    section.store = loadedStore([
+      backendExtension("notes", {
+        manifest: { label: "Notes", description, version: "1.0.0", icon: null },
+        source: { kind: "path", path: "/home/me/notes" },
+        services: [{ name: "poll", state: "running", since: "2026-01-01T00:00:00.000Z", restarts: 0, nextAttemptAt: null, lastError: null }],
+      }),
+      backendExtension("audit"),
+    ]);
 
-    expect(visibleText(section)).toContain("poll running sync restarting");
+    const text = visibleText(section);
+    expect(text).toContain(`Notes loaded ${description} /home/me/notes`);
+    expect(text).toContain("audit loaded Built in");
+    expect(text).not.toContain("poll");
+    expect(templateToString(section.render())).toContain(`title=${description}>`);
   });
 });
 
@@ -136,6 +151,60 @@ describe("SettingsExtensionDetails", () => {
 
     expect(text).toContain("failed");
     expect(text).toContain("Backend: a migration failed: no such table: notes");
+  });
+
+  test("an added extension shows its directory and version and offers Reload and Remove; a built-in one neither", async () => {
+    const location = { hash: "#/settings/extensions/spoke/details" };
+    Reflect.set(globalThis, "location", location);
+    Reflect.set(globalThis, "history", { replaceState: (_state: unknown, _title: string, url: string) => { location.hash = url; } });
+    Reflect.set(globalThis, "window", { dispatchEvent: () => true });
+    Reflect.set(globalThis, "HashChangeEvent", class extends Event {});
+    const calls: string[] = [];
+    setConfirmHostForTesting({ open: async () => true });
+    const store = loadedStore([
+      backendExtension("spoke", { source: { kind: "path", path: "/home/me/spoke" }, manifest: { label: "Spoke", description: null, version: "0.2.0", icon: null } }),
+      backendExtension("mcp"),
+    ]);
+    store.reload = async (name) => { calls.push(`reload ${name}`); };
+    store.remove = async (name) => { calls.push(`remove ${name}`); };
+    const details = new SettingsExtensionDetails();
+    details.store = store;
+    details.name = "spoke";
+
+    expect(visibleText(details)).toContain("From /home/me/spoke Version 0.2.0");
+    clickButton(details.render(), "Reload");
+    await Bun.sleep(0);
+    clickButton(details.render(), "Remove");
+    await Bun.sleep(0);
+    setConfirmHostForTesting(null);
+    expect(calls).toEqual(["reload spoke", "remove spoke"]);
+    expect(location.hash).toBe("#/settings/extensions");
+
+    details.name = "mcp";
+    expect(visibleText(details)).toContain("From Built into Reins");
+    expect(() => clickButton(details.render(), "Reload")).toThrow();
+  });
+
+  test("any extension can be turned off, and on again; one turned off cannot be reloaded", async () => {
+    const calls: string[] = [];
+    const store = loadedStore([
+      backendExtension("mcp"),
+      backendExtension("spoke", { status: "disabled", source: { kind: "path", path: "/home/me/spoke" }, manifest: { label: "Spoke", description: null, version: "0.2.0", icon: null } }),
+    ]);
+    store.setEnabled = async (name, enabled) => { calls.push(`${name} ${enabled}`); };
+    const details = new SettingsExtensionDetails();
+    details.store = store;
+
+    details.name = "mcp";
+    clickButton(details.render(), "Turn off");
+    await Bun.sleep(0);
+    details.name = "spoke";
+    expect(visibleText(details)).toContain("Spoke spoke disabled");
+    expect(() => clickButton(details.render(), "Reload")).toThrow();
+    clickButton(details.render(), "Turn on");
+    await Bun.sleep(0);
+
+    expect(calls).toEqual(["mcp false", "spoke true"]);
   });
 
   test("an extension the app does not have, once the report is loaded, says so", () => {

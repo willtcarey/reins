@@ -8,10 +8,10 @@
     "resolveJsonModule": true,
     "skipLibCheck": true,
     "noEmit": true,
-    "rootDir": "src",
+    "rootDir": "..",
     "types": ["@types/bun"],
     "paths": {
-      "@reins/sdk/server": ["./src/sdk/server/index.ts"]
+      "@reins/sdk/server": ["../sdk/src/server/index.ts"]
     }
   },
   "include": ["src"]

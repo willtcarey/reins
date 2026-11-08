@@ -68,6 +68,7 @@ Open [http://localhost:3100](http://localhost:3100), add a project, and create a
 | `packages/cli` | `@reins/cli`: the `reins` command (`bun run reins help`), commands declared once (arguments, options, help): `reins node pair`, `setup` (what the one-line install command runs), `run`, `start`/`stop`/`status`, `source`, `reload` (this machine's node by default; `bun run node:reload` is its `--local` form); remote nodes: [docs/features/nodes.md](docs/features/nodes.md) | [contract](docs/dev/node-contract.md#packages-and-import-boundaries) |
 | `packages/frontend` | Lit + Tailwind CSS v4 SPA | [architecture](docs/dev/frontend-architecture.md) |
 | `packages/tauri` | Optional Tauri v2 desktop wrapper that loads the backend URL without bundling frontend files | [setup](docs/dev/tauri.md) |
+| `packages/sdk` | `@reins/sdk` and `@reins/sdk/server`: what extensions get, the types they build against | [extensions overview](docs/dev/extensions-overview.md) |
 
 ## Configuration
 

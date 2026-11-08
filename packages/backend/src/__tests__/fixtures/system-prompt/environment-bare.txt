@@ -14,4 +14,5 @@ REINS documentation (read only when the user asks about REINS itself):
 - Developer workflow docs: /reins/docs/dev
 - Feature docs: /reins/docs/features
 - Skills feature doc: /reins/docs/features/skills.md
+- Building extensions (extensions load from a directory; read before writing one): /reins/docs/features/building-extensions.md
 - Skills are listed in <available_skills>; read a skill's SKILL.md only when the task matches.

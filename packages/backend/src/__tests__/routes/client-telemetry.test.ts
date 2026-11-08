@@ -3,8 +3,11 @@ import { createRouter } from "../../router.js";
 import { registerClientTelemetryRoutes } from "../../routes/client-telemetry.js";
 import { createAppState } from "../helpers/app-state.js";
 import { makeRequest } from "../helpers/request.js";
+import { useTestDb } from "../helpers/test-db.js";
 
 describe("POST /api/diagnostics/client-events", () => {
+  useTestDb();
+
   test("accepts a bounded batch of structured diagnostic events", async () => {
     const appended: Array<readonly unknown[]> = [];
     const router = createRouter();
@@ -21,7 +24,7 @@ describe("POST /api/diagnostics/client-events", () => {
         event: "navigation-start",
         attributes: { requestedTop: 4200 },
       }],
-    }), createAppState());
+    }), createAppState(undefined, { extensions: [] }));
 
     expect(response?.status).toBe(202);
     expect(appended).toHaveLength(1);
@@ -38,7 +41,7 @@ describe("POST /api/diagnostics/client-events", () => {
 
     const malformed = await router.handle(makeRequest("POST", "/api/diagnostics/client-events", {
       events: [{ event: "missing required fields" }],
-    }), createAppState());
+    }), createAppState(undefined, { extensions: [] }));
     const oversized = await router.handle(makeRequest("POST", "/api/diagnostics/client-events", {
       events: Array.from({ length: 101 }, (_, sequence) => ({
         timestamp: "2026-08-19T15:04:05.123Z",
@@ -47,7 +50,7 @@ describe("POST /api/diagnostics/client-events", () => {
         scope: "review-virtualizer",
         event: "scroll",
       })),
-    }), createAppState());
+    }), createAppState(undefined, { extensions: [] }));
 
     expect(malformed?.status).toBe(400);
     expect(oversized?.status).toBe(413);

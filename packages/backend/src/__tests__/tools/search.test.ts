@@ -2,6 +2,7 @@ import { describe, test, expect } from "bun:test";
 import * as ts from "typescript";
 import { searchFunctions, API_FUNCTIONS, referencedTypes } from "../../sdk-host/scripts.js";
 import { executeTool, reinsTool } from "../helpers/execute-tool.js";
+import { useTestDb } from "../helpers/test-db.js";
 
 
 // ---------------------------------------------------------------------------
@@ -110,6 +111,8 @@ describe("referencedTypes", () => {
 // ---------------------------------------------------------------------------
 
 describe("search tool", () => {
+  useTestDb();
+
   test("returns a valid ToolDefinition", () => {
     const tool = reinsTool("search");
     expect(tool.name).toBe("search");

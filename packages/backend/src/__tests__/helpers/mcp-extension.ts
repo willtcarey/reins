@@ -3,14 +3,14 @@
  * and its servers (`McpServers`) for the test to work with, once an app registered it.
  */
 
-import type { ExtensionRegistration } from "../../extensions/host.js";
+import type { BuiltInBackendPart } from "../../extension-system/extensions.js";
 import type { McpConnectionOptions } from "../../extensions/mcp/connections.js";
 import type { McpServers } from "../../extensions/mcp/servers.js";
 import type { McpMessage } from "../../extensions/mcp/servers.js";
 import { mcp, startMcp } from "../../extensions/mcp/index.js";
 
 export interface TestMcp {
-  registration: ExtensionRegistration;
+  registration: BuiltInBackendPart;
   /** The servers of the app that registered it last. */
   readonly servers: McpServers;
 }

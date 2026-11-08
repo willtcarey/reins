@@ -13,7 +13,7 @@ import {
   sameSchema,
 } from "./schema-utils.js";
 import { rankByTerms } from "./term-search.js";
-import type { ExtensionHost } from "../extensions/host.js";
+import type { ExtensionHost } from "../extension-system/host.js";
 import { CORE_NAMESPACES } from "./namespaces.js";
 
 // ---------------------------------------------------------------------------
