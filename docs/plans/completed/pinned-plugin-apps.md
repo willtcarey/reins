@@ -1,6 +1,6 @@
 # Pinned Plugin Apps
 
-Status: **in part built** — the Spoke acceptance case is met by an added extension (*Spoke acceptance story*); the rest is early design.
+Status: **completed** (2026-11-08), in another form than designed. The Spoke acceptance story is met by an added extension (*Spoke acceptance story*). The pinned-app region and sidebar accessories are not built, and are not needed: a sidebar section (`reins.sidebar.registerSection`, ADR-035) is the launcher and shows the counts, and a main-area view (`workspace.open(view, { in: "main" })`, ADR-037) is the app's page with its own URL. The rest of this doc (slices, open questions) is kept as it was decided then; the future acceptance cases moved to [extension-use-cases.md](../extension-use-cases.md).
 
 ## Goal
 
@@ -78,7 +78,7 @@ Selecting an app must not force it into the four-pane session topology.
 
 This is navigation, not tiling. Arbitrary docking, movable panels, and user-designed workspace layouts are outside the initial capability.
 
-Main-area placement of a view is built ([workspace Inspector plan](workspace-inspector.md) slice 4, ADR-037): a view with a `pane` presentation (the one the Inspector shows) opened with `workspace.open(view, { in: "main" })` is a route the host derives from the view (`#/view/<name>?<parameters>`), with the sidebar beside it on desktop and the page as the chat pane's on a phone. An app destination can be such a view rather than a separate `#/apps/:appId` path; plugin content beside the conversation would be an Inspector tab.
+Main-area placement of a view is built ([workspace Inspector plan](../workspace-inspector.md) slice 4, ADR-037): a view with a `pane` presentation (the one the Inspector shows) opened with `workspace.open(view, { in: "main" })` is a route the host derives from the view (`#/view/<name>?<parameters>`), with the sidebar beside it on desktop and the page as the chat pane's on a phone. An app destination can be such a view rather than a separate `#/apps/:appId` path; plugin content beside the conversation would be an Inspector tab.
 
 ### Failure behavior
 
@@ -175,7 +175,7 @@ A first useful plugin should be able to:
 
 If the proposed interfaces cannot support this without Spoke-specific host branches, the interfaces are not ready.
 
-**Status (2026-11-07): met, with no Spoke-specific host code.** Spoke for Reins is an added extension in its own repository (`~/Workspaces/spoke-reins`, not yet on GitHub), loaded from its directory ([extension-loading.md](../dev/extension-loading.md), ADR-038):
+**Status (2026-11-07): met, with no Spoke-specific host code.** Spoke for Reins is an added extension in its own repository (`~/Workspaces/spoke-reins`, not yet on GitHub), loaded from its directory ([extension-loading.md](../../dev/extension-loading.md), ADR-038):
 
 1. Done as a sidebar section (`reins.sidebar.registerSection`) whose row opens the inbox, a main-area page (`workspace.open({ view: "spoke-inbox" }, { in: "main" })`). A newly registered section comes last: the user moves it above Projects in Settings → Sidebar. No pinned-app region.
 2. Done: the section shows the unread pull request and issue counts.
@@ -188,69 +188,11 @@ If the proposed interfaces cannot support this without Spoke-specific host branc
 9. Done: the page has its own URL; a reload of Spoke or Reins re-imports its frontend part in open browsers and reads the inbox again.
 10. Done: a failed build or load leaves the extension failed in Settings → Extensions, and the rest of Reins works.
 
-Slice 5 (*Externalize local plugin loading*) is built in that form. Left from this plan: the pinned-app region and sidebar accessories as such, a shared UI kit, and the other acceptance cases.
+Slice 5 (*Externalize local plugin loading*) is built in that form. Not done, by decision: the pinned-app region and sidebar accessories (sections and main-area views do their work). Elsewhere: a shared UI kit ([extension-design-tokens-and-ui-kit.md](../extension-design-tokens-and-ui-kit.md)) and the other cases ([extension-use-cases.md](../extension-use-cases.md)).
 
-## Future acceptance case: Secrets
+## Future acceptance cases
 
-A trusted Secrets plugin should be able to own encrypted secret storage and a client UI that collects values without placing them in conversation state. It should expose opaque secret references and agent-facing operations that can apply a stored value—for example, writing a named variable to an environment file—without returning the value to the model.
-
-This use case should validate:
-
-- plugin-owned encrypted storage and key management
-- frontend-to-plugin RPC that does not flow through model messages
-- agent tool registration with redacted results
-- plugin-controlled APIs for constrained secret operations
-- an interactive-request seam if a running tool should be able to summon and wait for plugin-rendered user input
-- transport and telemetry defaults that do not indiscriminately log RPC or tool payloads
-
-The plugin owns secret-specific behavior; Reins should provide only the general contribution and communication interfaces needed to implement it. Strictly preventing an agent with arbitrary filesystem and shell access from later reading a secret written into its workspace is outside this plugin's guarantee.
-
-## Future acceptance case: Gardener
-
-A Gardener plugin should use a fast, free local model to keep finding small improvements across projects without the user prompting for them. The local model is not smart enough for open-ended work, so the plugin gives it narrow jobs that a machine can check and caps what reaches the user:
-
-1. **Scout:** on a schedule, a read-only background agent walks a project and writes ranked findings (file, proposed change, how to verify it) to plugin storage. It produces findings, not code.
-2. **Inbox:** the app shows a short digest of findings, capped at a few items, with a count in its sidebar accessory. Approving one creates a task and starts a session on a stronger model; ignored findings expire.
-3. **Attempts (later):** for mechanical findings such as lint or type fixes, the local model tries best-of-N in an isolated checkout and keeps only an attempt that passes the project's check command.
-
-Spoke is mostly UI, polling, and storage. The Gardener is the reverse: little UI, but heavy use of agent machinery. This use case should validate:
-
-- scheduled, cancellable background services that run unattended (open question 9)
-- plugin-started background sessions that stay out of session lists, with a chosen model and provider
-- plugin-registered session kinds (ADR-019), such as a `gardener-scout` kind with read-only tools
-- running check commands such as tests and lint on a node through process-run (ADR-018)
-- per-project plugin settings: enabled projects, schedule, check command, and attempt budget
-- promoting a finding to a task and starting its session
-
-Attempts depend on a gap outside the plugin system: a task's sessions share the project's single checkout, so parallel attempts would collide, and an overnight run could switch branches under the user. Attempts need a worktree per attempt or strictly serialized runs. Scout-only operation never touches a checkout and can ship first.
-
-## Future acceptance case: optmem assistant
-
-An optmem plugin should provide a session kind for project assistant sessions whose context is managed by [optmem](https://x.com/victortaelin/status/2081453432318132603) rather than by the transcript and compaction alone. The goal is to preserve and manage what the assistant knows across many assistant sessions within a project, instead of each session starting cold and losing detail when it compacts.
-
-Unlike Spoke and the Gardener, this plugin changes how a session itself runs rather than adding an app beside sessions. It may need no pinned app at all, or only a small one for inspecting and pruning memory. This use case should validate:
-
-- plugin-registered session kinds (ADR-019) that can stand in for the built-in assistant behavior, which today is derived from hierarchy inside the `agent` kind rather than being a kind of its own
-- a seam for a kind to shape a session's context beyond its opening prompt and tools: what is retrieved into each turn, what is recorded after it, and how compaction interacts with plugin-managed memory
-- plugin-owned storage for memory, scoped per project, that persists across sessions and plugin reloads
-- choosing the kind when starting an assistant session, and possibly making it a project's default
-
-The storage layer and the context seam are the open design work. ADR-019 kinds resolve once when the runtime opens, so per-turn memory retrieval and recording would need a new host interface or an agent tool the kind provides.
-
-## Future acceptance case: Task artifacts
-
-A task should be able to have artifacts: the things its work produces or is tracked in, such as a pull request today and a document being written (for example a Google Doc) later. Reins would provide the artifact primitive: a list on the task, visible in the task view and readable and writable by the task's agents. Plugins would provide new artifact types.
-
-A minimal artifact may be only a titled URL. A plugin-provided type adds behavior around it: recognizing its URLs, showing live status (a PR's checks, review state and merge state), offering a custom renderer or summary card in the task view, and possibly actions (merge, open the review) or agent-facing operations. A GitHub plugin attaching the PR a task's branch opens would be the first case.
-
-This use case should validate:
-
-- a host-owned artifact primitive on tasks: storage, ordering, display and agent access
-- plugin-registered artifact types with a host-defined renderer slot in the task view
-- plugin-supplied status refreshed in the background, through plugin-owned storage and polling
-- agents and plugins creating artifacts, for example when a task's branch is pushed and a PR is opened
-
-Open: whether artifacts are typed, or all URLs with a plugin matching them to a renderer. Starting with untyped URLs and letting plugins claim them by pattern may be enough.
+Moved to [extension-use-cases.md](../extension-use-cases.md): Secrets, Gardener, optmem assistant, Task artifacts.
 
 ## Possible implementation slices
 
