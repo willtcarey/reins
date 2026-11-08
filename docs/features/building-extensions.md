@@ -8,7 +8,7 @@ This guide is for a person, or an agent helping one, writing an extension: *Set 
 
 ## Set up an extension
 
-You write and build the extension; Reins builds nothing. It copies the files you built and loads the copy. Work in a new directory outside the Reins checkout. For a working reference, read `examples/hello-extension` in a Reins checkout: Reins typechecks, tests and loads it with its own code.
+You write and build the extension; Reins builds nothing. It copies the files you built and loads the copy. Work in a new directory outside the Reins checkout.
 
 ### Requirements
 
@@ -63,7 +63,7 @@ You write and build the extension; Reins builds nothing. It copies the files you
 ### Steps
 
 1. Choose the name (lowercase letters, digits and hyphens, a letter first) and the label Settings shows.
-2. Write `package.json` with the manifest, the dependencies above and the scripts `build`, `test` and `typecheck`. Any build tool that writes the files the manifest names works. The example's build is:
+2. Write `package.json` with the manifest, the dependencies above and the scripts `build`, `test` and `typecheck`. Any build tool that writes the files the manifest names works. For example, with Tailwind and Bun:
 
    ```sh
    tailwindcss -i src/styles.css -o dist/styles.css --minify
@@ -196,7 +196,7 @@ A frontend part fails in a browser, not on the server, so each browser reports h
 
 ## Testing
 
-Test the backend part with `bun test` in the extension's directory, through what its register function registers: give it a fake of the SDK parts it uses (an in-memory `bun:sqlite` database with its migrations applied, secrets in a `Map`, broadcasts recorded, `http.handle` keeping the handlers so a test calls them) and stub `globalThis.fetch` for outside services. Type the part of the SDK it uses (`Pick<ServerSdk, "db" | "secrets" | …>`) so the fake is checked. The example's `src/server.test.ts` and Spoke's `test/fake-reins.ts` show both. `bun run typecheck` checks both parts against the SDK.
+Test the backend part with `bun test` in the extension's directory, through what its register function registers: give it a fake of the SDK parts it uses (an in-memory `bun:sqlite` database with its migrations applied, secrets in a `Map`, broadcasts recorded, `http.handle` keeping the handlers so a test calls them) and stub `globalThis.fetch` for outside services. Type the part of the SDK it uses (`Pick<ServerSdk, "db" | "secrets" | …>`) so the fake is checked. Spoke's `test/fake-reins.ts` shows both. `bun run typecheck` checks both parts against the SDK.
 
 ## Example: Spoke
 

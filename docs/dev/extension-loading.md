@@ -30,7 +30,6 @@ packages/frontend/src/
     host.ts                                #   ExtensionHost: activates one with its own SDK, keeps what it registered
   sdk-host/create-sdk.ts                   # sdkDisposers: what an extension's SDK made, which its disposal removes
 packages/cli/src/extension.ts              # reins extension add | list | reload | remove | enable | disable
-examples/hello-extension/                  # the example: a working reference for the guide; typechecked, tested, linted and loaded with Reins
 packages/sdk/src/lit/                      # @reins/sdk/lit: an extension's custom elements in its bundle's own registry
 ```
 
@@ -46,7 +45,7 @@ packages/sdk/src/lit/                      # @reins/sdk/lit: an extension's cust
 
 ## Built files
 
-The manifest's `backend`, `frontend` and `styles` name files the author built (`dist/server.js`, `dist/frontend.js`, `dist/styles.css` in the example). Reins builds nothing and runs no command of the extension's (ADR-038); what it does to them happens when it installs them (*Styles*).
+The manifest's `backend`, `frontend` and `styles` name files the author built (for example `dist/server.js`, `dist/frontend.js`, `dist/styles.css`). Reins builds nothing and runs no command of the extension's (ADR-038); what it does to them happens when it installs them (*Styles*).
 
 - **Checked at add** (`readManifest`): each entry inside the extension's directory. **At load**: each named file exists, else the extension fails at `load` with "Its <part> file <path> does not exist: build the extension first".
 - **What a package is** (`files`): `package.json`, the backend file, the icon and every file of the frontend directory (the bundle's chunks, its styles, its fonts). Never its sources or `node_modules`, which is why the frontend file must be in a directory of its own (`dist/`), not at the package's root (`readManifest` refuses that).
@@ -113,8 +112,7 @@ Each module of the system has one test file, at its public boundary:
 | `frontend/…/models/stores/extensions-store.test.ts`, `components/settings/extensions-section.test.ts` | Settings: the cards, the details page, the switch, reload and remove. |
 | `frontend/…/vendor/build.test.ts` | Every public Lit module in the import map is a module the vendor build wrote. |
 | `cli/src/extension.test.ts` | Each command against a stand-in server. |
-| `scripts/__tests__/extension-guide.test.ts` | The guide's version table (Lit, TypeBox, Tailwind) is the app's installed versions, and the example uses them. |
-| `examples/hello-extension` | The example's own test, typecheck and lint run with Reins'. |
+| `scripts/__tests__/extension-guide.test.ts` | The guide's version table (Lit, TypeBox, Tailwind) is the app's installed versions. |
 
 The test helper's `createAppState` makes the given `extensions` the only built-ins unless `builtInNames` names more.
 

@@ -69,5 +69,5 @@ Reload, turn off and turn on follow the same steps: the record is deleted, its b
 | The server SDK: what a backend part can register, its storage, services, the report's fields | [server-sdk.md](server-sdk.md) |
 | The Reins SDK: what a frontend part can register, the browser host | [reins-sdk.md](reins-sdk.md) |
 | Records, states, operations, packages, bundles, the browser's sync | [extension-loading.md](extension-loading.md) |
-| Writing an extension (for authors) | [building-extensions.md](../features/building-extensions.md), and `examples/hello-extension`, a working reference |
+| Writing an extension (for authors) | [building-extensions.md](../features/building-extensions.md) |
 | Settings → Extensions and the CLI (for users) | [extensions.md](../features/extensions.md) |

@@ -8,19 +8,6 @@
         "oxlint": "^1.56.0",
       },
     },
-    "examples/hello-extension": {
-      "name": "@reins/example-hello-extension",
-      "version": "0.1.0",
-      "devDependencies": {
-        "@reins/sdk": "workspace:*",
-        "@sinclair/typebox": "0.34.48",
-        "@tailwindcss/cli": "4.1.18",
-        "@types/bun": "^1.3.11",
-        "lit": "3.3.2",
-        "tailwindcss": "4.1.18",
-        "typescript": "^5.9.3",
-      },
-    },
     "packages/backend": {
       "name": "@reins/backend",
       "version": "0.1.0",
@@ -387,8 +374,6 @@
     "@reins/cli": ["@reins/cli@workspace:packages/cli"],
 
     "@reins/client": ["@reins/client@workspace:packages/client"],
-
-    "@reins/example-hello-extension": ["@reins/example-hello-extension@workspace:examples/hello-extension"],
 
     "@reins/frontend": ["@reins/frontend@workspace:packages/frontend"],
 

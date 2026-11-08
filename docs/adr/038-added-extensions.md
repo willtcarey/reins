@@ -42,7 +42,7 @@ Extensions had two SDKs (the server SDK, ADR-036; the Reins SDK, ADR-030) and ev
 ## Consequences
 
 - Each load of a backend part is a new module instance in the server process, and the old ones stay in memory until the process restarts.
-- An author builds before each reload (or runs a watching build). Reins ships no template: the guide (building-extensions.md) states what Reins requires and the steps, so an agent can set one up anywhere; `examples/hello-extension` is a working reference, and a test keeps the guide's library versions equal to the app's.
+- An author builds before each reload (or runs a watching build). Reins ships no template: the guide (building-extensions.md) states what Reins requires and the steps, so an agent can set one up anywhere; a test keeps the guide's library versions equal to the app's.
 - Upgrading Lit to another major version is a breaking SDK change.
 - The app's built-in frontend parts wait for the server's report before they activate, so a turned-off one never appears. Without a report, all are on.
 - A new built-in frontend extension needs its name in `built-in-names.ts` as well (its type will not compile otherwise).
