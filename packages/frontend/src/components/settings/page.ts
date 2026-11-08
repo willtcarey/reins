@@ -5,8 +5,9 @@
  * Desktop shows a section nav beside the current section; mobile shows the
  * section list and drills into one. Server-backed state and mutations live in
  * SettingsStore; this page owns section composition, loading and toast copy.
- * After its own sections, it has one page for each extension with settings
- * (`SettingsPages`), whose frame it draws around what the extension mounts.
+ * After its own sections, under an "Extensions" heading, come Reins' list of every
+ * extension and one page for each extension with settings (`SettingsPages`), whose
+ * frame it draws around what the extension mounts.
  */
 
 import type { ModelSettingsKey } from "@backend/settings-store.js";
@@ -32,6 +33,8 @@ import "../view-mount.js";
 interface SectionDefinition {
   id: SettingsSectionId;
   label: string;
+  /** The row's label, when the section's label would only repeat its group's heading. */
+  rowLabel?: string;
   description: string;
   load: (store: SettingsStore) => Promise<void>;
   render: (store: SettingsStore) => TemplateResult;
@@ -116,6 +119,7 @@ const SIDEBAR_SECTION: SectionDefinition = {
 const EXTENSIONS_SECTION: SectionDefinition = {
   id: "extensions",
   label: "Extensions",
+  rowLabel: "All extensions",
   description: "Every extension: whether it loaded, what it registered and what it stores.",
   load: async (store) => {
     const result = await store.extensionsStore.load();
@@ -125,6 +129,9 @@ const EXTENSIONS_SECTION: SectionDefinition = {
 };
 
 const SECTIONS: readonly SectionDefinition[] = [MODELS_SECTION, NODES_SECTION, SIDEBAR_SECTION, EXTENSIONS_SECTION];
+
+/** The sections shown before the Extensions heading; the Extensions section leads the rows under it. */
+const GENERAL_SECTIONS = SECTIONS.filter((section) => section !== EXTENSIONS_SECTION);
 
 /** What the route shows: one of the page's own sections, Reins' page about an extension (part of the Extensions
  * section), or an extension's own page (null while it has none). */
@@ -141,6 +148,13 @@ interface Row {
   icon?: Mountable;
   current: boolean;
   open: () => void;
+}
+
+/** Rows of the nav and section list, with a heading when they are not the page's general sections. */
+interface RowGroup {
+  key: string;
+  heading: string | null;
+  rows: Row[];
 }
 
 function settingChangeToastMessage(change: SettingsChange): string {
@@ -231,15 +245,16 @@ export class SettingsPage extends LitElement {
     return shown.page?.extension.label ?? shown.name;
   }
 
-  /** The page's own sections, then one row for each extension with settings. */
-  private _rows(shown: Shown | null): Row[] {
-    const own = SECTIONS.map((section): Row => ({
+  /** The page's general sections, then under an Extensions heading Reins' list of every extension and one row
+   * for each extension with settings. */
+  private _groups(shown: Shown | null): RowGroup[] {
+    const ownRow = (section: SectionDefinition): Row => ({
       key: section.id,
-      label: section.label,
+      label: section.rowLabel ?? section.label,
       description: section.description,
       current: (shown?.kind === "own" && shown.definition === section) || (shown?.kind === "details" && section === EXTENSIONS_SECTION),
       open: () => showSettingsSection(section.id),
-    }));
+    });
     const extensions = (this.extensionPages?.pages() ?? []).map(({ extension }): Row => ({
       key: `extension:${extension.name}`,
       label: extension.label,
@@ -248,7 +263,10 @@ export class SettingsPage extends LitElement {
       current: shown?.kind === "extension" && shown.name === extension.name,
       open: () => showSettingsExtension(extension.name),
     }));
-    return [...own, ...extensions];
+    return [
+      { key: "general", heading: null, rows: GENERAL_SECTIONS.map(ownRow) },
+      { key: "extensions", heading: "Extensions", rows: [ownRow(EXTENSIONS_SECTION), ...extensions] },
+    ];
   }
 
   private _renderHeader(shown: Shown | null) {
@@ -281,48 +299,62 @@ export class SettingsPage extends LitElement {
     `;
   }
 
-  private _renderNav(rows: readonly Row[]) {
+  private _renderNav(groups: readonly RowGroup[]) {
     return html`
-      <nav class="w-44 shrink-0" aria-label="Settings sections">
-        <ul class="space-y-0.5">
-          ${repeat(rows, (row) => row.key, (row) => html`
-            <li>
-              <button
-                type="button"
-                class="w-full cursor-pointer rounded-md px-3 py-1.5 text-left text-sm transition-colors ${row.current
-                  ? "bg-zinc-800 text-zinc-100"
-                  : "text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-200"}"
-                aria-current=${row.current ? "page" : "false"}
-                @click=${row.open}
-              ><span class="flex items-center gap-2">${this._renderIcon(row)}<span class="min-w-0 truncate">${row.label}</span></span></button>
-            </li>
-          `)}
-        </ul>
+      <nav class="w-44 shrink-0 space-y-5" aria-label="Settings sections">
+        ${repeat(groups, (group) => group.key, (group) => html`
+          <div>
+            ${group.heading
+              ? html`<h2 class="mb-1 px-3 text-[11px] font-medium uppercase tracking-wider text-zinc-500">${group.heading}</h2>`
+              : nothing}
+            <ul class="space-y-0.5">
+              ${repeat(group.rows, (row) => row.key, (row) => html`
+                <li>
+                  <button
+                    type="button"
+                    class="w-full cursor-pointer rounded-md px-3 py-1.5 text-left text-sm transition-colors ${row.current
+                      ? "bg-zinc-800 text-zinc-100"
+                      : "text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-200"}"
+                    aria-current=${row.current ? "page" : "false"}
+                    @click=${row.open}
+                  ><span class="flex items-center gap-2">${this._renderIcon(row)}<span class="min-w-0 truncate">${row.label}</span></span></button>
+                </li>
+              `)}
+            </ul>
+          </div>
+        `)}
       </nav>
     `;
   }
 
-  private _renderSectionList(rows: readonly Row[]) {
+  private _renderSectionList(groups: readonly RowGroup[]) {
     return html`
-      <nav class="px-3 py-4" aria-label="Settings sections">
-        <ul class="divide-y divide-zinc-800 overflow-hidden rounded-lg border border-zinc-800 bg-zinc-950/25">
-          ${repeat(rows, (row) => row.key, (row) => html`
-            <li>
-              <button
-                type="button"
-                class="flex w-full cursor-pointer items-center gap-3 px-4 py-3 text-left hover:bg-zinc-800/60"
-                @click=${row.open}
-              >
-                ${this._renderIcon(row)}
-                <span class="min-w-0 flex-1">
-                  <span class="block text-sm font-medium text-zinc-200">${row.label}</span>
-                  ${row.description ? html`<span class="mt-0.5 block text-xs text-zinc-500">${row.description}</span>` : nothing}
-                </span>
-                <span class="shrink-0 text-zinc-600">${chevronRightIcon("", 15)}</span>
-              </button>
-            </li>
-          `)}
-        </ul>
+      <nav class="space-y-6 px-3 py-4" aria-label="Settings sections">
+        ${repeat(groups, (group) => group.key, (group) => html`
+          <div>
+            ${group.heading
+              ? html`<h2 class="mb-2 px-1 text-xs font-medium uppercase tracking-wider text-zinc-500">${group.heading}</h2>`
+              : nothing}
+            <ul class="divide-y divide-zinc-800 overflow-hidden rounded-lg border border-zinc-800 bg-zinc-950/25">
+              ${repeat(group.rows, (row) => row.key, (row) => html`
+                <li>
+                  <button
+                    type="button"
+                    class="flex w-full cursor-pointer items-center gap-3 px-4 py-3 text-left hover:bg-zinc-800/60"
+                    @click=${row.open}
+                  >
+                    ${this._renderIcon(row)}
+                    <span class="min-w-0 flex-1">
+                      <span class="block text-sm font-medium text-zinc-200">${row.label}</span>
+                      ${row.description ? html`<span class="mt-0.5 block text-xs text-zinc-500">${row.description}</span>` : nothing}
+                    </span>
+                    <span class="shrink-0 text-zinc-600">${chevronRightIcon("", 15)}</span>
+                  </button>
+                </li>
+              `)}
+            </ul>
+          </div>
+        `)}
       </nav>
     `;
   }
@@ -381,7 +413,7 @@ export class SettingsPage extends LitElement {
     if (!store) return nothing;
 
     const shown = this._shown();
-    const rows = this._rows(shown);
+    const groups = this._groups(shown);
 
     return html`
       <main class="h-full overflow-y-auto bg-zinc-900 text-zinc-100" data-settings-page>
@@ -389,11 +421,11 @@ export class SettingsPage extends LitElement {
         ${shown
           ? html`
             <div class="mx-auto flex max-w-5xl gap-10 px-4 py-6 md:px-8 md:py-8">
-              ${this._viewport.isMobileLayout ? nothing : this._renderNav(rows)}
+              ${this._viewport.isMobileLayout ? nothing : this._renderNav(groups)}
               ${this._renderShown(shown, store)}
             </div>
           `
-          : this._renderSectionList(rows)}
+          : this._renderSectionList(groups)}
       </main>
     `;
   }
