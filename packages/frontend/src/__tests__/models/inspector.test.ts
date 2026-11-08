@@ -118,6 +118,32 @@ describe("Inspector", () => {
       expect(inspector.activeTab?.view).toEqual(readme);
     });
 
+    test("pinned again at once, as when the main area changes session, keeps its focus", () => {
+      const inspector = testInspector();
+      const unpinOld = inspector.pin(changes);
+      inspector.open(readme);
+      inspector.focus(inspector.tabs[0]!.key);
+
+      unpinOld();
+      inspector.pin(changes);
+
+      expect(inspector.tabs.map((tab) => tab.view)).toEqual([changes, readme]);
+      expect(inspector.activeTab?.view).toEqual(changes);
+    });
+
+    test("pinned again after the user chose another tab leaves that tab focused", () => {
+      const inspector = testInspector();
+      const unpinOld = inspector.pin(changes);
+      inspector.open(readme);
+      inspector.focus(inspector.tabs[0]!.key);
+
+      unpinOld();
+      inspector.focus(inspector.tabs[0]!.key);
+      inspector.pin(changes);
+
+      expect(inspector.activeTab?.view).toEqual(readme);
+    });
+
     test("opened like any view is focused and stays pinned", () => {
       const inspector = testInspector();
       inspector.pin(changes);

@@ -17,6 +17,11 @@ export class Inspector {
   private _activeKey: string | null = null;
   /** How many pins hold each pinned tab. */
   private pins = new Map<string, number>();
+  /**
+   * The pinned tab whose last release took the focus from it. Changing session releases the old session's pin before
+   * the new session pins the same view, and the user, who never left that tab, should not land on its neighbour.
+   */
+  private releasedFocus: string | null = null;
   private listeners = new Set<() => void>();
   private openListeners = new Set<(view: View) => void>();
 
@@ -37,6 +42,7 @@ export class Inspector {
       this._tabs = [...this._tabs, { key, view, pinned: false }];
     }
     this._activeKey = key;
+    this.releasedFocus = null;
     this.notify();
     for (const listener of this.openListeners) listener(view);
   }
@@ -53,7 +59,8 @@ export class Inspector {
       const pinned = this._tabs.filter((tab) => tab.pinned);
       const others = this._tabs.filter((tab) => !tab.pinned && tab.key !== key);
       this._tabs = [...pinned, { key, view, pinned: true }, ...others];
-      this._activeKey ??= key;
+      if (this._activeKey == null || this.releasedFocus === key) this._activeKey = key;
+      this.releasedFocus = null;
       this.notify();
     }
     let released = false;
@@ -66,12 +73,16 @@ export class Inspector {
         return;
       }
       this.pins.delete(key);
+      const focused = key === this._activeKey;
       this.remove(key);
+      if (focused) this.releasedFocus = key;
     };
   }
 
   focus(key: string): void {
-    if (key === this._activeKey || !this._tabs.some((tab) => tab.key === key)) return;
+    if (!this._tabs.some((tab) => tab.key === key)) return;
+    this.releasedFocus = null;
+    if (key === this._activeKey) return;
     this._activeKey = key;
     this.notify();
   }
