@@ -16,6 +16,7 @@ import { registerFileReferences } from "./message-file-references/message-file-r
 import { registerNewSessionCommand } from "./new-session-command/new-session-command.js";
 import { registerRecentSessions } from "./recent-sessions/recent-sessions.js";
 import { registerProjects } from "./sidebar/projects/projects-section.js";
+import { registerSecrets } from "./secrets/index.js";
 
 /** A built-in, with the description Settings shows on its card. */
 type BuiltIn<T extends ExtensionInfo> = T & { name: BuiltInExtensionName; description: string };
@@ -34,6 +35,7 @@ export const BUILT_IN_EXTENSIONS: readonly BuiltIn<ExtensionRegistration>[] = [
     description: "Remote MCP servers, whose tools agents use.",
     register: registerMcp,
   },
+  { name: "secrets", label: "Secrets", description: "Agents ask for credentials; you enter them in a masked form, and the agent gets a reference to each, never the value.", register: registerSecrets },
 ];
 
 /** Built-ins with only a backend part: the server has no label for them, so Settings takes these. */

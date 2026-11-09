@@ -47,6 +47,8 @@ export interface MainArea extends Container {
 /** The workspace's containers by ID; the main area also answers `workspace.current` and `onDidChange`. */
 export interface SdkContainers extends Readonly<Record<ContainerId, Container>> {
   readonly main: MainArea;
+  /** Also closes a view's tab (`workspace.close`). */
+  readonly inspector: Container & { closeView(view: View): void };
 }
 
 /**
@@ -105,6 +107,7 @@ export function createReinsSdk<A extends HttpApi = HttpApi>(
     files: app.files,
     workspace: Object.freeze({
       open: (view: View, { in: container = "inspector" }: OpenOptions = {}) => containers[container].open(view),
+      close: (view: View) => containers.inspector.closeView(view),
       current: () => main.current(),
       currentSubject,
       onDidChange: (listener: () => void) => own(main.subscribe(listener)),

@@ -72,13 +72,14 @@ export class NodeHost {
 
   /** Output past what a command's stream carries (`MAX_EXEC_VIEW_BYTES`) is read from Pi's spill file on
    * the node, which is then removed. */
-  async run(command: string, { cwd, timeoutMs, maxBytes, signal }: { cwd?: string; timeoutMs: number; maxBytes: number; signal?: AbortSignal }): Promise<NodeRunResult> {
+  async run(command: string, { cwd, env, timeoutMs, maxBytes, signal }: { cwd?: string; env?: Readonly<Record<string, string>>; timeoutMs: number; maxBytes: number; signal?: AbortSignal }): Promise<NodeRunResult> {
     const home = await this.home({ signal });
     let view: ShellOutputView | undefined;
     let exited: ShellExecResult | undefined;
     try {
       exited = await home.exec(command, {
         ...(cwd === undefined ? {} : { cwd }),
+        ...(env === undefined ? {} : { env: { ...env } }),
         timeout: timeoutMs / 1000,
         capture: { limits: { maxBytes: MAX_EXEC_VIEW_BYTES, maxLines: Number.MAX_SAFE_INTEGER, retain: "head" }, spill: true },
         onUpdate: update => { view = applyShellOutputUpdate(view, update); },

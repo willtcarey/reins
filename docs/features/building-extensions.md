@@ -137,7 +137,7 @@ What `reins` gives (each in depth in [server-sdk.md](../dev/server-sdk.md), in a
   ```
 - **`broadcast(message)`**: a message to every browser, which only its frontend part hears (`reins.onMessage`).
 - **`sessions`**: `start(prompt, { projectId, title, background? })` (a session, recorded as started by the extension), `send`, `get`, `list`, `wait`, `onSettled` (the end of each run of a session it started).
-- **`projects`**, **`tasks`**, **`nodes`** (`list`, `get` with each node's sources, `readFile`, `writeFile`, `run(node, command, { cwd, timeoutMs, signal })`), **`models`**, **`images`**: the same methods agents have in `execute`.
+- **`projects`**, **`tasks`**, **`nodes`** (`list`, `get` with each node's sources, `readFile`, `writeFile`, `run(node, command, { cwd, timeoutMs, env, signal })`), **`models`**, **`images`**: the same methods agents have in `execute`.
 - **`tools.register(provider)`**: tools agents find and call through `reins.tools` (their IDs are `<name>__<tool>`). **`scripting.register(namespace)`**: `reins.<namespace>` functions in agents' scripts. **`prompt.register(contribution)`**: a section of the system prompt.
 - **`logger`**: the server's log, under the extension's name.
 
@@ -156,7 +156,7 @@ What `reins` gives (in depth in [reins-sdk.md](../dev/reins-sdk.md)):
 - **`http.call(method, input?)`**: its backend part's API; rejects with the server's message.
 - **`onMessage(listener)`**: its backend part's broadcasts. **`onReconnect(listener)`**: the connection came back (messages may have been missed: read again).
 - **`sidebar.registerSection({ id, title, mount })`**: a section of the sidebar (the user orders and hides sections in Settings → Sidebar; a new one comes last).
-- **`views.register(name, { pane: { title, description, icon, mount } })`** and **`workspace.open(view, { in: "main" })`**: a page in the main area, with its own URL (`#/view/<name>?…`), or `{ in: "inspector" }` for a tab beside the conversation. Declare your view's type for TypeScript: `declare module "@reins/sdk" { interface ViewTypes { "hello-page": { view: "hello-page" } } }` (a `type`, not an `interface`). Open a session with `workspace.open({ view: "session", sessionId }, { in: "main" })` (declare `session: { view: "session"; sessionId: string }` the same way).
+- **`views.register(name, { pane: { title, description, icon, mount } })`** and **`workspace.open(view, { in: "main" })`**: a page in the main area, with its own URL (`#/view/<name>?…`), or `{ in: "inspector" }` for a tab beside the conversation; `workspace.close(view)` closes that tab again (a form sent). Declare your view's type for TypeScript: `declare module "@reins/sdk" { interface ViewTypes { "hello-page": { view: "hello-page" } } }` (a `type`, not an `interface`). Open a session with `workspace.open({ view: "session", sessionId }, { in: "main" })` (declare `session: { view: "session"; sessionId: string }` the same way).
 - **`settings.register({ mount })`**: its page in Settings (Settings → <label>).
 - **`commands.register({ name, description, run })`**: a `/name` command in the composer. **`messages.registerDecorator`**: views in place of pieces of message text.
 - **`sessions`**, **`projects`**, **`tasks`**: live lists with change events, and their actions; **`workspace.current()`** and **`onDidChange`**: what the main area shows.

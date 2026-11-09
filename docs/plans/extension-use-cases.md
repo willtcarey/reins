@@ -1,14 +1,14 @@
 # Extension use cases
 
-Status: **ideas**, the first of them next. Each is an extension Reins should be able to support without host code for that one extension, and the host interfaces each would test. They came from the pinned plugin apps plan ([completed](completed/pinned-plugin-apps.md)), whose first case, a GitHub notifications inbox, is built as an added extension ([extension-loading.md](../dev/extension-loading.md), ADR-038). Build each against the SDKs (server-sdk.md, reins-sdk.md) and add to them only general capabilities that the case shows a need for.
+Status: **ideas**; the first, Secrets, is built. Each is an extension Reins should be able to support without host code for that one extension, and the host interfaces each would test. They came from the pinned plugin apps plan ([completed](completed/pinned-plugin-apps.md)), whose first case, a GitHub notifications inbox, is built as an added extension ([extension-loading.md](../dev/extension-loading.md), ADR-038). Build each against the SDKs (server-sdk.md, reins-sdk.md) and add to them only general capabilities that the case shows a need for.
 
-Order: **Secrets** next; the others later.
+Order: **Secrets** built (below); the others later.
 
 ## Secrets
 
 A trusted Secrets plugin should be able to own encrypted secret storage and a client UI that collects values without placing them in conversation state. It should expose opaque secret references and agent-facing operations that can apply a stored value—for example, writing a named variable to an environment file—without returning the value to the model.
 
-**Next.** What exists for it now: `reins.secrets` (host-owned storage, encrypted in the main database and scoped to each extension, ADR-033), agent tools (`reins.tools.register`) whose results the extension shapes, an HTTP API between its frontend and backend parts that does not pass through model messages (`reins.http.handle`, `http.call`), and a Settings page and views of its own. Not built: the interactive-request seam (a running tool that summons the extension's UI and waits for the user). Not yet checked: whether transport and telemetry log its HTTP and tool payloads.
+**Built** as a built-in extension ([features/secrets.md](../features/secrets.md)). An agent's `reins.secrets.request` returns at once; the form opens in the Inspector when the user goes to the requesting session; the values go to the extension's HTTP API and `reins.secrets`, and the session is woken (`sessions.send`) with a random handle per value, read with `reins.secrets.get(handle)` and given to a command as `env` (`nodes.run` gained it). No interactive-request seam was needed: nothing waits for the user. Transport, request logging and telemetry were checked: they do not log extension HTTP bodies, tool arguments and results, node writes or a command's environment (`__tests__/extension-system/payloads.test.ts`). Left: redaction of stored values from what the model sees (script output, and other tools' results through Pi's hooks); the deletion rule (7 days after last use for now); other places to show a request.
 
 This use case should validate:
 

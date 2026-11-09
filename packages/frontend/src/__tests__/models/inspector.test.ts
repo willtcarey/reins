@@ -65,6 +65,18 @@ describe("Inspector", () => {
     expect(inspector.activeTab).toBeNull();
   });
 
+  test("closing a view closes its tab, found by the view's key; a pinned one stays", () => {
+    const inspector = testInspector();
+    inspector.pin(changes);
+    inspector.open(readme);
+
+    inspector.closeView({ view: "file", source, path: "README.md" });
+    inspector.closeView(changes);
+    inspector.closeView({ view: "file", source, path: "absent.ts" });
+
+    expect(inspector.tabs.map((tab) => tab.view)).toEqual([changes]);
+  });
+
   test("closing a background tab keeps the focused one", () => {
     const inspector = testInspector();
     inspector.open({ view: "file", source, path: "a.ts" });

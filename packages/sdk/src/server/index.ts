@@ -528,6 +528,11 @@ export interface CommandOptions {
   readonly cwd?: string;
   /** 1 to 600 000 (10 min); 30 000 by default. A command still running then is killed, and `run` rejects. */
   readonly timeoutMs?: number;
+  /**
+   * Added to the node's own environment for the command. A value given here is not in the command's text, so it
+   * needs no quoting and is not in the process's arguments (a secret: `printf '%s' "$KEY" >> .env`).
+   */
+  readonly env?: Readonly<Record<string, string>>;
   /** Aborting it kills the command, and `run` rejects. Give a service's `signal`, so a reload ends it. */
   readonly signal?: AbortSignal;
 }
