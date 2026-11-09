@@ -9,6 +9,7 @@ export const BUILT_IN_EXTENSION_NAMES = [
   "automations",
   "recent-sessions",
   "openai-images",
+  "secrets",
   "sidebar-projects",
   "file-viewer",
   "file-references",

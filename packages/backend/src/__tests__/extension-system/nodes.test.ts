@@ -32,6 +32,12 @@ describe("reins.nodes", () => {
     expect(await reins.nodes.run("mac MINI", "pwd", { cwd: dir })).toEqual({ exitCode: 0, output: `${dir}\n`, truncated: false });
   });
 
+  test("gives a command the environment variables it is given, added to the node's own", async () => {
+    const result = await reins.nodes.run("mini", `printf '%s|%s' "$API_KEY" "\${HOME:+home}"`, { env: { API_KEY: "it's $ecret \"quoted\"" } });
+
+    expect(result).toEqual({ exitCode: 0, output: "it's $ecret \"quoted\"|home", truncated: false });
+  });
+
   test("the extension's signal stops the command", async () => {
     const controller = new AbortController();
     const started = Date.now();

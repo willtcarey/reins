@@ -290,6 +290,11 @@ export interface Workspace {
    */
   open(view: KnownView, options?: OpenOptions): void;
   /**
+   * Closes the Inspector's tab of the view (the same view, by `ViewRenderer.key`), as the user's close would: a view
+   * done with its work, such as a form sent. It does nothing when no such tab is open, or when code holds it open.
+   */
+  close(view: KnownView): void;
+  /**
    * The main area's view now, and what it is about: a mounted view says it (`MountedView.subject`). Null on a page
    * that is not a view (settings, a project's history, no session).
    */

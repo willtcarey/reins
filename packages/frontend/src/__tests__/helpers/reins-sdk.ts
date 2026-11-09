@@ -133,6 +133,8 @@ export function testSdk<A extends HttpApi = HttpApi>({ source = { nodeId: "node"
   const projectsStore = new ProjectsStore(sessions, client);
   const live = new SdkSessions({ sessionCache: sessions, projectsStore, sessionOperations: new SessionOperations({ conversations: new ConversationsStore({ sessionCache: sessions }) }) });
   const opened: OpenedView[] = [];
+  /** The views `workspace.close` closed. */
+  const closed: View[] = [];
   const shownViews: View[] = [];
   const sessionCalls: SessionCall[] = [];
   let shown = current;
@@ -163,13 +165,13 @@ export function testSdk<A extends HttpApi = HttpApi>({ source = { nodeId: "node"
     projects: new SdkProjects(projectsStore),
     tasks: new SdkTasks(projectsStore),
     nodes: new SdkNodes(projectsStore),
-    containers: { inspector: { open: (view) => opened.push({ view, container: "inspector" }) }, main },
+    containers: { inspector: { open: (view) => opened.push({ view, container: "inspector" }), closeView: (view) => closed.push(view) }, main },
     http: new ReinsClient(),
     socket: client,
   };
   const reins = createReinsSdk<A>(extension, host);
   const sdkFor = (other: ExtensionInfo, scope?: string) => createReinsSdk(other, host, { scope });
-  return { client, sessions, projectsStore, files, views, decorators, commands, settingsPages, sidebar, extensionHost, reins, sdkFor, source, opened, shownViews, mainHistory, sessionCalls, showMain };
+  return { client, sessions, projectsStore, files, views, decorators, commands, settingsPages, sidebar, extensionHost, reins, sdkFor, source, opened, closed, shownViews, mainHistory, sessionCalls, showMain };
 }
 
 /** An Inspector over views that know the file viewer's `file` view, as the app's do. */

@@ -240,6 +240,9 @@ const run = sdkMethod({
       schema: Type.Object({
         cwd: Type.Optional(Type.String({ description: "Where it starts: absolute, `~/…`, or relative to the node's home (the default)." })),
         timeoutMs: Type.Optional(Type.Number({ description: `1 to ${MAX_SCRIPT_RUN_TIMEOUT_MS} (the default; an extension's: to ${MAX_EXTENSION_RUN_TIMEOUT_MS}).` })),
+        env: Type.Optional(Type.Record(Type.String({ pattern: "^[A-Za-z_][A-Za-z0-9_]*$" }), Type.String(), {
+          description: "Environment variables added to the node's for the command. Give a secret here, as $NAME in the command, never in the command's text.",
+        })),
         signal: Type.Optional(SignalSchema),
       }),
       optional: true,
@@ -249,10 +252,10 @@ const run = sdkMethod({
   tags: ["nodes", "node", "run", "exec", "command", "shell", "bash", "machine", "remote"],
   async run(context, node, command, options = {}) {
     if (typeof command !== "string" || !command.trim()) throw new Error("A command must not be blank");
-    const { cwd, timeoutMs = DEFAULT_TIMEOUT_MS } = options;
+    const { cwd, env, timeoutMs = DEFAULT_TIMEOUT_MS } = options;
     const max = context.caller.kind === "extension" ? MAX_EXTENSION_RUN_TIMEOUT_MS : MAX_SCRIPT_RUN_TIMEOUT_MS;
     if (!Number.isFinite(timeoutMs) || timeoutMs < 1 || timeoutMs > max) throw new Error(`timeoutMs must be from 1 to ${max}`);
-    return namedNode(context, node).host().run(command, { ...(cwd === undefined ? {} : { cwd }), timeoutMs, maxBytes: MAX_SCRIPT_BYTES, signal: signalOf(context, options.signal) });
+    return namedNode(context, node).host().run(command, { ...(cwd === undefined ? {} : { cwd }), ...(env === undefined ? {} : { env }), timeoutMs, maxBytes: MAX_SCRIPT_BYTES, signal: signalOf(context, options.signal) });
   },
 });
 
