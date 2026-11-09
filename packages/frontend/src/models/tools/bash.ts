@@ -9,6 +9,23 @@ export function getBashCommand(block: ToolBlockData): string {
   return block.args?.command ?? "";
 }
 
+/** How many lines of a command show before it is expanded. */
+export const COMMAND_LINES = 10;
+
+/**
+ * The part of a command its block shows, and how many lines are left out before and after it. Models write long
+ * scripts into a command (a heredoc of Python): while it is written its newest lines show, as a write's do, and once
+ * written its first ones, until it is expanded.
+ */
+export function shownCommand(command: string, { writing, expanded }: { writing: boolean; expanded: boolean }): { text: string; before: number; after: number } {
+  const lines = command.split("\n");
+  if (expanded || lines.length <= COMMAND_LINES) return { text: command, before: 0, after: 0 };
+  const left = lines.length - COMMAND_LINES;
+  return writing
+    ? { text: lines.slice(left).join("\n"), before: left, after: 0 }
+    : { text: lines.slice(0, COMMAND_LINES).join("\n"), before: 0, after: left };
+}
+
 /** Extract the first line of output text for a compact preview. */
 export function getBashPreview(block: ToolBlockData, maxLen = 120): string {
   const texts = block.result?.content

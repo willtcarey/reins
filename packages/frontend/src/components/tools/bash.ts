@@ -1,9 +1,11 @@
 /**
  * BashToolBlock — Lit component for rendering Bash tool calls.
  *
- * Terminal-style block: command is always visible with a `$` prompt.
- * While it runs, its newest output lines show below (`<live-lines>`); clicking
- * expands to all of the output, also while it runs.
+ * Terminal-style block: the command with a `$` prompt, which a spinner replaces
+ * while it runs (in the prompt's place, so the command does not move when it
+ * ends). A long command shows its newest lines while it is written and its first
+ * ones after. While it runs, its newest output lines show below (`<live-lines>`);
+ * clicking expands to all of the command and output, also while it runs.
  *
  * This is a pure presentational component — all data is passed in as
  * primitive props. It has no dependency on ToolBlockData or helper functions.
@@ -17,7 +19,7 @@ import { ringSpinnerIcon } from "../../ui/icons.js";
 import "./live-lines.js";
 import type { ToolBlockData } from "../../models/chat-state.js";
 import { parseCommandSegments } from "../../models/tools/bash-command-parser.js";
-import { getBashCommand, getBashExitInfo, getBashOutput } from "../../models/tools/bash.js";
+import { COMMAND_LINES, getBashCommand, getBashExitInfo, getBashOutput, shownCommand } from "../../models/tools/bash.js";
 import { toolResultImages } from "../../models/tools/images.js";
 import "./tool-result-images.js";
 
@@ -59,6 +61,10 @@ export class BashToolBlock extends LitElement {
   @property({ type: Boolean })
   showSpinner = false;
 
+  /** Its command is still being written: its newest lines show. */
+  @property({ type: Boolean })
+  writing = false;
+
   @state()
   private expanded = false;
 
@@ -69,7 +75,7 @@ export class BashToolBlock extends LitElement {
   private _renderLine = (line: string, _index: number, preview: boolean) => html`<div class="px-2 leading-4 ${preview ? "truncate whitespace-pre" : "whitespace-pre-wrap break-words"}">${line || " "}</div>`;
 
   override render() {
-    const { command, isError, output, images, showSpinner, sessionId } = this;
+    const { command, isError, output, images, showSpinner, sessionId, writing } = this;
 
     const borderColor = isError
       ? "border-red-500/60"
@@ -78,7 +84,12 @@ export class BashToolBlock extends LitElement {
         : "border-zinc-700";
 
     const hasOutput = !!output.trim();
-    const clickable = hasOutput || (!showSpinner && images.length > 0);
+    const longCommand = command.split("\n").length > COMMAND_LINES;
+    const clickable = hasOutput || longCommand || (!showSpinner && images.length > 0);
+    const shown = shownCommand(command, { writing, expanded: this.expanded });
+    const more = (count: number, where: string) => html`<div class="text-[10px] leading-4 text-zinc-600 select-none">… ${count} ${where}</div>`;
+    // At most COMMAND_LINES rows, also when its lines wrap: while it is written the box keeps its end in view.
+    const box = this.expanded ? "max-h-96 overflow-auto" : `max-h-40 overflow-hidden ${writing ? "flex flex-col justify-end" : ""}`;
 
     return html`
       <div
@@ -87,10 +98,15 @@ export class BashToolBlock extends LitElement {
       >
         <!-- Command area -->
         <div class="px-3 py-2 flex items-start gap-2">
-          ${showSpinner
-            ? ringSpinnerIcon("inline-block w-3 h-3 mt-0.5 border-2 border-yellow-500 border-t-transparent rounded-full animate-spin flex-shrink-0")
-            : nothing}
-          <pre class="text-xs font-mono whitespace-pre-wrap break-words m-0 flex-1 min-w-0"><span class="text-green-500 select-none">$ </span>${renderCommandSegments(command)}</pre>
+          <div class="flex-1 min-w-0">
+            ${shown.before ? more(shown.before, shown.before === 1 ? "earlier line" : "earlier lines") : nothing}
+            <div class=${box}>
+              <pre class="text-xs leading-4 font-mono whitespace-pre-wrap break-words m-0 min-w-0"><span class="inline-flex h-4 w-[2ch] items-center align-top select-none text-green-500">${showSpinner
+                ? ringSpinnerIcon("inline-block w-2.5 h-2.5 border-2 border-yellow-500 border-t-transparent rounded-full animate-spin")
+                : "$"}</span>${renderCommandSegments(shown.text)}</pre>
+            </div>
+            ${shown.after ? more(shown.after, shown.after === 1 ? "more line" : "more lines") : nothing}
+          </div>
           ${isError
             ? html`<span class="text-[10px] font-semibold text-red-400 bg-red-400/10 px-1.5 py-0.5 rounded flex-shrink-0 self-start">error</span>`
             : nothing}
@@ -140,6 +156,7 @@ export const bashRenderer: ToolRenderer = {
       .images=${images}
       .sessionId=${block.sessionId ?? ""}
       .showSpinner=${isRunning}
+      .writing=${!!block.partialArgs}
     ></bash-tool-block>`;
   },
 };

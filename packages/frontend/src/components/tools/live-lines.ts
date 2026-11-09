@@ -80,10 +80,9 @@ export class LiveLines<T = string> extends LitElement {
     const start = growing ? Math.max(0, lines.length - PREVIEW_LINES) : 0;
     const shown = lines.slice(start, start + PREVIEW_LINES);
     const more = html`<div class="px-2 leading-4 text-zinc-700">…</div>`;
-    // Preview rows never wrap (a long line is cut at the edge), and a growing preview keeps the height of
-    // its mark and PREVIEW_LINES rows (leading-4 each) from the start: on a narrow screen, rows that wrap
-    // or a preview that grows would change its height with every new line.
-    const preview = html`<div class="border-t border-zinc-800 px-1 py-1 text-xs font-mono overflow-hidden ${growing ? "h-[5.5rem]" : ""}">
+    // Preview rows never wrap (a long line is cut at the edge), so a growing preview grows one row per line up to
+    // its mark and PREVIEW_LINES rows, then keeps that height: rows that wrap would change it with every line.
+    const preview = html`<div class="border-t border-zinc-800 px-1 py-1 text-xs font-mono overflow-hidden">
       <div class="w-fit min-w-full">
         ${start > 0 ? more : nothing}
         ${shown.map((line, index) => this.renderLine(line, start + index, true))}

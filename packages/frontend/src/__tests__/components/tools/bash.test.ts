@@ -31,6 +31,22 @@ describe("bash tool block", () => {
     expect(collectTemplateProperties(block.render(), "expanded")).toEqual([true]);
   });
 
+  test("a command still being written is marked so, and expands when it is long", () => {
+    const command = Array.from({ length: 20 }, (_, index) => `echo ${index}`).join("\n");
+    const rendered = bashRenderer.render({
+      id: "call-1",
+      name: "bash",
+      args: { command },
+      partialArgs: true,
+      status: "running",
+    }, { source: null });
+    expect(collectTemplateProperties(rendered, "writing")).toEqual([true]);
+
+    const block = new BashToolBlock();
+    block.command = command;
+    expect(collectTemplateEventListeners(block.render(), "click")).toHaveLength(1);
+  });
+
   test("a command that is done previews nothing", () => {
     const block = new BashToolBlock();
     block.output = output;
