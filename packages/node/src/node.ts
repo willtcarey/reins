@@ -3,9 +3,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   NodeRejection, type FsInfo, type FsInfoResult, type FsList, type FsListResult, type FsPath, type FsPathResult, type FsRead, type FsReadResult, type FsWrite,
-  type FsWriteResult, type NodeReload, type PiExec, type PiExecAttach, type PiExecAttachResult, type PiExecKill, type PiExecKillResult, type ProcessExit, type ProcessRun,
+  type FsWriteResult, type NodeReload, type PiExec, type PiExecAttach, type PiExecAttachResult, type PiExecKill, type PiExecKillResult, type ProcessExit,
+  type ProcessStart, type ProcessStartResult, type ProcessStderr, type ProcessStop, type ProcessStopResult, type ProcessWrite,
 } from "@reins/node-protocol";
-import { runProcess } from "./process-run.js";
+import { createProcesses } from "./processes.js";
 import { createFiles, partialWrites } from "./files.js";
 import { createPiExec } from "./pi-exec.js";
 
@@ -23,9 +24,15 @@ export type OpenStreamSource = (signal: AbortSignal) => StreamSource;
  * result. `connectNode` serves each. A definite rejection throws `NodeRejection`; any other exception is
  * sent as `internal`. */
 export interface NodeCommands {
-  /** `process.run`: checks the request and returns the source of its stream, which starts the process
-   * (the connection serves it under the request's `streamId` and answers `{}`). */
-  runProcess(input: ProcessRun): Promise<OpenStreamSource>;
+  /** `process.start`: starts the process and returns its pid and the source of its stdout stream (binary),
+   * which the connection serves under the request's `streamId`. Stopping that source stops the process. */
+  startProcess(input: ProcessStart): Promise<{ result: ProcessStartResult; source: OpenStreamSource }>;
+  /** `process.write`: answered once the process's stdin has taken the bytes. */
+  writeProcess(input: ProcessWrite): Promise<Record<string, never>>;
+  /** `process.stop`. */
+  stopProcess(input: ProcessStop): Promise<ProcessStopResult>;
+  /** `process.stderr`: the source of its stderr stream (text). */
+  readProcessStderr(input: ProcessStderr): Promise<OpenStreamSource>;
   /** `fs.info`. */
   fileInfo(input: FsInfo): Promise<FsInfoResult>;
   /** `fs.list`. */
@@ -62,8 +69,9 @@ export interface Node extends NodeCommands {
    * accepts commands again and resolves not paused. `blocking` names the commands it was still waiting for.
    */
   pause(options: { timeoutMs: number; force?: boolean }): Promise<{ paused: boolean; blocking: string[] }>;
-  /** The one teardown (process shutdown on SIGTERM/SIGINT, a reload, or a test): refuses new commands and
-   * kills its shell commands. Pause first, so nothing is cut off. */
+  /** The one teardown (process shutdown on SIGTERM/SIGINT, a reload, or a test): refuses new commands,
+   * kills its shell commands and stops its processes, resolving once they have ended. Pause first, so no
+   * shell command is cut off. */
   shutdown(): Promise<void>;
 }
 
@@ -86,6 +94,10 @@ export interface NodeOptions {
   /** How much of a command's output the node keeps for a server picking it up again: `EXEC_TAIL_BYTES`
    * by default. */
   execTailBytes?: number;
+  /** How many processes (`process.start`) may run at once: `MAX_NODE_PROCESSES` by default. */
+  maxProcesses?: number;
+  /** How long a stopped process has between SIGTERM and SIGKILL: `PROCESS_STOP_GRACE_MS` by default. */
+  processStopGraceMs?: number;
   /** The node's own files, none of them durable: the chunks of `fs.write`s not finished yet. A new
    * temporary directory by default, which `shutdown` removes (the node process passes `~/.reins` or
    * `REINS_NODE_DATA_DIR`). */
@@ -98,20 +110,26 @@ export const RELOAD_DRAIN_TIMEOUT_MS = 60_000;
 const PAUSE_POLL_MS = 10;
 
 /** Starts a node. Every call is a new node. Takes no in-process server dependency. */
-export function startNode({ dataDir: givenDataDir, reload: reloader, execGraceMs, execTailBytes }: NodeOptions = {}): Node {
+export function startNode({ dataDir: givenDataDir, reload: reloader, execGraceMs, execTailBytes, maxProcesses, processStopGraceMs }: NodeOptions = {}): Node {
   const dataDir = givenDataDir ?? mkdtempSync(join(tmpdir(), "reins-node-"));
   const partials = partialWrites(dataDir);
   // Writes a previous run of the node left unfinished.
   partials.clear();
   const files = createFiles(partials);
   const host = createPiExec({ graceMs: execGraceMs, tailBytes: execTailBytes });
+  const processes = createProcesses({ ...(maxProcesses === undefined ? {} : { maxProcesses }), ...(processStopGraceMs === undefined ? {} : { stopGraceMs: processStopGraceMs }) });
   let running = true;
   // While the node pauses (a reload or shutdown), new shell commands are refused.
   let pausing = false;
   let reloading = false;
   const started = () => { if (!running) throw new Error("Node stopped"); };
   const node: Node = {
-    async runProcess(input) { started(); return runProcess(input); },
+    // Not refused while the node pauses, unlike a shell command: a pause does not wait for processes,
+    // and a reload stops them.
+    async startProcess(input) { started(); return processes.start(input); },
+    async writeProcess(input) { started(); return processes.write(input); },
+    async stopProcess(input) { started(); return processes.stop(input); },
+    async readProcessStderr(input) { started(); return processes.stderr(input); },
     async fileInfo(input) { started(); return files.info(input); },
     async listDirectory(input) { started(); return files.list(input); },
     async readFile(input) { started(); return files.read(input); },
@@ -163,6 +181,7 @@ export function startNode({ dataDir: givenDataDir, reload: reloader, execGraceMs
       running = false;
       // Its commands run in process groups of their own: nothing else would stop them.
       host.close();
+      await processes.close();
       if (givenDataDir === undefined) rmSync(dataDir, { recursive: true, force: true });
     },
   };

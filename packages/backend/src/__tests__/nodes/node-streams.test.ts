@@ -18,21 +18,25 @@ useTestDb();
 
 const until = async (done: () => boolean) => { for (let i = 0; i < 400 && !done(); i++) await Bun.sleep(5); expect(done()).toBe(true); };
 
-/** What a test's `process.run` asks for; the scripted node serves whatever source the test gives it. */
-const run = { cwd: "/checkout", argv: ["producer"] };
+/** What a test's `process.start` asks for; the scripted node serves whatever source the test gives it. */
+const run = { cwd: "/checkout", processId: "p", argv: ["producer"] };
 
-/** The seeded node as a stand-in node over the loopback that serves streams: its `process.run` streams
- * the source a test opens. */
+/** The seeded node as a stand-in node over the loopback that serves streams: a text one as its
+ * `process.stderr`, a binary one as its `process.start`, from the source a test opens. */
 function streamingNode(state: TestAppState) {
   const sources: OpenStreamSource[] = [];
-  const link = dialLoopback(state, scriptedNode({ runProcess: async () => sources.shift()! }), { redial: false });
+  const link = dialLoopback(state, scriptedNode({
+    readProcessStderr: async () => sources.shift()!,
+    startProcess: async () => ({ result: { pid: 1 }, source: sources.shift()! }),
+  }), { redial: false });
   return {
     link,
-    /** Opens a stream (`process.run`) the node serves from `source`. */
+    /** Opens a stream the node serves from `source`. */
     async open(source: OpenStreamSource, { binary = false }: { binary?: boolean } = {}) {
       await link.ready();
       sources.push(source);
-      return state.nodes.get(SEEDED_NODE_ID).openStream("process.run", { ...run, ...(binary ? { binary } : {}) });
+      const node = state.nodes.get(SEEDED_NODE_ID);
+      return binary ? node.openStream("process.start", run) : node.openStream("process.stderr", { processId: run.processId });
     },
     /** Spawns a process (`NodeDirClient.spawner`) the node serves from `source`. */
     async spawn(source: OpenStreamSource) {
@@ -140,8 +144,8 @@ test("a dropped link errors every open stream and stops their producers", async 
   state.nodes.close();
 });
 
-/** A raw node end on the hub, negotiated as the seeded node, answering `process.run` and sending stream
- * frames by hand. `opening` runs before it answers a `process.run`: it may send frames, or throw to
+/** A raw node end on the hub, negotiated as the seeded node, answering `process.start` and sending stream
+ * frames by hand. `opening` runs before it answers a `process.start`: it may send frames, or throw to
  * refuse the request. */
 async function rawNode(state: TestAppState) {
   const [serverEnd, nodeEnd] = createLoopbackPair();
@@ -151,7 +155,7 @@ async function rawNode(state: TestAppState) {
   let opening: ((streamId: string) => void) | undefined;
   const peer = createRpcPeer(nodeEnd, {
     "stream.cancel": { params: z.object({ streamId: z.string() }), notify: ({ streamId }) => { cancelled.push(streamId); } },
-    "process.run": { params: z.object({ streamId: z.string() }).loose(), result: z.object({}), handle: async ({ streamId }) => { opened.push(streamId); opening?.(streamId); return {}; } },
+    "process.start": { params: z.object({ streamId: z.string() }).loose(), result: z.object({ pid: z.number() }), handle: async ({ streamId }) => { opened.push(streamId); opening?.(streamId); return { pid: 1 }; } },
   });
   nodeEnd.onmessage = peer.receive;
   await peer.call("node.hello", rawHelloParams(), readyResult);
@@ -163,7 +167,7 @@ async function rawNode(state: TestAppState) {
     set opening(handler: (streamId: string) => void) { opening = handler; },
     /** Opens a stream; its ID is the one the node was sent. */
     async open() {
-      const stream = await state.nodes.get(SEEDED_NODE_ID).openStream("process.run", run);
+      const stream = await state.nodes.get(SEEDED_NODE_ID).openStream("process.start", run);
       return { ...stream, streamId: opened.at(-1)! };
     },
   };
@@ -208,7 +212,7 @@ test("a refused opening request rejects with the node's error and tells the node
   await expect(node.open()).rejects.toThrow("Not a git repository");
   await until(() => node.cancelled.length === 1);
   expect(node.cancelled).toEqual(node.opened);
-  await expect(state.nodes.get("remote").openStream("process.run", run)).rejects.toThrow("Node not connected");
+  await expect(state.nodes.get("remote").openStream("process.start", run)).rejects.toThrow("Node not connected");
   state.nodes.close();
 });
 
@@ -230,16 +234,16 @@ test("over the real socket, a large stream is paced by the socket's drain so oth
   const link = connectNode(scriptedNode({
     absolutePath: async () => ({ ok: true, value: "/docs" }),
     // A fast in-memory source: unpaced, its 32 MiB would all be queued on the node's socket at once.
-    runProcess: async () => async function* () {
+    startProcess: async () => ({ result: { pid: 1 }, source: async function* () {
       for (let i = 0; i < pieces; i++) { mostQueued = Math.max(mostQueued, wire.queuedBytes); yield piece; }
-    },
+    } }),
   }), transport, { nodeId: SEEDED_NODE_ID, onState: change => states.push(change) });
   try {
     await until(() => states.length > 0);
     expect(states).toEqual([{ state: "connected" }]);
     await until(() => state.nodes.get(SEEDED_NODE_ID).connected);
     const node = state.nodes.get(SEEDED_NODE_ID);
-    const { body } = await node.openStream("process.run", run);
+    const { body } = await node.openStream("process.start", run);
     const reader = body.getReader();
     let received = 0;
     let receivedAtReply: number | undefined;

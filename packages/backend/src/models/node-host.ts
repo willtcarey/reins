@@ -1,6 +1,5 @@
-import { applyShellOutputUpdate, type ShellExecResult, type ShellOutputView } from "@earendil-works/pi-agent-core";
-import { MAX_EXEC_VIEW_BYTES } from "@reins/node-protocol";
-import { NodeCommandError, NodeDirClient, NodeFileError, type CallOptions } from "../nodes/node-dir-client.js";
+import { constants } from "node:os";
+import { NodeDirClient, NodeFileError, type CallOptions } from "../nodes/node-dir-client.js";
 import type { NodeHub } from "../state.js";
 
 /** A copy reads in ranges, not one stream: a node sends a stream as fast as it reads it, and the server
@@ -17,10 +16,8 @@ export class FileTooLargeError extends Error {
   }
 }
 
-/** As Pi's `sanitizeShellOutput` (not exported), for spilled output too, so output reads the same whatever
- * its size. */
+/** As Pi's `sanitizeShellOutput` (not exported): a command's output reads as an agent's bash shows it. */
 const INVALID_SHELL_OUTPUT = /[\x00-\x08\x0b-\x1f\ufff9-\ufffb]/g; // eslint-disable-line no-control-regex -- control characters are what it removes
-const quoted = (text: string) => `'${text.replaceAll("'", `'\\''`)}'`;
 
 /** Nothing is confined: the server can already run anything on a node. Unlike a session's tools, nothing
  * waits for the node. What a call returns is held in the server's memory, so its caller bounds it. */
@@ -70,33 +67,48 @@ export class NodeHost {
     return { bytes: size ?? 0 };
   }
 
-  /** Output past what a command's stream carries (`MAX_EXEC_VIEW_BYTES`) is read from Pi's spill file on
-   * the node, which is then removed. */
-  async run(command: string, { cwd, env, timeoutMs, maxBytes, signal }: { cwd?: string; env?: Readonly<Record<string, string>>; timeoutMs: number; maxBytes: number; signal?: AbortSignal }): Promise<NodeRunResult> {
+  /** Bash (`bash -c`, as Pi runs a command), run to its end as git is (`NodeDirClient.spawner`): stdout and
+   * stderr together, in the order written, the first `maxBytes` kept and the rest read and dropped. */
+  async run(command: string, { cwd = ".", env, timeoutMs, maxBytes, signal }: { cwd?: string; env?: Readonly<Record<string, string>>; timeoutMs: number; maxBytes: number; signal?: AbortSignal }): Promise<NodeRunResult> {
+    signal?.throwIfAborted();
     const home = await this.home({ signal });
-    let view: ShellOutputView | undefined;
-    let exited: ShellExecResult | undefined;
+    const at = await refused(home.absolutePath(cwd, { signal }), why => new Error(`Cannot find ${cwd} on "${this.node.name}": ${why}`));
+    const spawn = new NodeDirClient({ cwd: at, node: this.hub.get(this.node.id), waitForNode: false }).spawner({ signal });
+    let started;
     try {
-      exited = await home.exec(command, {
-        ...(cwd === undefined ? {} : { cwd }),
-        ...(env === undefined ? {} : { env: { ...env } }),
-        timeout: timeoutMs / 1000,
-        capture: { limits: { maxBytes: MAX_EXEC_VIEW_BYTES, maxLines: Number.MAX_SAFE_INTEGER, retain: "head" }, spill: true },
-        onUpdate: update => { view = applyShellOutputUpdate(view, update); },
-        signal,
-      });
-      if (!exited.truncation.truncated) return { exitCode: exited.exitCode, output: view?.text ?? "", truncated: false };
-      if (!exited.spillPath) throw new Error(`Command on "${this.node.name}": its output was not kept beyond ${MAX_EXEC_VIEW_BYTES} bytes`);
-      const spilled = await refused(home.readFileRange(exited.spillPath, { maxBytes, signal }), why => new Error(`Command on "${this.node.name}": cannot read its output (${why})`));
-      const output = Buffer.from(spilled.bytes).toString("utf8").replace(INVALID_SHELL_OUTPUT, "");
-      return { exitCode: exited.exitCode, output, truncated: spilled.size > maxBytes };
+      started = await spawn(["bash", "-c", `exec 2>&1\n${command}`], env === undefined ? {} : { env: { ...env } });
     } catch (error) {
-      if (!(error instanceof NodeCommandError)) throw error;
-      if (error.code === "timeout") throw new Error(`Command timed out after ${timeoutMs} ms on "${this.node.name}"`, { cause: error });
-      throw new Error(`Command failed on "${this.node.name}": ${error.message}`, { cause: error });
+      if (signal?.aborted) throw signal.reason;
+      throw new Error(`Command failed on "${this.node.name}": ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+    }
+    const { stdout, exited } = started;
+    let timedOut = false;
+    const reader = stdout.getReader();
+    // Cancelling stdout stops the process on the node, and ends the read below.
+    const stop = () => { void reader.cancel().catch(() => undefined); };
+    const timer = setTimeout(() => { timedOut = true; stop(); }, timeoutMs);
+    signal?.addEventListener("abort", stop, { once: true });
+    const kept: Uint8Array[] = [];
+    let keptBytes = 0;
+    let truncated = false;
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const room = maxBytes - keptBytes;
+        if (value.byteLength > room) truncated = true;
+        if (room > 0) { kept.push(value.subarray(0, room)); keptBytes += Math.min(room, value.byteLength); }
+      }
+      const exit = await exited;
+      const exitCode = exit.code ?? 128 + (exit.signal ? (constants.signals[exit.signal as keyof typeof constants.signals] ?? 0) : 0); // eslint-disable-line typescript-eslint/consistent-type-assertions -- a signal's name, as the node reports it
+      return { exitCode, output: Buffer.concat(kept).toString("utf8").replace(INVALID_SHELL_OUTPUT, ""), truncated };
+    } catch (error) {
+      if (signal?.aborted) throw signal.reason;
+      if (timedOut) throw new Error(`Command timed out after ${timeoutMs} ms on "${this.node.name}"`, { cause: error });
+      throw new Error(`Command failed on "${this.node.name}": ${error instanceof Error ? error.message : String(error)}`, { cause: error });
     } finally {
-      const spillPath = exited?.spillPath ?? view?.spillPath;
-      if (spillPath) await home.exec(`rm -f -- ${quoted(spillPath)}`).catch(() => undefined);
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", stop);
     }
   }
 

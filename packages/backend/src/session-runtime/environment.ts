@@ -1,6 +1,6 @@
 /**
  * A session's environment on the server (ADR-029): its checkout prepared on its node (the task
- * branch checked out through the server's `Git` over `process.run`), the environment section of its
+ * branch checked out through the server's `Git` over `process.start`), the environment section of its
  * system prompt (the tools, the node's REINS docs, the context files and skills from its node), and slash
  * expansion of the same skills.
  */

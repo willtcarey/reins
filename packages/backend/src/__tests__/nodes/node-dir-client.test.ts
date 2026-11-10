@@ -426,6 +426,28 @@ test("a process runs in the client's directory (no shell), its stdout streamed a
   expect(await spawned.exited).toMatchObject({ code: 3, stderr: "oops\n" });
 });
 
+test("a process run to its end gets no input: one that reads stdin sees it closed", async () => {
+  await linkNode();
+  const spawned = await dirClient().spawner()(["sh", "-c", "cat; echo read"]);
+  expect(await new Response(spawned.stdout).text()).toBe("read\n");
+  expect(await spawned.exited).toMatchObject({ code: 0 });
+});
+
+test("a process the node has no room for waits until one ends, even for a client that does not wait for its node, up to its retry window", async () => {
+  await linkNode(startNode({ maxProcesses: 1 }));
+  const now = new NodeDirClient({ cwd: dir, node: state.nodes.get(SEEDED_NODE_ID), waitForNode: false, retryWindowMs: 5_000 });
+  const first = await now.spawner()(["sh", "-c", "sleep 0.3; echo first"]);
+  const second = now.spawner()(["echo", "second"]);
+
+  expect(await new Response(first.stdout).text()).toBe("first\n");
+  expect(await new Response((await second).stdout).text()).toBe("second\n");
+
+  const hurried = new NodeDirClient({ cwd: dir, node: state.nodes.get(SEEDED_NODE_ID), waitForNode: false, retryWindowMs: 100 });
+  const holder = await hurried.spawner()(["sleep", "2"]);
+  await expect(hurried.spawner()(["true"])).rejects.toMatchObject({ data: { code: "unavailable", message: "This node runs as many processes as it may (1): stop one first" } });
+  await holder.stdout.cancel();
+});
+
 test("a client waiting for its node says so while it waits, for a process and for the node itself, and stops when its signal aborts; one that does not wait fails a process at once", async () => {
   const waits: boolean[] = [];
   const patient = new NodeDirClient({ cwd: dir, node: currentAppNode(state.process, SEEDED_NODE_ID), onWaiting: waiting => waits.push(waiting) });

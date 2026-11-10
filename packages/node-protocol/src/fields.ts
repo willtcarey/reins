@@ -15,7 +15,7 @@ export const MAX_STREAM_CHUNK_CHARS = 2 * STREAM_CHUNK_BYTES;
 export const streamId = id;
 /** The tail of a process's stderr that its stream's end frame carries. */
 export const MAX_PROCESS_STDERR_CHARS = 64 * 1024;
-/** How a process ended (`process.run`): its exit code, or the signal that killed it, and its stderr. */
+/** How a process ended (`process.start`): its exit code, or the signal that killed it, and its stderr. */
 export const processExit = z.strictObject({
   code: z.number().int().nullable(), signal: z.string().max(32).nullable(), stderr: z.string().max(MAX_PROCESS_STDERR_CHARS),
 });

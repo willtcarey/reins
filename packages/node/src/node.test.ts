@@ -85,48 +85,6 @@ test("a pause still waiting for a command at its timeout names it; without force
   } finally { await node.shutdown(); rmSync(cwd, { recursive: true, force: true }); }
 });
 
-/** Runs a process stream's source to its end: its output and the exit it returned. */
-async function drain(source: OpenStreamSource, signal = new AbortController().signal) {
-  const iterator = source(signal)[Symbol.asyncIterator]();
-  const output: Uint8Array[] = [];
-  for (let next = await iterator.next(); ; next = await iterator.next()) {
-    if (next.done) return { output: Buffer.concat(output).toString("utf8"), exit: next.value || undefined };
-    output.push(typeof next.value === "string" ? Buffer.from(next.value) : next.value);
-  }
-}
-
-test("process.run runs argv without a shell in the source checkout, merging env over the node's, and returns the exit with stderr", async () => {
-  const cwd = mkdtempSync(join(tmpdir(), "reins-node-process-"));
-  const node = startNode();
-  try {
-    const literal = await drain(await node.runProcess({ cwd, streamId: "s1", argv: ["printf", "%s", "$HOME"] }));
-    expect(literal).toEqual({ output: "$HOME", exit: { code: 0, signal: null, stderr: "" } });
-    const script = 'printf "%s|%s" "$(pwd -P)" "$GREETING"; echo "bad things" >&2; exit 3';
-    expect(await drain(await node.runProcess({ cwd, streamId: "s2", argv: ["sh", "-c", script], env: { GREETING: "hi" } })))
-      .toEqual({ output: `${realpathSync(cwd)}|hi`, exit: { code: 3, signal: null, stderr: "bad things\n" } });
-    await expect(node.runProcess({ cwd: join(cwd, "missing"), streamId: "s3", argv: ["true"] })).rejects.toMatchObject({ error: { code: "not_found" } });
-    await expect(node.runProcess({ cwd, streamId: "s4", argv: ["no-such-program-reins"] })).rejects.toMatchObject({ error: { code: "invalid_request", message: "Program not found: no-such-program-reins" } });
-  } finally { await node.shutdown(); rmSync(cwd, { recursive: true, force: true }); }
-});
-
-test("process.run kills its process when its stream is stopped", async () => {
-  const cwd = mkdtempSync(join(tmpdir(), "reins-node-process-"));
-  const node = startNode();
-  try {
-    const source = await node.runProcess({ cwd, streamId: "s1", argv: ["sh", "-c", "echo $$; exec sleep 30"] });
-    const stop = new AbortController();
-    const iterator = source(stop.signal)[Symbol.asyncIterator]();
-    const first = await iterator.next();
-    const pid = first.value instanceof Uint8Array ? Number(Buffer.from(first.value).toString().trim()) : NaN;
-    stop.abort();
-    await iterator.return?.();
-    const alive = () => { try { process.kill(pid, 0); return true; } catch { return false; } };
-    for (let i = 0; i < 100 && alive(); i++) await Bun.sleep(5);
-    expect(alive()).toBe(false);
-  } finally { await node.shutdown(); rmSync(cwd, { recursive: true, force: true }); }
-});
-
-
 test("fs.info, fs.list and the paths answer as Pi's local environment does, symlinks unfollowed, and nothing is confined to the checkout", async () => {
   const cwd = mkdtempSync(join(tmpdir(), "reins-node-fs-"));
   const outside = mkdtempSync(join(tmpdir(), "reins-node-outside-"));

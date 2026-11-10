@@ -7,19 +7,48 @@ import {
 import { nodeError } from "./errors.js";
 import type { MethodInput, MethodTable } from "./method-table.js";
 
-/** `process.run`: runs `argv` (no shell) in a source's checkout and opens a stream of its stdout
- * (`binary`: raw bytes, else text). The node answers once it accepted the request; the stream's end frame
- * carries how the process ended (`exit`: code or signal, and the tail of its stderr), and cancelling the
- * stream kills the process. `env` is merged over the node's own environment. The server runs git this
- * way: the git logic stays on the server and the node only executes. */
 export const MAX_PROCESS_ARGS = 1024;
-export const processRunParams = z.strictObject({
-  cwd, streamId,
-  argv: z.array(z.string().max(65_536)).min(1).max(MAX_PROCESS_ARGS).refine(([program]) => !!program, "Missing program"),
-  env: z.record(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/), z.string().max(65_536)).optional(),
-  binary: z.boolean().optional(),
-});
-export const processRunResult = z.strictObject({});
+
+/** Processes on the node (`process.*`, protocol 17; node-contract.md *Processes*): every process the server
+ * runs there, git's included (the server waits for those to end: `NodeDirClient.spawner`), and long-running
+ * ones it writes to and reads from, as an MCP client does a stdio server. A process belongs to its stdout
+ * stream: cancelling that stream, or losing the connection that carries it, stops the process; there is
+ * no reattaching. Stopping is closing stdin, SIGTERM to its process group, then SIGKILL after the node's
+ * grace period; when the process exits, what is left of its group is stopped too. At most
+ * `MAX_NODE_PROCESSES` run at once on a node: one more is refused `unavailable`, retryable (it did not
+ * start). */
+export const MAX_NODE_PROCESSES = 64;
+const environment = z.record(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/), z.string().max(65_536));
+/** `process.start`: starts `argv` (no shell) or `command` (`/bin/sh -c`) in `cwd` with `env` merged over
+ * the node's environment (not kept, nor logged, on the node: values may be secrets), and opens a binary
+ * stream of its stdout. `stdin: false` gives it no input (`/dev/null`), for a process the server only
+ * waits for. The node answers once the process is running (`pid`); a missing `cwd` is
+ * `not_found`, a program not on `PATH` `invalid_request`. The stream's end carries its exit (`exit`: code
+ * or signal, and the tail of its stderr). */
+export const processStartParams = z.strictObject({
+  cwd, streamId, processId: id,
+  argv: z.array(z.string().max(65_536)).min(1).max(MAX_PROCESS_ARGS).refine(([program]) => !!program, "Missing program").optional(),
+  command: z.string().min(1).max(MAX_EXEC_COMMAND_CHARS).optional(),
+  env: environment.optional(),
+  stdin: z.boolean().optional(),
+}).refine(({ argv, command }) => (argv === undefined) !== (command === undefined), "Exactly one of argv and command");
+export const processStartResult = z.strictObject({ pid: z.number().int().positive() });
+/** `process.write`: writes `data` (base64, at most `WRITE_CHUNK_BYTES`) to the process's stdin, then
+ * closes it when `end`. Answered once the bytes are in the pipe, so a process that does not read its
+ * input holds the answer up: send the next write after the answer. Unknown or exited: `not_found`;
+ * stdin already closed: `invalid_request`. */
+export const processWriteParams = z.strictObject({ processId: id, data: base64Chunk.optional(), end: z.boolean().optional() });
+export const processWriteResult = z.strictObject({});
+/** `process.stop`: starts stopping the process (see above) and answers at once; its stdout stream ends
+ * with its exit. `stopping`: whether it was still running. Unknown: `not_found`. */
+export const processStopParams = z.strictObject({ processId: id });
+export const processStopResult = z.strictObject({ stopping: z.boolean() });
+/** `process.stderr`: opens a text stream of the process's stderr: the tail the node keeps of it (the
+ * last `MAX_PROCESS_STDERR_CHARS`) and then what follows, until the process exits. A stream that falls
+ * behind the kept tail skips ahead to it. Unknown or exited: `not_found` (its stdout stream's exit
+ * carries the tail). */
+export const processStderrParams = z.strictObject({ streamId, processId: id });
+export const processStderrResult = z.strictObject({});
 
 /** The node's files (`fs.*`, ADR-029): the file operations of Pi's `FileSystem` on the node's filesystem,
  * as Pi's local environment does them there, for the agent's tools, the server's discovery of a
@@ -142,7 +171,10 @@ export const nodeReloadResult = z.strictObject({ scheduled: z.literal(true) });
 /** Server→node methods: a node of this protocol version serves every one. A node rejection carries a
  * `NodeError` as `data`. The server bounds each call itself (its caller's timeout). */
 export const nodeMethods = {
-  "process.run": { params: processRunParams, result: processRunResult, errorData: nodeError },
+  "process.start": { params: processStartParams, result: processStartResult, errorData: nodeError },
+  "process.write": { params: processWriteParams, result: processWriteResult, errorData: nodeError },
+  "process.stop": { params: processStopParams, result: processStopResult, errorData: nodeError },
+  "process.stderr": { params: processStderrParams, result: processStderrResult, errorData: nodeError },
   "fs.info": { params: fsInfoParams, result: fsInfoResult, errorData: nodeError },
   "fs.list": { params: fsListParams, result: fsListResult, errorData: nodeError },
   "fs.read": { params: fsReadParams, result: fsReadResult, errorData: nodeError },
@@ -157,7 +189,12 @@ export const nodeMethods = {
 } satisfies MethodTable;
 
 type NodeInput<M extends keyof typeof nodeMethods> = MethodInput<(typeof nodeMethods)[M]>;
-export type ProcessRun = NodeInput<"process.run">;
+export type ProcessStart = NodeInput<"process.start">;
+export type ProcessStartResult = z.infer<typeof processStartResult>;
+export type ProcessWrite = NodeInput<"process.write">;
+export type ProcessStop = NodeInput<"process.stop">;
+export type ProcessStopResult = z.infer<typeof processStopResult>;
+export type ProcessStderr = NodeInput<"process.stderr">;
 export type FsInfo = NodeInput<"fs.info">;
 export type FsInfoResult = z.infer<typeof fsInfoResult>;
 export type FsList = NodeInput<"fs.list">;

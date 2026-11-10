@@ -5,10 +5,10 @@
 import { Git } from "../../git.js";
 import type { Spawn } from "../../git.js";
 
-/** Spawns processes on this machine, in `cwd`, as a node's `process.run` would. */
+/** Spawns processes on this machine, in `cwd`, as a node's `process.start` would (with no stdin). */
 export function localSpawn(cwd: string): Spawn {
   return async (argv, { env } = {}) => {
-    const proc = Bun.spawn(argv, { cwd, env: env && { ...process.env, ...env }, stdout: "pipe", stderr: "pipe" });
+    const proc = Bun.spawn(argv, { cwd, env: env && { ...process.env, ...env }, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
     // Drained alongside stdout so the process cannot block on a full stderr pipe.
     const stderr = new Response(proc.stderr).text().catch(() => "");
     const reader = proc.stdout.getReader();

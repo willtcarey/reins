@@ -6,7 +6,7 @@
  * On each socket it answers the server's challenge with the node's key, says hello (the protocol version,
  * its build and where its docs are), and serves each server→node method from the node's
  * command (a `NodeRejection` keeps its code on the wire; any other exception is `internal`) and the
- * streams `process.run`, `fs.read`, `pi.exec` and `pi.execAttach` open, until it closes. The
+ * streams `process.start`, `process.stderr`, `fs.read`, `pi.exec` and `pi.execAttach` open, until it closes. The
  * node calls nothing on the server: only its streams' frames go that way. Across sockets it redials,
  * refuses to go on when the server refuses the node, and hands
  * an update the server asks for to `onUpdate`. The transports are adapters at its seam: `unixTransport`
@@ -255,7 +255,8 @@ function openConnection(node: Node, wire: LinkSocket, { nodeId, key, buildId, do
     },
   } : {};
   const commands: NodeCommands = {
-    runProcess: served(input => node.runProcess(input)),
+    startProcess: served(input => node.startProcess(input)), writeProcess: served(input => node.writeProcess(input)),
+    stopProcess: served(input => node.stopProcess(input)), readProcessStderr: served(input => node.readProcessStderr(input)),
     fileInfo: served(input => node.fileInfo(input)), listDirectory: served(input => node.listDirectory(input)),
     readFile: served(input => node.readFile(input)), writeFile: served(input => node.writeFile(input)),
     absolutePath: served(input => node.absolutePath(input)), canonicalPath: served(input => node.canonicalPath(input)),
@@ -264,9 +265,16 @@ function openConnection(node: Node, wire: LinkSocket, { nodeId, key, buildId, do
   };
   // Server→node commands: served once the connection negotiated.
   const peer = createRpcPeer(wire, { ...authentication, ...serveMethods(nodeMethods, {
-    "process.run": async input => {
-      const source = await commands.runProcess(input);
-      void streams.serve(input.streamId, source, { binary: input.binary });
+    "process.start": async input => {
+      const { result, source } = await commands.startProcess(input);
+      void streams.serve(input.streamId, source, { binary: true });
+      return result;
+    },
+    "process.write": commands.writeProcess,
+    "process.stop": commands.stopProcess,
+    "process.stderr": async input => {
+      const source = await commands.readProcessStderr(input);
+      void streams.serve(input.streamId, source);
       return {};
     },
     "fs.info": commands.fileInfo,

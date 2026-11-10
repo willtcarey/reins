@@ -10,8 +10,6 @@ import type { ProcessExit } from "@reins/node-protocol";
 export interface SpawnOptions {
   /** Added to the process's environment, not replacing it. */
   env?: Record<string, string>;
-  /** Stdout is bytes, not text: a node then sends it intact. */
-  binary?: boolean;
 }
 
 /** Cancelling `stdout` kills the process. `exited` carries its stderr, or the tail of it. */
@@ -79,8 +77,6 @@ wait "$pid"`;
 interface CommandOptions {
   /** Run with untracked files as intent-to-add (`WITH_UNTRACKED_AS_INTENT_TO_ADD`). */
   untracked?: boolean;
-  /** Stdout is bytes, not text (see `SpawnOptions.binary`). */
-  binary?: boolean;
 }
 
 function failure(args: string[], exit: ProcessExit): Error {
@@ -92,9 +88,9 @@ export class Git {
 
 
   /** Spawns `git <args>`, wrapped in the intent-to-add script when `untracked` is set. */
-  private spawnGit(args: string[], { untracked = false, binary = false }: CommandOptions = {}) {
+  private spawnGit(args: string[], { untracked = false }: CommandOptions = {}) {
     const argv = untracked ? ["sh", "-c", WITH_UNTRACKED_AS_INTENT_TO_ADD, "reins-git", ...args] : ["git", ...args];
-    return this.spawn(argv, binary ? { binary } : {});
+    return this.spawn(argv);
   }
 
   /** `git <args>`: resolves with its stdout; a non-zero exit rejects with git's stderr. */
@@ -290,7 +286,7 @@ export class Git {
   /** Stream raw unified diff output (its exact bytes) for a diff against a base or range expression;
    * `untracked` includes untracked files as new files. */
   streamDiffPatch(baseOrRange: string, contextLines = 3, { untracked = false }: { untracked?: boolean } = {}): AsyncGenerator<Uint8Array> {
-    return this.stream(["diff", ...MACHINE_DIFF_FLAGS, `-U${contextLines}`, baseOrRange], { untracked, binary: true });
+    return this.stream(["diff", ...MACHINE_DIFF_FLAGS, `-U${contextLines}`, baseOrRange], { untracked });
   }
 
   /**
@@ -393,7 +389,7 @@ export class Git {
 
   /** Read only the leading bytes from a git blob for MIME sniffing. */
   async readGitBlobPrefix(objectId: string, maxBytes = 8192): Promise<Uint8Array> {
-    const proc = await this.spawn(["git", "cat-file", "blob", objectId], { binary: true });
+    const proc = await this.spawn(["git", "cat-file", "blob", objectId]);
     const reader = proc.stdout.getReader();
     const chunks: Uint8Array[] = [];
     let total = 0;
@@ -428,7 +424,7 @@ export class Git {
     let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
     return new ReadableStream<Uint8Array>({
       start: async () => {
-        reader = (await this.spawn(["git", "cat-file", "blob", objectId], { binary: true })).stdout.getReader();
+        reader = (await this.spawn(["git", "cat-file", "blob", objectId])).stdout.getReader();
       },
       async pull(controller) {
         const next = await reader!.read();

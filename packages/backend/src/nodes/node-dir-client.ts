@@ -237,14 +237,24 @@ export class NodeDirClient {
     await send(pending, true);
   }
 
-  /** A start is resent only while it certainly did not run: a process is not safe to repeat. `signal`
-   * stops only the start; cancelling stdout kills a started process. */
+  /** Runs a process to its end (`process.start` with no stdin). A start is resent only while it certainly
+   * did not run: a process is not safe to repeat. The node's process limit is waited out, for up to
+   * `retryWindowMs` from the first refusal even when the client does not wait for its node. `signal` stops
+   * only the start; cancelling stdout stops a started process. */
   spawner({ signal }: CallOptions = {}): Spawn {
-    return async (argv, { env, binary } = {}) => {
-      const input = { cwd: this.cwd, argv, ...(env ? { env } : {}), ...(binary ? { binary } : {}) };
+    return async (argv, { env } = {}) => {
+      const start = (node: NodeClient) => node.openStream("process.start", { cwd: this.cwd, processId: crypto.randomUUID(), argv, stdin: false, ...(env ? { env } : {}) }, { signal, timeoutMs: NODE_CALL_TIMEOUT_MS });
       let opened;
-      try { opened = await this.onNode(node => node.openStream("process.run", input, { signal, timeoutMs: NODE_CALL_TIMEOUT_MS }), { signal }); }
-      catch (error) { throw signal?.aborted ? signal.reason : error; }
+      let limitDeadline: number | undefined;
+      for (let attempt = 0; ; attempt++) {
+        try { opened = await this.onNode(start, { signal }); break; }
+        catch (error) {
+          const atLimit = refusal(error)?.code === "unavailable" && refusal(error)?.retryable === true;
+          limitDeadline ??= Date.now() + this.retryWindowMs;
+          if (!atLimit || signal?.aborted || Date.now() >= limitDeadline) throw signal?.aborted ? signal.reason : error;
+          await sleep(backoff(attempt), signal);
+        }
+      }
       const exited = opened.ended.then(exit => exit ?? Promise.reject(new Error(`Process stream ended without an exit: ${argv[0]}`)));
       // A consumer that cancels stdout need not await the exit.
       exited.catch(() => undefined);

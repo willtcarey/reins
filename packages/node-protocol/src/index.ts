@@ -14,8 +14,9 @@
  * `zod` (and runtime builtins). Test doubles live in `@reins/node-protocol/testing`. The
  * package entry point, so it re-exports from its modules (lint exempts this file). */
 export {
-  nodeMethods, MAX_DIRECTORY_ENTRIES,
-  type ProcessRun, type NodeReload,
+  nodeMethods, MAX_DIRECTORY_ENTRIES, MAX_NODE_PROCESSES,
+  type NodeReload,
+  type ProcessStart, type ProcessStartResult, type ProcessWrite, type ProcessStop, type ProcessStopResult, type ProcessStderr,
   type FsInfo, type FsInfoResult, type FsList, type FsListResult, type FsRead, type FsReadResult, type FsWrite, type FsWriteResult, type FsPath, type FsPathResult, type FileErrorData,
   execRecord, type PiExec, type PiExecAttach, type PiExecAttachResult, type PiExecKill, type PiExecKillResult, type ExecRecord,
 } from "./node-methods.js";

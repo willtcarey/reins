@@ -133,7 +133,7 @@ test("a node of another protocol that the server cannot tell to update is refuse
   const warnings = spyOn(logger, "warn").mockImplementation(() => {});
   cleanups.push(() => warnings.mockRestore());
   const { state, browser, view } = serverServing(Promise.resolve(SERVER_BUILD));
-  const why = `No common protocol version: this server speaks ${protocolVersion}, the node ${protocolVersion + 1}`;
+  const why = `No common protocol version: this server speaks ${protocolVersion}, the node ${protocolVersion + 1}; the node is newer than this server: update the server`;
 
   // It runs the server's build, so there is nothing to offer it: as when the server keeps an older protocol.
   for (let attempt = 0; attempt < 2; attempt++) {
