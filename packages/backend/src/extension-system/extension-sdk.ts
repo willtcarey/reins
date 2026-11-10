@@ -4,7 +4,7 @@
  */
 
 import type {
-  Disposer, ImagesProvider, PageHandler, PromptContribution, ScriptNamespace, SecretStorage, ServerSdk, Service, SessionSettlement, ToolProvider,
+  Disposer, ImagesProvider, NodeProcess, PageHandler, ProcessOptions, PromptContribution, ScriptNamespace, SecretStorage, ServerSdk, Service, SessionSettlement, ToolProvider,
 } from "@reins/sdk/server";
 import type { ExtensionStorage } from "../database.js";
 import type { AppState } from "../state.js";
@@ -16,7 +16,7 @@ import { bind, type CallContext } from "../sdk-host/declaration.js";
 import { TOOLS } from "../sdk-host/tools.js";
 import { SESSIONS } from "../sdk-host/sessions.js";
 import { PROJECTS, TASKS } from "../sdk-host/projects.js";
-import { NODES } from "../sdk-host/nodes.js";
+import { NODES, spawnProcess } from "../sdk-host/nodes.js";
 import { IMAGES } from "../sdk-host/images.js";
 import { UI } from "../sdk-host/ui.js";
 import { MODELS } from "../sdk-host/models.js";
@@ -41,6 +41,22 @@ export function createExtensionSdk({ name, storage: { dataDir, db }, host, app, 
   const broadcast = createBroadcast(app().process);
   // Each call gets the app's models of that moment, as the extension acts as no session.
   const context = (): CallContext => ({ models: new Models(app()), caller: { kind: "extension", name } });
+  /** Disconnecting stops the extension's processes, one that is still starting too. */
+  const spawn = async (node: string, command: string | readonly string[], options: ProcessOptions = {}): Promise<NodeProcess> => {
+    const unloaded = new AbortController();
+    let spawned: NodeProcess | undefined;
+    const remove = own(async () => { unloaded.abort(); await spawned?.stop(); });
+    const forget = () => { const at = owned.indexOf(remove); if (at >= 0) owned.splice(at, 1); };
+    const signal = options.signal ? AbortSignal.any([options.signal, unloaded.signal]) : unloaded.signal;
+    try {
+      spawned = await spawnProcess(context(), node, command, { ...options, signal });
+    } catch (error) {
+      forget();
+      throw error;
+    }
+    void spawned.exited.then(forget);
+    return spawned;
+  };
   return Object.freeze<ServerSdk>({
     name,
     dataDir,
@@ -63,7 +79,10 @@ export function createExtensionSdk({ name, storage: { dataDir, db }, host, app, 
       ...bind(SESSIONS.methods, context),
       onSettled: (listener: (settlement: SessionSettlement) => void | Promise<void>) => own(host.addSettlementListener(name, listener)),
     }),
-    nodes: Object.freeze(bind(NODES.methods, context)),
+    nodes: Object.freeze({
+      ...bind(NODES.methods, context),
+      spawn: (node: string, command: string | readonly string[], options?: ProcessOptions) => spawn(node, command, options),
+    }),
     ui: Object.freeze(bind(UI.methods, context)),
     models: Object.freeze(bind(MODELS.methods, context)),
     reviews: Object.freeze(bind(REVIEWS.methods, context)),

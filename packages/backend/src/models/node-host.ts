@@ -1,6 +1,7 @@
 import { constants } from "node:os";
 import { NodeDirClient, NodeFileError, type CallOptions } from "../nodes/node-dir-client.js";
 import type { NodeHub } from "../state.js";
+import { NodeProcess, type NodeProcessSpec } from "../nodes/node-process.js";
 
 /** A copy reads in ranges, not one stream: a node sends a stream as fast as it reads it, and the server
  * fails a stream it holds too much of (`MAX_STREAM_BUFFER_BYTES`), as a slow destination would make it. */
@@ -109,6 +110,20 @@ export class NodeHost {
     } finally {
       clearTimeout(timer);
       signal?.removeEventListener("abort", stop);
+    }
+  }
+
+  /** A long-running process (`NodeProcess`); `cwd` resolves as `run`'s does. */
+  async spawn(command: string | readonly string[], { cwd = ".", ...spec }: Omit<NodeProcessSpec, "cwd" | "argv" | "command"> & { cwd?: string }): Promise<NodeProcess> {
+    const home = await this.home(spec.signal ? { signal: spec.signal } : {});
+    const at = await refused(home.absolutePath(cwd, spec.signal ? { signal: spec.signal } : {}), why => new Error(`Cannot find ${cwd} on "${this.node.name}": ${why}`));
+    const what = typeof command === "string" ? { command } : { argv: [...command] };
+    try {
+      return await NodeProcess.start(this.hub.get(this.node.id), { ...spec, ...what, cwd: at });
+    } catch (error) {
+      if (spec.signal?.aborted) throw error;
+      const shown = typeof command === "string" ? command : command.join(" ");
+      throw new Error(`Cannot start ${shown.slice(0, 100)} on "${this.node.name}": ${error instanceof Error ? error.message : String(error)}`, { cause: error });
     }
   }
 

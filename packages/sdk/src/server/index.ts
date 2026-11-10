@@ -537,6 +537,58 @@ export interface CommandOptions {
   readonly signal?: AbortSignal;
 }
 
+/** What `Nodes.spawn` takes. */
+export interface ProcessOptions {
+  /** Where it starts: absolute, `~/…`, or relative to the node's home (the default). */
+  readonly cwd?: string;
+  /** Added to the node's environment. Sent to the node only to start the process: neither kept nor logged
+   * there, so a secret may go here (never in the command's text). */
+  readonly env?: Readonly<Record<string, string>>;
+  /** The longest stdout line `lines` gives, in bytes: 8 MiB by default, at most 64 MiB. */
+  readonly maxLineBytes?: number;
+  /** Aborting it stops the process. Give a service's `signal`. */
+  readonly signal?: AbortSignal;
+}
+
+/** How a process ended: its exit code, or the signal that ended it; `error` when it ended for another reason than
+ * its own (its node's link dropped, a stdout line was too long, its stdout was not read). */
+export interface NodeProcessExit {
+  readonly code: number | null;
+  readonly signal: string | null;
+  readonly error?: string;
+}
+
+/**
+ * A process running on a node (`Nodes.spawn`), which the server writes to and reads from, as an MCP client does a
+ * stdio server. It ends when it exits, when it is stopped, when its node's link drops (the node stops it: nothing
+ * reattaches, so start it again) and when its extension is unloaded.
+ */
+export interface NodeProcess {
+  readonly id: string;
+  readonly nodeId: string;
+  readonly pid: number;
+  /** Its stdout as whole lines, without their `\n` (or `\r\n`), a last line without one at the end. A line longer
+   * than `maxLineBytes` stops the process and throws. Read either this or `chunks`, once, and keep reading: stdout
+   * nobody reads fails the process once 64 MiB are waiting. */
+  readonly lines: AsyncIterable<string>;
+  /** Its stdout as the node read it. */
+  readonly chunks: AsyncIterable<Uint8Array>;
+  /** Writes to its stdin (text as UTF-8), in order; resolves once the process has taken the bytes. Rejects once it
+   * has exited or its input is closed, and when it holds 16 MiB it has not taken yet. */
+  write(data: string | Uint8Array): Promise<void>;
+  /** Closes its stdin once earlier writes are taken. */
+  closeInput(): Promise<void>;
+  /** The last 64 KiB characters of its stderr, to say why it failed. */
+  stderrTail(): string;
+  /** Hears its stderr as it comes. */
+  onStderr(listener: (text: string) => void): Disposer;
+  /** Resolves (never rejects) when it has ended. */
+  readonly exited: Promise<NodeProcessExit>;
+  /** Closes its stdin, then sends SIGTERM to its process group (what it started too), and SIGKILL after a few
+   * seconds; resolves once it has ended. */
+  stop(): Promise<NodeProcessExit>;
+}
+
 /** A node as `Nodes.list` gives it. */
 export interface NodeInfo {
   readonly id: string;
@@ -585,6 +637,13 @@ export interface Nodes {
    * command, a timeout out of range (an extension's: 1 to 600 000), the timeout and the signal.
    */
   run(node: string, command: string, options?: CommandOptions): Promise<CommandResult>;
+  /**
+   * Starts a long-running process on a node: `command` as argv (no shell) or a `/bin/sh -c` command. Resolves once
+   * it runs. Rejects for a blank command, an environment variable that is not `[A-Za-z_][A-Za-z0-9_]*`, an unknown,
+   * removed or disconnected node, a directory that is not there, a program not on the node's `PATH`, and a node that
+   * already runs as many processes as it may (64). Extensions only: agents' scripts do not have it.
+   */
+  spawn(node: string, command: string | readonly string[], options?: ProcessOptions): Promise<NodeProcess>;
 }
 
 // ---------------------------------------------------------------------------
