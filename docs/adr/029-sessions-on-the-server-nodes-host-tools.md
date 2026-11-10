@@ -1,6 +1,6 @@
 # ADR-029: Sessions on the Server; Nodes Host Tools
 
-- **Status:** Accepted
+- **Status:** Accepted (amended by [ADR-039](039-node-processes.md): `process.run` became `process.start`; `pi.exec` is the agent's bash only)
 - **Date:** 2026-10-11 (revised through 2026-10-18)
 - **Amends:** [ADR-013](013-server-holds-credentials.md) (nodes get no credentials), [ADR-015](015-server-canonical-storage-stateless-node.md) (storage no longer crosses to nodes), [ADR-018](018-process-run-and-fs-methods.md) (the `fs.*` methods serve everything, with Pi's semantics, unconfined on the node), [ADR-019](019-server-generated-system-prompt-and-session-kinds.md) (the server builds the whole prompt), [ADR-020](020-reloadable-node-hub.md)/[ADR-021](021-explicit-node-reload.md) (running sessions are kept across reloads of the app; what pauses and resumes them)
 - **Supersedes:** the durable command outbox ([ADR-010](010-state-derived-idempotency.md) *Server → node commands*)

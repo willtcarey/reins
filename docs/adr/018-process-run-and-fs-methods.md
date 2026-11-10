@@ -1,6 +1,6 @@
 # ADR-018: Git Over a Generic `process.run`, Typed `fs.*` for File Browsing
 
-- **Status:** Accepted (amended by [ADR-029](029-sessions-on-the-server-nodes-host-tools.md): one `fs.*` family with Pi's semantics serves the agent's tools, discovery and the file browser, unconfined on the node)
+- **Status:** Accepted (amended by [ADR-029](029-sessions-on-the-server-nodes-host-tools.md): one `fs.*` family with Pi's semantics serves the agent's tools, discovery and the file browser, unconfined on the node; by [ADR-039](039-node-processes.md): `process.run` is replaced by `process.start`, on which git runs to its end)
 - **Date:** 2026-10-03
 
 ## Context

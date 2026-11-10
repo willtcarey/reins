@@ -1,7 +1,7 @@
 # ADR-013: The Server Holds Provider Credentials and Is the Sole OAuth Refresher
 
 - **Status:** Accepted
-- **Amended by:** [ADR-029](029-sessions-on-the-server-nodes-host-tools.md) (sessions run on the server: nodes get no credentials, and the `credentials.*` calls are gone)
+- **Amended by:** [ADR-029](029-sessions-on-the-server-nodes-host-tools.md) (sessions run on the server: nodes get no credentials, and the `credentials.*` calls are gone), [ADR-039](039-node-processes.md) (a secret an extension gives a node process crosses once, in its environment, and is not kept there)
 - **Date:** 2026-09-27
 - **Author:** Will (with Claude)
 
