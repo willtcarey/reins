@@ -194,12 +194,12 @@ export class ExtensionHost {
 
   /** A query that starts with an extension's prefix reaches it without the prefix: an agent often searches for
    * an ID it already has. A tool whose ID breaks the rules is left out and reported, not thrown. */
-  async searchTools(query: string, filters: ToolFilters, signal: AbortSignal): Promise<ToolSearchGroup[]> {
+  async searchTools(query: string, filters: ToolFilters, signal: AbortSignal, sessionId: string | null): Promise<ToolSearchGroup[]> {
     return Promise.all([...this.providers].map(async ({ extension, provider }): Promise<ToolSearchGroup> => {
       const prefix = `${extension}${TOOL_ID_SEPARATOR}`;
       const own = query.trim().startsWith(prefix) ? query.trim().slice(prefix.length) : query;
       try {
-        const tools = await provider.search(own, { filters, signal });
+        const tools = await provider.search(own, { filters, signal, sessionId });
         return { title: provider.title, tools: tools.flatMap(tool => {
           const problem = !LOCAL_ID.test(tool.id) ? "a local ID is [a-zA-Z0-9_-]+"
             : prefix.length + tool.id.length > MAX_TOOL_ID_LENGTH ? `${prefix}${tool.id} is longer than ${MAX_TOOL_ID_LENGTH} characters`
@@ -214,7 +214,7 @@ export class ExtensionHost {
     }));
   }
 
-  async callTool(id: string, args: Record<string, unknown>, options: { signal: AbortSignal; timeoutMs?: number }): Promise<ToolResult> {
+  async callTool(id: string, args: Record<string, unknown>, options: { signal: AbortSignal; timeoutMs?: number; sessionId: string | null }): Promise<ToolResult> {
     const at = id.indexOf(TOOL_ID_SEPARATOR);
     const extension = id.slice(0, at);
     const localId = id.slice(at + TOOL_ID_SEPARATOR.length);
@@ -316,7 +316,7 @@ function add<T>(list: T[], item: T, onRemove?: () => Promise<void>): Removal {
 
 /** What an extension's script method is told of the script's call: its session, and its signal. */
 function scriptContextOf(ctx: ApiContext): ScriptContext {
-  return { sessionId: ctx.session.id, projectId: ctx.session.projectId, taskId: ctx.session.taskId, ...(ctx.signal ? { signal: ctx.signal } : {}) };
+  return { sessionId: ctx.session.id, ...(ctx.signal ? { signal: ctx.signal } : {}) };
 }
 
 function prefixed(prefix: string): Logger {

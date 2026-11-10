@@ -10,6 +10,8 @@ export interface TestExtension {
   register: RegisterExtension;
   readonly searches: { query: string; filters: ToolFilters }[];
   readonly calls: { id: string; args: Record<string, unknown>; timeoutMs?: number }[];
+  /** Who each search and call was for, in order. */
+  readonly callers: { by: "search" | "call"; sessionId: string | null }[];
   readonly disposed: boolean;
 }
 
@@ -26,16 +28,19 @@ export function testExtension(
 ): TestExtension {
   const searches: TestExtension["searches"] = [];
   const calls: TestExtension["calls"] = [];
+  const callers: TestExtension["callers"] = [];
   let disposed = false;
   const register: RegisterExtension = reins => {
     const removeProvider = reins.tools.register({
       title,
-      async search(query, { filters }) {
+      async search(query, { filters, sessionId }) {
         searches.push({ query, filters });
+        callers.push({ by: "search", sessionId });
         const group = typeof filters.group === "string" ? filters.group : null;
         return reins.tools.match(query, tools.filter(tool => !group || tool.id.startsWith(`${group}__`)));
       },
-      async call(id, args, { timeoutMs }) {
+      async call(id, args, { timeoutMs, sessionId }) {
+        callers.push({ by: "call", sessionId });
         if (!tools.some(tool => tool.id === id)) throw new Error(`No such tool: ${id}`);
         calls.push({ id, args, ...(timeoutMs === undefined ? {} : { timeoutMs }) });
         const result: ToolResult = { content: [{ type: "text", text: `${title}: ${id} ${JSON.stringify(args)}` }] };
@@ -49,5 +54,5 @@ export function testExtension(
       await more?.();
     };
   };
-  return { register, searches, calls, get disposed() { return disposed; } };
+  return { register, searches, calls, callers, get disposed() { return disposed; } };
 }

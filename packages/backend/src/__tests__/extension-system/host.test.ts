@@ -125,6 +125,19 @@ describe("the server SDK's host", () => {
       expect(only.searches).toEqual([]);
     });
 
+    test("a provider is told the session whose script searches and calls; an extension's own search and call are for no session", async () => {
+      let reins: ServerSdk | undefined;
+      const tools = testExtension({ tools: [testTool("a__one")], setup: sdk => { reins = sdk; } });
+      const state = createAppState(undefined, { extensions: [{ name: "tools", register: tools.register }] });
+      const run = script(state);
+
+      await run(`await reins.tools.search("one"); return await reins.tools.call("tools__a__one", { text: "hi" })`);
+      await reins!.tools.search("one");
+      await reins!.tools.call("tools__a__one");
+
+      expect(tools.callers).toEqual([{ by: "search", sessionId: "caller" }, { by: "call", sessionId: "caller" }, { by: "search", sessionId: null }, { by: "call", sessionId: null }]);
+    });
+
     test("an extension searches and calls every extension's tools, its own too, as scripts do", async () => {
       let reins: ServerSdk | undefined;
       const first = testExtension({ title: "First", tools: [testTool("a__one")], setup: sdk => { reins = sdk; } });
@@ -225,7 +238,7 @@ describe("the server SDK's host", () => {
 
       expect(JSON.parse(await run(`return await reins.notes.find("x", 2)`))).toEqual({ label: "found x" });
       await expect(run(`return await reins.notes.find(7)`)).rejects.toThrow("reins.notes.find: label: Expected string");
-      expect(seen).toEqual([{ args: ["x", 2], context: { sessionId: "caller", projectId: project.id, taskId: task.id, signal: true } }]);
+      expect(seen).toEqual([{ args: ["x", 2], context: { sessionId: "caller", signal: true } }]);
       const docs = searchScriptApi("notes find", state.extensions.host).text;
       expect(docs).toContain("find(label: string, limit?: number): Promise<Note>;");
       expect(docs).toContain("interface Note {");

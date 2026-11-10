@@ -795,16 +795,17 @@ export interface ToolProvider {
   /**
    * Its tools that match `query` and `filters`, best first (`Tools.match` ranks as the core does). An empty
    * query asks for every tool the filters let through. Runs at the same time as the other providers'
-   * searches; `signal` aborts when the agent's script ends. A throw is shown to the agent in place of this
+   * searches; `signal` aborts when the agent's script ends. `sessionId` is the agent's session (null when an
+   * extension searches itself): `Sessions.get` gives its project, task and node, to answer for it. A throw is shown to the agent in place of this
    * provider's tools, and does not stop the other providers.
    */
-  search(query: string, options: { filters: ToolFilters; signal: AbortSignal }): Promise<Tool[]>;
+  search(query: string, options: { filters: ToolFilters; signal: AbortSignal; sessionId: string | null }): Promise<Tool[]>;
   /**
    * Runs the tool of local ID `localId` (the agent's ID without the extension's prefix; `[a-zA-Z0-9_-]+`).
    * An ID that is none of its tools throws, as does a tool that cannot be run: the throw reaches the agent's
-   * script. `timeoutMs` is the agent's, when it gave one.
+   * script. `timeoutMs` is the agent's, when it gave one; `sessionId` as for `search`.
    */
-  call(localId: string, args: Record<string, unknown>, options: { signal: AbortSignal; timeoutMs?: number }): Promise<ToolResult>;
+  call(localId: string, args: Record<string, unknown>, options: { signal: AbortSignal; timeoutMs?: number; sessionId: string | null }): Promise<ToolResult>;
 }
 
 /** What one provider answered a search: its matching tools (by their final IDs, best first), or why it could not. */
@@ -910,13 +911,11 @@ export interface ScriptMethod<C, P extends readonly ScriptParam[], R extends Jso
   toScript?(result: T, ...args: ScriptArgs<P>): SchemaType<R>;
 }
 
-/** What an extension's script method runs for: the agent's session (its script's caller), and its script's signal. */
+/** What an extension's script method runs for: the agent's session (its script's caller; `Sessions.get` gives its
+ * project, task and node), and its script's signal. */
 export interface ScriptContext {
-  sessionId: string;
-  /** Null when the agent's session has no project. */
-  projectId: number | null;
-  taskId: number | null;
-  signal?: AbortSignal;
+  readonly sessionId: string;
+  readonly signal?: AbortSignal;
 }
 
 /** A `ScriptMethod` of any arguments, as a namespace holds them. */
