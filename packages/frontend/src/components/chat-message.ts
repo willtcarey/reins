@@ -15,6 +15,7 @@ import {
   imageSizeHint,
   textFromClientContent,
   type ChatImageBlock,
+  type ImageSizeHint,
 } from "../models/chat-content.js";
 import { MessageActionsController } from "../controllers/message-actions-controller.js";
 import type { Source } from "@reins/sdk";
@@ -25,6 +26,14 @@ import { getToolRenderer } from "./tools/index.js";
 import { openImageViewerEvent } from "./events.js";
 import "./decorated-text.js";
 import "./markdown-content.js";
+
+/** The tallest an image in a message shows, in CSS pixels: `max-h-64` on the image. */
+const IMAGE_MAX_HEIGHT = 256;
+
+/** How wide an image of this size shows: its own width, or less when the height limit scales it down. */
+function shownImageWidth({ width, height }: ImageSizeHint): number {
+  return Math.round(Math.min(width, (IMAGE_MAX_HEIGHT * width) / height));
+}
 
 @customElement("chat-message")
 export class ChatMessage extends LitElement {
@@ -53,13 +62,16 @@ export class ChatMessage extends LitElement {
     const hint = imageSizeHint(image);
     const src = imageBlockSrc(this.sessionId, image);
     const alt = "filename" in image && image.filename ? image.filename : "Attached image";
-    const className = "block h-auto w-auto max-h-64 max-w-full rounded-lg border border-zinc-700 bg-zinc-900 transition-opacity group-hover:opacity-90";
+    const look = "block max-h-64 rounded-lg border border-zinc-700 bg-zinc-900 transition-opacity group-hover:opacity-90";
     const openImage = (event: Event) => {
       event.stopPropagation();
       this.dispatchEvent(openImageViewerEvent({ src, alt, title: alt }));
     };
+    // With its stored size, the button takes the width the image shows at and the image fills it: the parents
+    // shrink to fit their content, and an image's percentage max-width made Firefox size them from its minimum
+    // width (0), a speck. The space is also kept before the image loads.
     const imageTemplate = !hint
-      ? html`<img src=${src} alt=${alt} class=${className} loading="lazy" />`
+      ? html`<img src=${src} alt=${alt} class="${look} h-auto w-auto max-w-full" loading="lazy" />`
       : html`
         <img
           src=${src}
@@ -67,7 +79,7 @@ export class ChatMessage extends LitElement {
           width=${hint.width}
           height=${hint.height}
           style=${imageAspectRatioStyle(image)}
-          class=${className}
+          class="${look} h-auto w-full"
           loading="lazy"
         />
       `;
@@ -75,7 +87,8 @@ export class ChatMessage extends LitElement {
     return html`
       <button
         type="button"
-        class="group ml-auto inline-flex max-w-full cursor-zoom-in justify-end rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400 focus:ring-offset-2 focus:ring-offset-zinc-900"
+        style=${hint ? `width: ${shownImageWidth(hint)}px;` : nothing}
+        class="group ml-auto ${hint ? "block" : "inline-flex justify-end"} max-w-full cursor-zoom-in rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400 focus:ring-offset-2 focus:ring-offset-zinc-900"
         aria-label=${`Open image full screen: ${alt}`}
         title="Open image full screen"
         @click=${openImage}
@@ -109,7 +122,7 @@ export class ChatMessage extends LitElement {
         <div data-role="user-message-animation-target" class="flex max-w-[80%] flex-col items-end">
           <div data-role="message-press-target" class="flex max-w-full origin-bottom-right flex-col items-end gap-2">
             ${images.length > 0 ? html`
-              <div data-role="user-message-attachments" class="grid grid-cols-1 gap-2 justify-items-end max-w-full">
+              <div data-role="user-message-attachments" class="flex max-w-full flex-col items-end gap-2">
                 ${images.map((image) => this.renderChatImage(image))}
               </div>
             ` : nothing}

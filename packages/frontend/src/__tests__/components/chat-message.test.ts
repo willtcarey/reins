@@ -102,6 +102,9 @@ describe("ChatMessage", () => {
     expect(output).toContain("what do you see?");
     expect(output).toContain("/api/sessions/sess-attachments/attachments/att_1");
     expect(output).toContain("aspect-ratio: 640 / 480");
+    // Its width comes from its stored size, not from the image: Firefox sized the shrink-to-fit parents from
+    // the image's minimum width, 0 with a percentage max-width, and showed a speck.
+    expect(output).toContain("width: 341px");
 
     collectTemplateEventListeners(template, "click")[0]?.call(element, new Event("click"));
     expect(dispatchEvent).toHaveBeenCalledWith(expect.objectContaining({ type: "open-image-viewer" }));
