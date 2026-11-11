@@ -10,8 +10,12 @@ import type { AppState, UpgradeServer } from "./state.js";
 import { API } from "./api-paths.js";
 import { buildRouter } from "./routes/index.js";
 import { serveStatic } from "./static.js";
+import { logger } from "./logger.js";
 
 const router = buildRouter();
+
+/** Slower requests log at info, so a UI that hangs shows in the dev log whether the server was the wait. */
+const SLOW_REQUEST_MS = 300;
 
 /** Undefined once a route upgraded the request to a WebSocket (Bun answers it). */
 export async function handleFetch(
@@ -20,7 +24,22 @@ export async function handleFetch(
   server: UpgradeServer,
 ): Promise<Response | undefined> {
   const url = new URL(req.url);
+  const startedAt = performance.now();
+  let status = "threw";
+  try {
+    const response = await route(state, req, url, server);
+    status = response ? String(response.status) : "upgraded";
+    return response;
+  } finally {
+    // Until the response's headers, not its body. Path only: a query can carry tokens.
+    const durationMs = Math.round(performance.now() - startedAt);
+    const line = `${req.method} ${url.pathname} ${status} ${durationMs}ms`;
+    if (durationMs >= SLOW_REQUEST_MS) logger.info(line);
+    else logger.debug(line);
+  }
+}
 
+async function route(state: AppState, req: Request, url: URL, server: UpgradeServer): Promise<Response | undefined> {
   const response = await router.handle(req, state, server);
   if (response !== null) return response;
   if (within(url.pathname, "/api")) {
