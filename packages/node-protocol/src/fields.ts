@@ -13,11 +13,10 @@ export const STREAM_CHUNK_BYTES = 64 * 1024;
 export const MAX_STREAM_CHUNK_CHARS = 2 * STREAM_CHUNK_BYTES;
 /** A stream's ID, allocated by the server for one connection and sent in the request that opens it. */
 export const streamId = id;
-/** The tail of a process's stderr that its stream's end frame carries. */
-export const MAX_PROCESS_STDERR_CHARS = 64 * 1024;
-/** How a process ended (`process.start`): its exit code, or the signal that killed it, and its stderr. */
+/** How a process ended (`process.start`): its exit code, or the signal that killed it. Its stderr came in
+ * its stream, beside its stdout (`process-output.ts`). */
 export const processExit = z.strictObject({
-  code: z.number().int().nullable(), signal: z.string().max(32).nullable(), stderr: z.string().max(MAX_PROCESS_STDERR_CHARS),
+  code: z.number().int().nullable(), signal: z.string().max(32).nullable(),
 });
 export type ProcessExit = z.infer<typeof processExit>;
 /** The node's files and commands (`fs.*`, `pi.*`): the longest path a file operation names (longer than

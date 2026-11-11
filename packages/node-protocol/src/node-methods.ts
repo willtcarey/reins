@@ -11,7 +11,7 @@ export const MAX_PROCESS_ARGS = 1024;
 
 /** Processes on the node (`process.*`, protocol 17; node-contract.md *Processes*): every process the server
  * runs there, git's included (the server waits for those to end: `NodeDirClient.spawner`), and long-running
- * ones it writes to and reads from, as an MCP client does a stdio server. A process belongs to its stdout
+ * ones it writes to and reads from, as an MCP client does a stdio server. A process belongs to its output
  * stream: cancelling that stream, or losing the connection that carries it, stops the process; there is
  * no reattaching. Stopping is closing stdin, SIGTERM to its process group, then SIGKILL after the node's
  * grace period; when the process exits, what is left of its group is stopped too. At most
@@ -21,10 +21,11 @@ export const MAX_NODE_PROCESSES = 64;
 const environment = z.record(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/), z.string().max(65_536));
 /** `process.start`: starts `argv` (no shell) or `command` (`/bin/sh -c`) in `cwd` with `env` merged over
  * the node's environment (not kept, nor logged, on the node: values may be secrets), and opens a binary
- * stream of its stdout. `stdin: false` gives it no input (`/dev/null`), for a process the server only
- * waits for. The node answers once the process is running (`pid`); a missing `cwd` is
- * `not_found`, a program not on `PATH` `invalid_request`. The stream's end carries its exit (`exit`: code
- * or signal, and the tail of its stderr). */
+ * stream of its output: stdout and stderr as frames, in the order read (`process-output.ts`). `stdin:
+ * false` gives it no input (`/dev/null`), for a process the server only waits for. The node answers once
+ * the process is running (`pid`); a missing `cwd` is `not_found`, a program not on `PATH`
+ * `invalid_request`. The stream ends once the process has exited and both its pipes have closed, its end
+ * carrying the exit (`exit`: code or signal). */
 export const processStartParams = z.strictObject({
   cwd, streamId, processId: id,
   argv: z.array(z.string().max(65_536)).min(1).max(MAX_PROCESS_ARGS).refine(([program]) => !!program, "Missing program").optional(),
@@ -39,17 +40,10 @@ export const processStartResult = z.strictObject({ pid: z.number().int().positiv
  * stdin already closed: `invalid_request`. */
 export const processWriteParams = z.strictObject({ processId: id, data: base64Chunk.optional(), end: z.boolean().optional() });
 export const processWriteResult = z.strictObject({});
-/** `process.stop`: starts stopping the process (see above) and answers at once; its stdout stream ends
+/** `process.stop`: starts stopping the process (see above) and answers at once; its output stream ends
  * with its exit. `stopping`: whether it was still running. Unknown: `not_found`. */
 export const processStopParams = z.strictObject({ processId: id });
 export const processStopResult = z.strictObject({ stopping: z.boolean() });
-/** `process.stderr`: opens a text stream of the process's stderr: the tail the node keeps of it (the
- * last `MAX_PROCESS_STDERR_CHARS`) and then what follows, until the process exits. A stream that falls
- * behind the kept tail skips ahead to it. Unknown or exited: `not_found` (its stdout stream's exit
- * carries the tail). */
-export const processStderrParams = z.strictObject({ streamId, processId: id });
-export const processStderrResult = z.strictObject({});
-
 /** The node's files (`fs.*`, ADR-029): the file operations of Pi's `FileSystem` on the node's filesystem,
  * as Pi's local environment does them there, for the agent's tools, the server's discovery of a
  * checkout's context files and skills, and the file browser. `path` resolves against `cwd` (a source's
@@ -174,7 +168,6 @@ export const nodeMethods = {
   "process.start": { params: processStartParams, result: processStartResult, errorData: nodeError },
   "process.write": { params: processWriteParams, result: processWriteResult, errorData: nodeError },
   "process.stop": { params: processStopParams, result: processStopResult, errorData: nodeError },
-  "process.stderr": { params: processStderrParams, result: processStderrResult, errorData: nodeError },
   "fs.info": { params: fsInfoParams, result: fsInfoResult, errorData: nodeError },
   "fs.list": { params: fsListParams, result: fsListResult, errorData: nodeError },
   "fs.read": { params: fsReadParams, result: fsReadResult, errorData: nodeError },
@@ -194,7 +187,6 @@ export type ProcessStartResult = z.infer<typeof processStartResult>;
 export type ProcessWrite = NodeInput<"process.write">;
 export type ProcessStop = NodeInput<"process.stop">;
 export type ProcessStopResult = z.infer<typeof processStopResult>;
-export type ProcessStderr = NodeInput<"process.stderr">;
 export type FsInfo = NodeInput<"fs.info">;
 export type FsInfoResult = z.infer<typeof fsInfoResult>;
 export type FsList = NodeInput<"fs.list">;

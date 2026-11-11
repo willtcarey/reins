@@ -5,17 +5,19 @@
  * through the `Spawn` it is given: a source's checkout through its node (`NodeDirClient.spawner`).
  */
 
-import type { ProcessExit } from "@reins/node-protocol";
 
 export interface SpawnOptions {
   /** Added to the process's environment, not replacing it. */
   env?: Record<string, string>;
 }
 
+/** How a process ended: its exit code, or the signal that ended it, and its stderr (or the tail of it). */
+export interface SpawnExit { code: number | null; signal: string | null; stderr: string }
+
 /** Cancelling `stdout` kills the process. `exited` carries its stderr, or the tail of it. */
 export interface SpawnedProcess {
   stdout: ReadableStream<Uint8Array>;
-  exited: Promise<ProcessExit>;
+  exited: Promise<SpawnExit>;
 }
 
 /** `argv` runs without a shell. */
@@ -79,7 +81,7 @@ interface CommandOptions {
   untracked?: boolean;
 }
 
-function failure(args: string[], exit: ProcessExit): Error {
+function failure(args: string[], exit: SpawnExit): Error {
   return new Error(`git ${args[0]} failed (exit ${exit.code ?? exit.signal}): ${exit.stderr.trim()}`);
 }
 

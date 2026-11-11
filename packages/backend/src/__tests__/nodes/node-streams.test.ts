@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
-import { APPLICATION_ERROR, createRpcPeer, RpcFailure, ndjsonSocketHandler, readyResult, LOCAL_LINK, LOCAL_MAX_FRAME_BYTES, STREAM_CHUNK_BYTES, type NdjsonSocket } from "@reins/node-protocol";
+import { APPLICATION_ERROR, createRpcPeer, outputFrames, RpcFailure, ndjsonSocketHandler, readyResult, LOCAL_LINK, LOCAL_MAX_FRAME_BYTES, STREAM_CHUNK_BYTES, type NdjsonSocket } from "@reins/node-protocol";
 import { createLoopbackPair } from "@reins/node-protocol/testing";
 import type { OpenStreamSource } from "@reins/node/node";
 import { connectNode, type LinkState, type Transport } from "@reins/node/node-connection";
@@ -21,12 +21,12 @@ const until = async (done: () => boolean) => { for (let i = 0; i < 400 && !done(
 /** What a test's `process.start` asks for; the scripted node serves whatever source the test gives it. */
 const run = { cwd: "/checkout", processId: "p", argv: ["producer"] };
 
-/** The seeded node as a stand-in node over the loopback that serves streams: a text one as its
- * `process.stderr`, a binary one as its `process.start`, from the source a test opens. */
+/** The seeded node as a stand-in node over the loopback that serves streams: a text one as its `pi.exec`, a
+ * binary one as its `process.start`, from the source a test opens. */
 function streamingNode(state: TestAppState) {
   const sources: OpenStreamSource[] = [];
   const link = dialLoopback(state, scriptedNode({
-    readProcessStderr: async () => sources.shift()!,
+    piExec: async () => sources.shift()!,
     startProcess: async () => ({ result: { pid: 1 }, source: sources.shift()! }),
   }), { redial: false });
   return {
@@ -36,7 +36,7 @@ function streamingNode(state: TestAppState) {
       await link.ready();
       sources.push(source);
       const node = state.nodes.get(SEEDED_NODE_ID);
-      return binary ? node.openStream("process.start", run) : node.openStream("process.stderr", { processId: run.processId });
+      return binary ? node.openStream("process.start", run) : node.openStream("pi.exec", { cwd: run.cwd, execId: "e", command: "producer", options: {} });
     },
     /** Spawns a process (`NodeDirClient.spawner`) the node serves from `source`. */
     async spawn(source: OpenStreamSource) {
@@ -48,7 +48,7 @@ function streamingNode(state: TestAppState) {
 }
 
 /** A producer that yields `chunk` until it is stopped, recording that it was. */
-function endless(chunk = "x".repeat(1024)) {
+function endless(chunk: string | Uint8Array = "x".repeat(1024)) {
   const producer: { signal?: AbortSignal; stopped: boolean } = { stopped: false };
   const source: OpenStreamSource = async function* (signal) {
     producer.signal = signal;
@@ -109,22 +109,25 @@ test("a binary stream's body is its exact bytes, and `ended` resolves with how i
   const state = createAppState();
   const node = streamingNode(state);
   const bytes = new Uint8Array(3 * STREAM_CHUNK_BYTES).map((_, i) => (i * 7) % 256);
-  const exit = { code: 2, signal: null, stderr: "warning: something\n" };
+  const exit = { code: 2, signal: null };
   const { body, ended } = await node.open(async function* () { yield bytes; return exit; }, { binary: true });
   expect(new Uint8Array(await new Response(body).arrayBuffer())).toEqual(bytes);
   expect(await ended).toEqual(exit);
   state.nodes.close();
 });
 
-test("a spawned process's stdout and exit reach the server; cancelling stdout stops the process", async () => {
+test("a spawned process's stdout, its stderr and exit reach the server; cancelling stdout stops the process", async () => {
   const state = createAppState();
   const node = streamingNode(state);
-  const exit = { code: 1, signal: null, stderr: "fatal: bad revision\n" };
-  const finished = await node.spawn(async function* () { yield "out"; return exit; });
+  const finished = await node.spawn(async function* () {
+    yield* outputFrames("stdout", Buffer.from("out"));
+    yield* outputFrames("stderr", Buffer.from("fatal: bad revision\n"));
+    return { code: 1, signal: null };
+  });
   expect(await new Response(finished.stdout).text()).toBe("out");
-  expect(await finished.exited).toEqual(exit);
+  expect(await finished.exited).toEqual({ code: 1, signal: null, stderr: "fatal: bad revision\n" });
 
-  const { producer, source } = endless();
+  const { producer, source } = endless(outputFrames("stdout", Buffer.alloc(1024, 120))[0]);
   const running = await node.spawn(source);
   await running.stdout.cancel();
   await until(() => producer.stopped);

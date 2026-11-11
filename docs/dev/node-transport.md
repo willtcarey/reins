@@ -251,7 +251,7 @@ A frame needs no proof of which connection it belongs to: it is served by the co
 
 **Naming.** Methods are named for what is happening, not which side serves them:
 
-- Requests name the resource: `process.start`, `process.write`, `process.stop`, `process.stderr`, `fs.info`, `fs.list`, `fs.read`, `fs.write`, `fs.absolutePath`, `fs.canonicalPath`.
+- Requests name the resource: `process.start`, `process.write`, `process.stop`, `fs.info`, `fs.list`, `fs.read`, `fs.write`, `fs.absolutePath`, `fs.canonicalPath`.
 - Pi's shell commands are scoped `pi.` (Pi's `exec` as its local environment runs it, ADR-029): `pi.exec`, `pi.execAttach`, `pi.execKill`.
 - Notifications: the stream frames `stream.data`, `stream.end`, `stream.cancel`.
 - The `node.` prefix is for the node as a whole: the connection-level `node.authenticate`, `node.hello` and `node.ping`, and the command `node.reload`.
@@ -384,7 +384,7 @@ Things to notice:
 
 ## Streams
 
-A stream carries output too big or open-ended for one reply (a diff, a file, a long-running process's output) from the node to the server, mixed in with the link's other traffic. Today `process.start` opens one for a process's stdout and `process.stderr` one for its stderr, `fs.read` for a file's bytes, and `pi.exec`/`pi.execAttach` for a command's output records. `NodeDirClient.spawner` uses it so a `Git` runs on the node while the git logic stays on the server ([ADR-017](../adr/017-node-link-streams.md), [ADR-018](../adr/018-process-run-and-fs-methods.md); processes are in node-contract.md *Processes*).
+A stream carries output too big or open-ended for one reply (a diff, a file, a long-running process's output) from the node to the server, mixed in with the link's other traffic. Today `process.start` opens one for a process's output (stdout and stderr, framed), `fs.read` for a file's bytes, and `pi.exec`/`pi.execAttach` for a command's output records. `NodeDirClient.spawner` uses it so a `Git` runs on the node while the git logic stays on the server ([ADR-017](../adr/017-node-link-streams.md), [ADR-018](../adr/018-process-run-and-fs-methods.md); processes are in node-contract.md *Processes*).
 
 ### The happy path: `git ls-files`
 
@@ -426,7 +426,7 @@ How the pieces map to code:
 
 ### Opening a stream
 
-A server→node request opens a stream. Its params carry a `streamId`, and the connection that received it starts the stream under that ID and answers with the method's own result. `connectNode` does this for `process.start` (and `process.stderr`, `fs.read`, `pi.exec`): the `Node` method (`startProcess`) starts the process and returns its result and the stream's source, and the connection serves that source and answers the result. A stream started on a connection that has just closed is stopped at once, so its producer (a process) does not outlive it.
+A server→node request opens a stream. Its params carry a `streamId`, and the connection that received it starts the stream under that ID and answers with the method's own result. `connectNode` does this for `process.start` (and `fs.read`, `pi.exec`): the `Node` method (`startProcess`) starts the process and returns its result and the stream's source, and the connection serves that source and answers the result. A stream started on a connection that has just closed is stopped at once, so its producer (a process) does not outlive it.
 
 **Why the server picks the ID.** The node may start sending chunks before its reply reaches the server, and one socket read can deliver the reply and the first chunks together. If the node picked the ID and announced it in its reply, the server could receive chunks for a stream it has never heard of. So the server allocates the ID (a UUID, unique on the connection) and registers the stream before sending the request. Any chunk, whenever it arrives, has somewhere to go.
 
@@ -437,7 +437,7 @@ If the opening request is refused, or its outcome is unknown, the stream fails a
 All three are notifications, defined in the method tables.
 
 - `stream.data {streamId, offset, data, encoding?}` (node→server): the next chunk, `data` at most `MAX_STREAM_CHUNK_CHARS`. In a text stream `data` is the text itself (a JSON string). In a binary stream `encoding` is `"base64"` and `data` is base64 of raw bytes.
-- `stream.end {streamId, error?, exit?}` (node→server): the stream's last frame. `error` (at most 2048 characters) means the source failed. `exit` (`{code, signal, stderr}`, stderr's last `MAX_PROCESS_STDERR_CHARS`) is how a process stream's process ended. A non-zero exit is not a stream failure.
+- `stream.end {streamId, error?, exit?}` (node→server): the stream's last frame. `error` (at most 2048 characters) means the source failed. `exit` (`{code, signal}`) is how a process stream's process ended; its stderr came in the stream. A non-zero exit is not a stream failure.
 - `stream.cancel {streamId}` (server→node): stop the stream.
 
 **Offsets.** `offset` is where the chunk's first byte sits in the whole stream: its absolute byte offset, counting a text stream's UTF-8 bytes and a binary stream's raw bytes. The server tracks how many bytes it has received. A chunk whose offset does not match is a gap, which fails that stream (not the connection). A stream itself never resumes: offsets start at 0 in every stream. A command's output (`pi.exec`) is resumed at the method level instead: the server reopens it on a new stream from an offset into the command's own output (`pi.execAttach`, node-contract.md *Tool host*).

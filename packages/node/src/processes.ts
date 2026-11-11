@@ -1,7 +1,8 @@
 /**
  * The processes the server runs on the node (`process.*`, node-contract.md *Processes*): git, which the
  * server waits for, and long-running ones it writes to and reads from, as an MCP client does a stdio
- * server's. Each is tied to no tool call and belongs to its stdout stream: when that stream stops (cancelled, or its connection closed), the
+ * server's. Each is tied to no tool call and belongs to its output stream (stdout and stderr as frames, in
+ * the order read): when that stream stops (cancelled, or its connection closed), the
  * process is stopped. Nothing of a process outlives its connection, so there is nothing to reattach.
  *
  * Each runs in a process group of its own, so stopping it (stdin closed, SIGTERM, then SIGKILL after a grace
@@ -11,8 +12,8 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, statSync } from "node:fs";
 import {
-  MAX_NODE_PROCESSES, MAX_PROCESS_STDERR_CHARS, NodeRejection,
-  type ProcessExit, type ProcessStart, type ProcessStartResult, type ProcessStderr, type ProcessStop, type ProcessStopResult, type ProcessWrite,
+  MAX_NODE_PROCESSES, NodeRejection, outputFrames,
+  type OutputChannel, type ProcessExit, type ProcessStart, type ProcessStartResult, type ProcessStop, type ProcessStopResult, type ProcessWrite,
 } from "@reins/node-protocol";
 import type { OpenStreamSource } from "./node.js";
 
@@ -23,17 +24,13 @@ interface Running {
   child: ChildProcess;
   pid: number;
   inputClosed: boolean;
-  /** The kept tail of its stderr, and how many characters it has written in all. */
-  stderr: string;
-  stderrEnd: number;
-  stderrClosed: boolean;
-  /** Settled (and replaced) whenever its stderr grows or ends. */
-  changed: PromiseWithResolvers<void>;
   /** Its own exit, and once its stdio has closed. */
   exited: boolean;
   closed: Promise<{ code: number | null; signal: string | null }>;
   stopping: boolean;
   kill: ReturnType<typeof setTimeout> | undefined;
+  /** Nobody will read its output: what it prints from now is dropped, not queued. */
+  discard(): void;
 }
 
 export interface ProcessesOptions {
@@ -80,20 +77,27 @@ export function createProcesses({ maxProcesses = MAX_NODE_PROCESSES, stopGraceMs
       } catch (error) {
         throw new NodeRejection("invalid_request", `Cannot start ${program}: ${error instanceof Error ? error.message : String(error)}`);
       }
+      const pipes = [child.stdout!, child.stderr!];
       const running: Running = {
-        child, pid: child.pid!, inputClosed: false, stderr: "", stderrEnd: 0, stderrClosed: false, changed: Promise.withResolvers(),
+        child, pid: child.pid!, inputClosed: false,
         exited: false, closed: new Promise(resolve => child.once("close", (code, signal) => resolve({ code, signal }))), stopping: false, kill: undefined,
+        discard: () => { for (const pipe of pipes) pipe.removeAllListeners("data"); queue.length = 0; },
       };
       processes.set(processId, running);
-      const changed = () => { running.changed.resolve(); running.changed = Promise.withResolvers(); };
-      const decoder = new TextDecoder();
-      child.stderr!.on("data", (chunk: Buffer) => {
-        const text = decoder.decode(chunk, { stream: true });
-        running.stderr = (running.stderr + text).slice(-MAX_PROCESS_STDERR_CHARS);
-        running.stderrEnd += text.length;
-        changed();
-      });
-      child.stderr!.once("close", () => { running.stderrClosed = true; changed(); });
+      // Both pipes into one queue of frames, in the order they are read. Bun (1.3.9) reads a child's pipes as
+      // fast as they fill, paused or not, so the queue is not bounded here: the server fails a stream it holds
+      // too much of, which stops the process.
+      const queue: Uint8Array[] = [];
+      let open = pipes.length;
+      let wake: (() => void) | undefined;
+      const woken = () => { wake?.(); wake = undefined; };
+      const read = (channel: OutputChannel) => (chunk: Buffer) => {
+        queue.push(...outputFrames(channel, chunk));
+        woken();
+      };
+      child.stdout!.on("data", read("stdout"));
+      child.stderr!.on("data", read("stderr"));
+      for (const pipe of pipes) pipe.once("close", () => { open--; woken(); });
       // What it started may hold its stdout open after it exits: its stream ends when its group is gone.
       child.once("exit", () => {
         running.exited = true;
@@ -106,11 +110,17 @@ export function createProcesses({ maxProcesses = MAX_NODE_PROCESSES, stopGraceMs
         else signal.addEventListener("abort", stopped, { once: true });
         return (async function* () {
           try {
-            for await (const chunk of child.stdout!) yield chunk as Uint8Array; // eslint-disable-line typescript-eslint/consistent-type-assertions -- a Readable without an encoding gives Buffers
+            for (;;) {
+              const frame = queue.shift();
+              if (frame) { yield frame; continue; }
+              if (open === 0) break;
+              await new Promise<void>(resolve => { wake = resolve; });
+            }
             const { code, signal: killedBy } = await running.closed;
-            return { code, signal: killedBy, stderr: running.stderr } satisfies ProcessExit;
+            return { code, signal: killedBy } satisfies ProcessExit;
           } finally {
             signal.removeEventListener("abort", stopped);
+            running.discard();
             if (!running.exited) stopped();
             if (processes.get(processId) === running) processes.delete(processId);
           }
@@ -139,32 +149,11 @@ export function createProcesses({ maxProcesses = MAX_NODE_PROCESSES, stopGraceMs
       stop(running);
       return { stopping };
     },
-    /** `process.stderr`: the kept tail, then what follows; a reader that falls behind the tail skips ahead. */
-    stderr({ processId }: ProcessStderr): OpenStreamSource {
-      const running = live(processId);
-      return async function* (signal) {
-        const aborted = new Promise<void>(resolve => signal.addEventListener("abort", () => resolve(), { once: true }));
-        let position = running.stderrEnd - running.stderr.length;
-        for (;;) {
-          if (signal.aborted) return;
-          const start = running.stderrEnd - running.stderr.length;
-          position = Math.max(position, start);
-          if (position < running.stderrEnd) {
-            const text = running.stderr.slice(position - start);
-            position = running.stderrEnd;
-            yield text;
-            continue;
-          }
-          if (running.stderrClosed) return;
-          await Promise.race([running.changed.promise, aborted]);
-        }
-      };
-    },
     /** The node shuts down: every process is stopped, and this resolves once they have ended. */
     async close(): Promise<void> {
       const all = [...processes.values()];
       processes.clear();
-      for (const running of all) stop(running);
+      for (const running of all) { running.discard(); stop(running); }
       await Promise.all(all.map(running => running.closed));
     },
   };

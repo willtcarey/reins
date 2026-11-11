@@ -2,6 +2,7 @@ import { posix } from "node:path";
 import type { ExecutionErrorCode, FileInfo, ShellExecOptions, ShellExecResult, ShellOutputUpdate } from "@earendil-works/pi-agent-core";
 import { APPLICATION_ERROR, WRITE_CHUNK_BYTES, execRecord, nodeError, RpcFailure, type ExecRecord, type FileErrorData } from "@reins/node-protocol";
 import type { Spawn } from "../git.js";
+import { splitOutput, stderrTail } from "./process-output.js";
 import type { NodeClient } from "../state.js";
 
 /** Bounds the node's answer to a call, not the run of a command or process it accepts. */
@@ -255,10 +256,17 @@ export class NodeDirClient {
           await sleep(backoff(attempt), signal);
         }
       }
-      const exited = opened.ended.then(exit => exit ?? Promise.reject(new Error(`Process stream ended without an exit: ${argv[0]}`)));
+      const stderr = stderrTail();
+      const { stdout, done } = splitOutput(opened.body, bytes => { stderr.add(bytes); });
+      const exited = done.then(async failure => {
+        if (failure) throw failure;
+        const exit = await opened.ended;
+        if (!exit) throw new Error(`Process stream ended without an exit: ${argv[0]}`);
+        return { ...exit, stderr: stderr.text };
+      });
       // A consumer that cancels stdout need not await the exit.
       exited.catch(() => undefined);
-      return { stdout: opened.body, exited };
+      return { stdout, exited };
     };
   }
 

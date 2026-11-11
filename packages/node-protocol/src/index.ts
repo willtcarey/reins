@@ -16,13 +16,13 @@
 export {
   nodeMethods, MAX_DIRECTORY_ENTRIES, MAX_NODE_PROCESSES,
   type NodeReload,
-  type ProcessStart, type ProcessStartResult, type ProcessWrite, type ProcessStop, type ProcessStopResult, type ProcessStderr,
+  type ProcessStart, type ProcessStartResult, type ProcessWrite, type ProcessStop, type ProcessStopResult,
   type FsInfo, type FsInfoResult, type FsList, type FsListResult, type FsRead, type FsReadResult, type FsWrite, type FsWriteResult, type FsPath, type FsPathResult, type FileErrorData,
   execRecord, type PiExec, type PiExecAttach, type PiExecAttachResult, type PiExecKill, type PiExecKillResult, type ExecRecord,
 } from "./node-methods.js";
 export { serverMethods, type StreamData, type StreamEnd } from "./server-methods.js";
 export {
-  streamId, type ProcessExit, WRITE_CHUNK_BYTES, STREAM_CHUNK_BYTES, MAX_STREAM_CHUNK_CHARS, MAX_PROCESS_STDERR_CHARS,
+  streamId, type ProcessExit, WRITE_CHUNK_BYTES, STREAM_CHUNK_BYTES, MAX_STREAM_CHUNK_CHARS,
   MAX_FILE_ERROR_CHARS, MAX_EXEC_VIEW_BYTES,
 } from "./fields.js";
 export { serveMethods, methodClient, type MethodInput, type MethodCallOptions, type MethodResult, type RequestMethod, type NotificationMethod } from "./method-table.js";
@@ -35,4 +35,5 @@ export {
 } from "./rpc.js";
 export { ndjsonSocketHandler, defaultLocalNodeSocketPath, HELLO_TIMEOUT_MS, LOCAL_LINK, LOCAL_MAX_FRAME_BYTES, MAX_UNIX_SOCKET_PATH_BYTES, type NdjsonSocket, type LinkOptions } from "./local-socket.js";
 export { createWebSocketLink, nodeLinkUrl, NODE_LINK_PATH, REMOTE_LINK, REMOTE_MAX_FRAME_BYTES, type MessageStream, type WebSocketLink } from "./websocket-link.js";
+export { outputFrames, outputParser, MAX_OUTPUT_FRAME_BYTES, type OutputChannel } from "./process-output.js";
 export { APPLICATION_ERROR, nodeError, NodeRejection, type NodeError } from "./errors.js";

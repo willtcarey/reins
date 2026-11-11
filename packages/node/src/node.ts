@@ -4,7 +4,7 @@ import { join } from "node:path";
 import {
   NodeRejection, type FsInfo, type FsInfoResult, type FsList, type FsListResult, type FsPath, type FsPathResult, type FsRead, type FsReadResult, type FsWrite,
   type FsWriteResult, type NodeReload, type PiExec, type PiExecAttach, type PiExecAttachResult, type PiExecKill, type PiExecKillResult, type ProcessExit,
-  type ProcessStart, type ProcessStartResult, type ProcessStderr, type ProcessStop, type ProcessStopResult, type ProcessWrite,
+  type ProcessStart, type ProcessStartResult, type ProcessStop, type ProcessStopResult, type ProcessWrite,
 } from "@reins/node-protocol";
 import { createProcesses } from "./processes.js";
 import { createFiles, partialWrites } from "./files.js";
@@ -24,15 +24,14 @@ export type OpenStreamSource = (signal: AbortSignal) => StreamSource;
  * result. `connectNode` serves each. A definite rejection throws `NodeRejection`; any other exception is
  * sent as `internal`. */
 export interface NodeCommands {
-  /** `process.start`: starts the process and returns its pid and the source of its stdout stream (binary),
+  /** `process.start`: starts the process and returns its pid and the source of its output stream (binary:
+   * stdout and stderr as frames),
    * which the connection serves under the request's `streamId`. Stopping that source stops the process. */
   startProcess(input: ProcessStart): Promise<{ result: ProcessStartResult; source: OpenStreamSource }>;
   /** `process.write`: answered once the process's stdin has taken the bytes. */
   writeProcess(input: ProcessWrite): Promise<Record<string, never>>;
   /** `process.stop`. */
   stopProcess(input: ProcessStop): Promise<ProcessStopResult>;
-  /** `process.stderr`: the source of its stderr stream (text). */
-  readProcessStderr(input: ProcessStderr): Promise<OpenStreamSource>;
   /** `fs.info`. */
   fileInfo(input: FsInfo): Promise<FsInfoResult>;
   /** `fs.list`. */
@@ -129,7 +128,6 @@ export function startNode({ dataDir: givenDataDir, reload: reloader, execGraceMs
     async startProcess(input) { started(); return processes.start(input); },
     async writeProcess(input) { started(); return processes.write(input); },
     async stopProcess(input) { started(); return processes.stop(input); },
-    async readProcessStderr(input) { started(); return processes.stderr(input); },
     async fileInfo(input) { started(); return files.info(input); },
     async listDirectory(input) { started(); return files.list(input); },
     async readFile(input) { started(); return files.read(input); },

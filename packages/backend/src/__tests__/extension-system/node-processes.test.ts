@@ -79,7 +79,7 @@ describe("reins.nodes.spawn", () => {
 
     expect(await proc.exited).toEqual({ code: 2, signal: null });
     expect(proc.stderrTail()).toBe("starting\nbad token: abc\n");
-    expect(heard.join("")).toContain("bad token: abc\n");
+    expect(heard.join("")).toBe("starting\nbad token: abc\n");
   });
 
   test("stop ends it and what it started; the signal given stops it too", async () => {

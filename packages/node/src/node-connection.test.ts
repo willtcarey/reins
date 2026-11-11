@@ -257,8 +257,8 @@ test("a ready reply negotiates, ignoring fields this node does not know (an olde
 
 interface Frame { method: string; params: { streamId: string; offset?: number; data?: string; encoding?: string; error?: string; exit?: unknown } }
 
-/** A connected node whose server opens streams (text ones with `process.stderr`, binary ones with
- * `process.start`; the node serves the source a test gives it) and records the stream frames it receives. `hold()` makes the node's socket report unwritten bytes
+/** A connected node whose server opens streams (text ones with `pi.exec`, binary ones with `process.start`;
+ * the node serves the source a test gives it) and records the stream frames it receives. `hold()` makes the node's socket report unwritten bytes
  * until `release()`, like a socket whose kernel buffer is full. */
 async function streamingNode() {
   const frames: Frame[] = [];
@@ -267,7 +267,7 @@ async function streamingNode() {
   const server = memoryServer({ handlers: { "stream.data": record("stream.data"), "stream.end": record("stream.end") }, drained: () => held?.promise ?? Promise.resolve() });
   const sources: OpenStreamSource[] = [];
   await connected(scriptedNode({
-    readProcessStderr: async () => sources.shift()!,
+    piExec: async () => sources.shift()!,
     startProcess: async () => ({ result: { pid: 1 }, source: sources.shift()! }),
   }), server);
   return {
@@ -278,7 +278,7 @@ async function streamingNode() {
       sources.push(source);
       return binary
         ? server.call("process.start", { cwd: "/checkout", streamId, processId: streamId, argv: ["producer"] })
-        : server.call("process.stderr", { streamId, processId: streamId });
+        : server.call("pi.exec", { cwd: "/checkout", streamId, execId: streamId, command: "producer", options: {} });
     },
     ended: (streamId: string) => until(() => frames.some(frame => frame.method === "stream.end" && frame.params.streamId === streamId)),
     cancel: (streamId: string) => server.notify("stream.cancel", { streamId }),
@@ -346,7 +346,7 @@ test("stream.cancel stops the producer and nothing more is sent for the stream",
 
 test("what a source returns when it finishes (a process's exit) crosses in the stream's end frame", async () => {
   const node = await streamingNode();
-  const exit = { code: 1, signal: null, stderr: "fatal: not a git repository\n" };
+  const exit = { code: 1, signal: null };
   await node.open("s1", async function* () { yield "out"; return exit; });
   await node.ended("s1");
   expect(node.frames.at(-1)).toEqual({ method: "stream.end", params: { streamId: "s1", exit } });

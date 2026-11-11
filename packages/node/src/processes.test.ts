@@ -2,36 +2,32 @@ import { expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { outputParser } from "@reins/node-protocol";
 import { startNode, type Node } from "./node.js";
 
 const until = async (condition: () => boolean) => { for (let i = 0; i < 400 && !condition(); i++) await Bun.sleep(5); expect(condition()).toBe(true); };
 const base64 = (text: string) => Buffer.from(text).toString("base64");
 const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
 
-/** Starts a process on `node` and reads its stdout stream as the connection would: `stdout()` is what it
- * printed so far, `exit` its stream's end, `stopStream()` stops the stream (a cancel, or the link lost). */
+/** Starts a process on `node` and reads its output stream as the connection would: `stdout()` and `stderr()` are
+ * what it printed so far, `output()` both in the order they came, `exit` its stream's end, `stopStream()` stops
+ * the stream (a cancel, or the link lost). */
 async function started(node: Node, input: { argv?: string[]; command?: string; env?: Record<string, string>; cwd?: string; stdin?: boolean }) {
   const processId = crypto.randomUUID();
   const { result, source } = await node.startProcess({ cwd: input.cwd ?? tmpdir(), streamId: crypto.randomUUID(), processId, ...input });
   const stream = new AbortController();
-  let text = "";
+  const output: { channel: "stdout" | "stderr"; text: string }[] = [];
+  const parser = outputParser((channel, bytes) => output.push({ channel, text: Buffer.from(bytes).toString("utf8") }));
   const exit = (async () => {
     const iterator = source(stream.signal)[Symbol.asyncIterator]();
     for (;;) {
       const step = await iterator.next();
-      if (step.done) return step.value || undefined;
-      text += typeof step.value === "string" ? step.value : Buffer.from(step.value).toString("utf8");
+      if (step.done) { parser.end(); return step.value || undefined; }
+      parser.push(typeof step.value === "string" ? Buffer.from(step.value) : step.value);
     }
   })();
-  return { processId, pid: result.pid, exit, stdout: () => text, stopStream: () => stream.abort() };
-}
-
-/** Reads a process's stderr stream: `text()` is what it gave so far, `ended` once it ends. */
-async function stderrOf(node: Node, processId: string) {
-  const source = await node.readProcessStderr({ streamId: crypto.randomUUID(), processId });
-  let text = "";
-  const ended = (async () => { for await (const chunk of source(new AbortController().signal)) text += String(chunk); })();
-  return { text: () => text, ended };
+  const of = (channel: "stdout" | "stderr") => output.filter(part => part.channel === channel).map(part => part.text).join("");
+  return { processId, pid: result.pid, exit, stdout: () => of("stdout"), stderr: () => of("stderr"), output: () => output, stopStream: () => stream.abort() };
 }
 
 test("a process reads what the server writes to its stdin, its stdout streams back, and closing its input ends it", async () => {
@@ -42,7 +38,7 @@ test("a process reads what the server writes to its stdin, its stdout streams ba
     await until(() => cat.stdout() === "{\"jsonrpc\":\"2.0\",\"id\":1}\n");
     await node.writeProcess({ processId: cat.processId, data: base64("bye"), end: true });
 
-    expect(await cat.exit).toEqual({ code: 0, signal: null, stderr: "" });
+    expect(await cat.exit).toEqual({ code: 0, signal: null });
     expect(cat.stdout()).toBe("{\"jsonrpc\":\"2.0\",\"id\":1}\nbye");
     await expect(node.writeProcess({ processId: cat.processId, data: base64("late") })).rejects.toMatchObject({ error: { code: "not_found" } });
   } finally { await node.shutdown(); }
@@ -53,35 +49,35 @@ test("a process started without stdin reads nothing and takes no input", async (
   try {
     const reader = await started(node, { command: "cat; echo done", stdin: false });
 
-    expect(await reader.exit).toEqual({ code: 0, signal: null, stderr: "" });
+    expect(await reader.exit).toEqual({ code: 0, signal: null });
     expect(reader.stdout()).toBe("done\n");
     await expect(node.writeProcess({ processId: reader.processId, end: true })).rejects.toMatchObject({ error: { code: "not_found" } });
   } finally { await node.shutdown(); }
 });
 
-test("a shell command runs in its directory with its environment added to the node's, and its exit carries its code and the tail of its stderr", async () => {
+test("a shell command runs in its directory with its environment added to the node's, and its exit carries its code", async () => {
   const node = startNode();
   const cwd = mkdtempSync(join(tmpdir(), "reins-process-"));
   try {
     const shell = await started(node, { command: "pwd; printf '%s|%s\\n' \"$API_KEY\" \"${HOME:+home}\"; echo oops >&2; exit 3", env: { API_KEY: "it's $ecret" }, cwd });
 
-    expect(await shell.exit).toEqual({ code: 3, signal: null, stderr: "oops\n" });
+    expect(await shell.exit).toEqual({ code: 3, signal: null });
     expect(shell.stdout()).toBe(`${cwd}\nit's $ecret|home\n`);
+    expect(shell.stderr()).toBe("oops\n");
   } finally { await node.shutdown(); }
 });
 
-test("its stderr stream gives the tail kept so far, then what follows, and ends when the process exits", async () => {
+test("stdout and stderr come in one stream, in the order the node read them, which ends only once the process exited and both pipes closed", async () => {
   const node = startNode();
   try {
-    const proc = await started(node, { command: "echo starting >&2; read line; echo \"failed: $line\" >&2" });
-    await Bun.sleep(50);
-    const stderr = await stderrOf(node, proc.processId);
-    await until(() => stderr.text() === "starting\n");
+    const proc = await started(node, { command: "echo starting >&2; read line; echo \"got $line\"; echo \"failed: $line\" >&2" });
+    await until(() => proc.stderr() === "starting\n");
     await node.writeProcess({ processId: proc.processId, data: base64("no token\n") });
 
-    await stderr.ended;
-    expect(stderr.text()).toBe("starting\nfailed: no token\n");
-    expect(await proc.exit).toEqual({ code: 0, signal: null, stderr: "starting\nfailed: no token\n" });
+    expect(await proc.exit).toEqual({ code: 0, signal: null });
+    expect(proc.output()).toEqual([
+      { channel: "stderr", text: "starting\n" }, { channel: "stdout", text: "got no token\n" }, { channel: "stderr", text: "failed: no token\n" },
+    ]);
   } finally { await node.shutdown(); }
 });
 
@@ -95,8 +91,8 @@ test("stopping sends SIGTERM, then SIGKILL after the grace period to a process t
     expect(await node.stopProcess({ processId: polite.processId })).toEqual({ stopping: true });
     expect(await node.stopProcess({ processId: stubborn.processId })).toEqual({ stopping: true });
 
-    expect(await polite.exit).toEqual({ code: null, signal: "SIGTERM", stderr: "" });
-    expect(await stubborn.exit).toEqual({ code: null, signal: "SIGKILL", stderr: "" });
+    expect(await polite.exit).toEqual({ code: null, signal: "SIGTERM" });
+    expect(await stubborn.exit).toEqual({ code: null, signal: "SIGKILL" });
     await expect(node.stopProcess({ processId: polite.processId })).rejects.toMatchObject({ error: { code: "not_found" } });
   } finally { await node.shutdown(); }
 });
@@ -121,7 +117,7 @@ test("when a process exits, what is left of its group is stopped, so its stream 
   try {
     const wrapper = await started(node, { command: "sleep 100 & echo $!" });
 
-    expect(await wrapper.exit).toEqual({ code: 0, signal: null, stderr: "" });
+    expect(await wrapper.exit).toEqual({ code: 0, signal: null });
     await until(() => !alive(Number(wrapper.stdout().trim())));
   } finally { await node.shutdown(); }
 });
@@ -172,7 +168,7 @@ test("a process is refused for a missing directory, a program not on PATH, an ID
     await expect(node.startProcess({ cwd: tmpdir(), streamId: "s", processId: cat.processId, argv: ["cat"] })).rejects.toMatchObject({ error: { code: "invalid_request" } });
     await node.writeProcess({ processId: cat.processId, end: true });
     await expect(node.writeProcess({ processId: cat.processId, data: base64("x") })).rejects.toMatchObject({ error: { code: "invalid_request", message: "The process's input is closed" } });
-    for (const call of [() => node.writeProcess({ processId: "nope", end: true }), () => node.stopProcess({ processId: "nope" }), () => node.readProcessStderr({ streamId: "s", processId: "nope" })]) {
+    for (const call of [() => node.writeProcess({ processId: "nope", end: true }), () => node.stopProcess({ processId: "nope" })]) {
       await expect(call()).rejects.toMatchObject({ error: { code: "not_found", message: "Unknown process: nope" } });
     }
   } finally { await node.shutdown(); }

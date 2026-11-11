@@ -9,10 +9,11 @@
  * `MAX_PENDING_INPUT_BYTES` not yet taken by the process, stderr by the tail the node keeps.
  */
 
-import { APPLICATION_ERROR, MAX_PROCESS_STDERR_CHARS, RpcFailure, WRITE_CHUNK_BYTES, nodeError, type ProcessExit } from "@reins/node-protocol";
+import { APPLICATION_ERROR, RpcFailure, WRITE_CHUNK_BYTES, nodeError, type ProcessExit } from "@reins/node-protocol";
 import type { NodeClient } from "../state.js";
 import { logger } from "../logger.js";
 import { MAX_STREAM_BUFFER_BYTES } from "./node-streams.js";
+import { splitOutput, stderrTail } from "./process-output.js";
 
 /** Bounds the node's answer to starting a process. */
 const START_TIMEOUT_MS = 10_000;
@@ -49,7 +50,8 @@ export class NodeProcess {
   private stdoutTaken = false;
   private failure: string | undefined;
   private ended = false;
-  private stderr = "";
+  private readonly stderr = stderrTail();
+  private readonly stdout: ReadableStream<Uint8Array>;
   private readonly stderrListeners = new Set<(text: string) => void>();
   private input: Promise<void> = Promise.resolve();
   private pendingInput = 0;
@@ -59,17 +61,21 @@ export class NodeProcess {
     private readonly node: NodeClient,
     readonly id: string,
     readonly pid: number,
-    private readonly stdout: ReadableStream<Uint8Array>,
-    stdoutEnded: Promise<ProcessExit | undefined>,
+    output: ReadableStream<Uint8Array>,
+    outputEnded: Promise<ProcessExit | undefined>,
     private readonly maxLineBytes: number,
   ) {
-    this.exited = stdoutEnded.then(
-      exit => {
-        if (exit) this.stderr = exit.stderr;
+    const { stdout, done } = splitOutput(output, bytes => this.heard(bytes));
+    this.stdout = stdout;
+    // Once all its output is read: its stderr is whole by then, stdout and stderr having come in one stream.
+    this.exited = done.then(async failure => {
+      try {
+        const exit = await outputEnded;
         return { code: exit?.code ?? null, signal: exit?.signal ?? null, ...(this.failure ? { error: this.failure } : {}) };
-      },
-      (error: unknown) => ({ code: null, signal: null, error: this.failure ?? endedBy(error) }),
-    ).finally(() => { this.ended = true; });
+      } catch (error) {
+        return { code: null, signal: null, error: this.failure ?? endedBy(failure ?? error) };
+      }
+    }).finally(() => { this.ended = true; });
   }
 
   get nodeId(): string { return this.node.id; }
@@ -83,7 +89,6 @@ export class NodeProcess {
       cwd, processId: id, ...(argv ? { argv } : { command: command ?? "" }), ...(env ? { env } : {}),
     }, { timeoutMs: START_TIMEOUT_MS });
     const started = new NodeProcess(node, id, result.pid, body, ended, maxLineBytes);
-    started.readStderr();
     if (signal) {
       const stop = () => void started.stop();
       if (signal.aborted) stop();
@@ -131,8 +136,8 @@ export class NodeProcess {
     return this.queue(() => this.send({ end: true }));
   }
 
-  /** The last `MAX_PROCESS_STDERR_CHARS` of its stderr. */
-  stderrTail(): string { return this.stderr; }
+  /** The last `STDERR_TAIL_CHARS` of its stderr. */
+  stderrTail(): string { return this.stderr.text; }
 
   /** Hears its stderr as it comes, from when it is added. */
   onStderr(listener: (text: string) => void): () => void {
@@ -216,20 +221,11 @@ export class NodeProcess {
     throw new Error(this.failure);
   }
 
-  /** In the background: the node gives the tail it kept first, so nothing since the start is missed. */
-  private readStderr(): void {
-    void (async () => {
-      const { body } = await this.node.openStream("process.stderr", { processId: this.id }, { timeoutMs: START_TIMEOUT_MS });
-      const decoder = new TextDecoder();
-      for await (const chunk of body) {
-        const text = decoder.decode(chunk, { stream: true });
-        if (this.ended) continue;
-        this.stderr = (this.stderr + text).slice(-MAX_PROCESS_STDERR_CHARS);
-        for (const listener of this.stderrListeners) {
-          try { listener(text); } catch (error) { logger.warn(`A process's stderr listener threw: ${messageOf(error)}`); }
-        }
-      }
-    })().catch(() => undefined);
+  private heard(bytes: Uint8Array): void {
+    const text = this.stderr.add(bytes);
+    for (const listener of this.stderrListeners) {
+      try { listener(text); } catch (error) { logger.warn(`A process's stderr listener threw: ${messageOf(error)}`); }
+    }
   }
 }
 
