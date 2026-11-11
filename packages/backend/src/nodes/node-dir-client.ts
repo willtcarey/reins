@@ -2,6 +2,7 @@ import { posix } from "node:path";
 import type { ExecutionErrorCode, FileInfo, ShellExecOptions, ShellExecResult, ShellOutputUpdate } from "@earendil-works/pi-agent-core";
 import { APPLICATION_ERROR, WRITE_CHUNK_BYTES, execRecord, nodeError, RpcFailure, type ExecRecord, type FileErrorData } from "@reins/node-protocol";
 import type { Spawn } from "../git.js";
+import { splitOutput, stderrTail } from "./process-output.js";
 import type { NodeClient } from "../state.js";
 
 /** Bounds the node's answer to a call, not the run of a command or process it accepts. */
@@ -237,18 +238,35 @@ export class NodeDirClient {
     await send(pending, true);
   }
 
-  /** A start is resent only while it certainly did not run: a process is not safe to repeat. `signal`
-   * stops only the start; cancelling stdout kills a started process. */
+  /** Runs a process to its end (`process.start` with no stdin). A start is resent only while it certainly
+   * did not run: a process is not safe to repeat. The node's process limit is waited out, for up to
+   * `retryWindowMs` from the first refusal even when the client does not wait for its node. `signal` stops
+   * only the start; cancelling stdout stops a started process. */
   spawner({ signal }: CallOptions = {}): Spawn {
-    return async (argv, { env, binary } = {}) => {
-      const input = { cwd: this.cwd, argv, ...(env ? { env } : {}), ...(binary ? { binary } : {}) };
+    return async (argv, { env } = {}) => {
+      const start = (node: NodeClient) => node.openStream("process.start", { cwd: this.cwd, processId: crypto.randomUUID(), argv, stdin: false, ...(env ? { env } : {}) }, { signal, timeoutMs: NODE_CALL_TIMEOUT_MS });
       let opened;
-      try { opened = await this.onNode(node => node.openStream("process.run", input, { signal, timeoutMs: NODE_CALL_TIMEOUT_MS }), { signal }); }
-      catch (error) { throw signal?.aborted ? signal.reason : error; }
-      const exited = opened.ended.then(exit => exit ?? Promise.reject(new Error(`Process stream ended without an exit: ${argv[0]}`)));
+      let limitDeadline: number | undefined;
+      for (let attempt = 0; ; attempt++) {
+        try { opened = await this.onNode(start, { signal }); break; }
+        catch (error) {
+          const atLimit = refusal(error)?.code === "unavailable" && refusal(error)?.retryable === true;
+          limitDeadline ??= Date.now() + this.retryWindowMs;
+          if (!atLimit || signal?.aborted || Date.now() >= limitDeadline) throw signal?.aborted ? signal.reason : error;
+          await sleep(backoff(attempt), signal);
+        }
+      }
+      const stderr = stderrTail();
+      const { stdout, done } = splitOutput(opened.body, bytes => { stderr.add(bytes); });
+      const exited = done.then(async failure => {
+        if (failure) throw failure;
+        const exit = await opened.ended;
+        if (!exit) throw new Error(`Process stream ended without an exit: ${argv[0]}`);
+        return { ...exit, stderr: stderr.text };
+      });
       // A consumer that cancels stdout need not await the exit.
       exited.catch(() => undefined);
-      return { stdout: opened.body, exited };
+      return { stdout, exited };
     };
   }
 

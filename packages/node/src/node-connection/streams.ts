@@ -26,19 +26,24 @@ const macrotask = () => new Promise<void>(resolve => { setImmediate(resolve); })
 /** The streams one connection serves. */
 export function createStreamSender(link: StreamLink) {
   const open = new Map<string, AbortController>();
+  let closed = false;
   return {
     /** Sends `source` as stream `streamId`. Resolves once the stream ended, failed or was stopped and its
      * source finished; never rejects. Throws when `streamId` is already open on this connection. */
     serve(streamId: string, source: OpenStreamSource, { binary = false }: { binary?: boolean } = {}): Promise<void> {
       if (open.has(streamId)) throw new Error(`Stream ${streamId} is already open`);
       const controller = new AbortController();
-      open.set(streamId, controller);
+      // A stream started as its connection closes is stopped at once, so its source (a process) does not
+      // outlive the connection.
+      if (closed) controller.abort();
+      else open.set(streamId, controller);
       return pump(link, streamId, source, controller, binary).finally(() => { if (open.get(streamId) === controller) open.delete(streamId); });
     },
     /** `stream.cancel`: an unknown stream is ignored. */
     cancel(streamId: string): void { open.get(streamId)?.abort(); },
     /** The connection closed: the server failed every open stream, so stop them all. */
     close(): void {
+      closed = true;
       for (const controller of open.values()) controller.abort();
       open.clear();
     },

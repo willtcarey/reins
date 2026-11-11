@@ -96,12 +96,14 @@ const commands = [
   [methods.fsCanonicalPath, { cwd: CWD, path: "src" }, { ok: false, error: { code: "not_found", message: "missing" } }],
   [methods.nodeReload, { force: true }, { scheduled: true }],
   [methods.piExecKill, { execId: "e" }, { killed: true }],
+  [methods.processWrite, { processId: "p", data: "aGk=", end: true }, {}],
+  [methods.processStop, { processId: "p" }, { stopping: true }],
 ] as const;
 
 /** A stand-in node whose every command runs `onCall` with its params, then answers. */
 function recordingNode(onCall: (input: unknown) => void | Promise<void>) {
   return scriptedNode({
-    runProcess: async input => { await onCall(input); return async function* () { yield "out"; }; },
+    startProcess: async input => { await onCall(input); return { result: { pid: 1 }, source: async function* () { yield "out"; } }; },
     fileInfo: async input => { await onCall(input); return { ok: true, value: { name: "src", path: `${CWD}/src`, kind: "directory", size: 0, mtimeMs: 0 } }; },
     listDirectory: async input => { await onCall(input); return { ok: true, value: { path: `${CWD}/src`, entries: [] } }; },
     readFile: async input => { await onCall(input); return { result: { ok: true, value: { size: 0 } }, source: async function* () {} }; },
@@ -112,6 +114,8 @@ function recordingNode(onCall: (input: unknown) => void | Promise<void>) {
     piExec: async input => { await onCall(input); return async function* () {}; },
     piExecAttach: async input => { await onCall(input); return { result: { offset: 0 }, source: async function* () {} }; },
     piExecKill: async input => { await onCall(input); return { killed: true }; },
+    writeProcess: async input => { await onCall(input); return {}; },
+    stopProcess: async input => { await onCall(input); return { stopping: true }; },
   });
 }
 const failure = (promise: Promise<unknown>) => promise.then(() => { throw new Error("resolved"); }, (error: RpcFailure) => error);
@@ -253,8 +257,8 @@ test("a ready reply negotiates, ignoring fields this node does not know (an olde
 
 interface Frame { method: string; params: { streamId: string; offset?: number; data?: string; encoding?: string; error?: string; exit?: unknown } }
 
-/** A connected node whose server opens streams with `process.run` (the node serves the source a test gives
- * it) and records the stream frames it receives. `hold()` makes the node's socket report unwritten bytes
+/** A connected node whose server opens streams (text ones with `pi.exec`, binary ones with `process.start`;
+ * the node serves the source a test gives it) and records the stream frames it receives. `hold()` makes the node's socket report unwritten bytes
  * until `release()`, like a socket whose kernel buffer is full. */
 async function streamingNode() {
   const frames: Frame[] = [];
@@ -262,14 +266,19 @@ async function streamingNode() {
   let held: PromiseWithResolvers<void> | undefined;
   const server = memoryServer({ handlers: { "stream.data": record("stream.data"), "stream.end": record("stream.end") }, drained: () => held?.promise ?? Promise.resolve() });
   const sources: OpenStreamSource[] = [];
-  await connected(scriptedNode({ runProcess: async () => sources.shift()! }), server);
+  await connected(scriptedNode({
+    piExec: async () => sources.shift()!,
+    startProcess: async () => ({ result: { pid: 1 }, source: sources.shift()! }),
+  }), server);
   return {
     frames,
     data: () => frames.filter(frame => frame.method === "stream.data").map(frame => frame.params),
-    /** Opens stream `streamId` with `process.run`, served from `source`; resolves with the node's reply. */
+    /** Opens stream `streamId`, served from `source`; resolves with the node's reply. */
     open(streamId: string, source: OpenStreamSource, { binary = false }: { binary?: boolean } = {}) {
       sources.push(source);
-      return server.call("process.run", { cwd: "/checkout", streamId, argv: ["producer"], ...(binary ? { binary } : {}) });
+      return binary
+        ? server.call("process.start", { cwd: "/checkout", streamId, processId: streamId, argv: ["producer"] })
+        : server.call("pi.exec", { cwd: "/checkout", streamId, execId: streamId, command: "producer", options: {} });
     },
     ended: (streamId: string) => until(() => frames.some(frame => frame.method === "stream.end" && frame.params.streamId === streamId)),
     cancel: (streamId: string) => server.notify("stream.cancel", { streamId }),
@@ -337,7 +346,7 @@ test("stream.cancel stops the producer and nothing more is sent for the stream",
 
 test("what a source returns when it finishes (a process's exit) crosses in the stream's end frame", async () => {
   const node = await streamingNode();
-  const exit = { code: 1, signal: null, stderr: "fatal: not a git repository\n" };
+  const exit = { code: 1, signal: null };
   await node.open("s1", async function* () { yield "out"; return exit; });
   await node.ended("s1");
   expect(node.frames.at(-1)).toEqual({ method: "stream.end", params: { streamId: "s1", exit } });
@@ -546,4 +555,22 @@ test("a node that cannot update itself (no onUpdate) is stopped by an update as 
     await Bun.sleep(20);
     expect(clock.pending().filter(ms => ms < HELLO_TIMEOUT_MS)).toEqual([]);
   } finally { linked.stop(); }
+});
+
+const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+
+test("a process the server started stops when the connection that started it closes: nothing reattaches it", async () => {
+  const node = startNode();
+  const server = memoryServer({ handlers: { "stream.data": { params: z.any(), notify: () => {} }, "stream.end": { params: z.any(), notify: () => {} } } });
+  const linked = await connected(node, server);
+  try {
+    const { pid } = z.object({ pid: z.number() }).parse(await server.call("process.start", { cwd: "/tmp", streamId: "s1", processId: "p1", command: "sleep 100 & sleep 100" }));
+    expect(alive(pid)).toBe(true);
+
+    server.connections.at(-1)!.socket.close();
+
+    await until(() => !alive(pid));
+    await until(() => server.connections.length === 2 && linked.states.at(-1)?.state === "connected");
+    await expect(server.call("process.stop", { processId: "p1" })).rejects.toMatchObject({ data: { code: "not_found" } });
+  } finally { linked.stop(); await node.shutdown(); }
 });

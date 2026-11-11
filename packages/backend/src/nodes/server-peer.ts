@@ -72,7 +72,10 @@ export function createServerTransport(socket: WireSocket, serve: ServeNode, { ma
         }
         if (hello.minVersion > protocolVersion || hello.maxVersion < protocolVersion) {
           const offered = hello.minVersion === hello.maxVersion ? `${hello.minVersion}` : `${hello.minVersion} to ${hello.maxVersion}`;
-          const message = `No common protocol version: this server speaks ${protocolVersion}, the node ${offered}`;
+          const advice = hello.maxVersion < protocolVersion
+            ? "the node is too old: update it (a node from source: restart it on this server's code)"
+            : "the node is newer than this server: update the server";
+          const message = `No common protocol version: this server speaks ${protocolVersion}, the node ${offered}; ${advice}`;
           onNegotiationFailed?.(hello.nodeId, message);
           throw new RpcFailure(NEGOTIATION_FAILED, message);
         }

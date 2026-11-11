@@ -3,14 +3,15 @@ import { nodeMethods } from "./node-methods.js";
 import { serverMethods } from "./server-methods.js";
 
 test("the node serves its processes, files and Pi's commands: nothing of a session crosses the link (ADR-029)", () => {
-  expect(Object.keys(nodeMethods)).toEqual(["process.run", "fs.info", "fs.list", "fs.read", "fs.write", "fs.absolutePath", "fs.canonicalPath", "stream.cancel", "node.reload", "pi.exec", "pi.execAttach", "pi.execKill"]);
+  expect(Object.keys(nodeMethods)).toEqual(["process.start", "process.write", "process.stop", "fs.info", "fs.list", "fs.read", "fs.write", "fs.absolutePath", "fs.canonicalPath", "stream.cancel", "node.reload", "pi.exec", "pi.execAttach", "pi.execKill"]);
   // The node calls nothing on the server: only its streams' frames go that way.
   expect(Object.keys(serverMethods)).toEqual(["stream.data", "stream.end"]);
 });
 
 test("a call works in the path the server sends, naming no source: the node has no sources (ADR-026)", () => {
   const calls = [
-    [nodeMethods["process.run"].params, { streamId: "s1", argv: ["git", "status"] }],
+    [nodeMethods["process.start"].params, { streamId: "s1", processId: "p", argv: ["git", "status"] }],
+    [nodeMethods["process.start"].params, { streamId: "s1", processId: "p", command: "npx -y server", stdin: false }],
     [nodeMethods["fs.info"].params, { path: "." }],
     [nodeMethods["fs.list"].params, { path: "." }],
     [nodeMethods["fs.read"].params, { streamId: "s1", path: "a.txt" }],
@@ -26,4 +27,12 @@ test("a call works in the path the server sends, naming no source: the node has 
     expect(params.safeParse(input).success).toBe(false);
     expect(params.safeParse({ cwd: "", ...input }).success).toBe(false);
   }
+});
+
+test("a process is started from argv or a shell command, never both or neither", () => {
+  const start = nodeMethods["process.start"].params;
+  const base = { cwd: "/src/app", streamId: "s1", processId: "p" };
+  expect(start.safeParse({ ...base, argv: ["cat"], command: "cat" }).success).toBe(false);
+  expect(start.safeParse(base).success).toBe(false);
+  expect(start.safeParse({ ...base, argv: [""] }).success).toBe(false);
 });

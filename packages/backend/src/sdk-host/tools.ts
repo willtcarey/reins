@@ -13,6 +13,9 @@ const FiltersSchema = Type.Record(Type.String(), Type.Unknown(), {
   description: "Given to every provider as they are, e.g. { server: \"vercel\" }; each provider decides what its keys mean (the system prompt says which it takes).",
 });
 
+/** The calling session, as providers are told it; an extension calls as none. */
+const callingSession = ({ caller }: CallContext): string | null => caller.kind === "session" ? caller.session.id : null;
+
 const search = sdkMethod({
   description:
     "Find tools that extensions give (such as MCP servers' tools): the documentation, as TypeScript, of those whose " +
@@ -26,7 +29,7 @@ const search = sdkMethod({
   ],
   returns: Type.String(),
   tags: ["tools", "tool", "find", "search", "mcp", "integration", "schema"],
-  run: (context, query, options = {}) => context.models.extensions.searchTools(query, options.filters ?? {}, signalOf(context, options.signal)),
+  run: (context, query, options = {}) => context.models.extensions.searchTools(query, options.filters ?? {}, signalOf(context, options.signal), callingSession(context)),
   toScript: (groups, query) => toolSearchDocs(groups, query),
 });
 
@@ -52,7 +55,7 @@ const call = sdkMethod({
   tags: ["tools", "tool", "call", "run", "invoke", "mcp"],
   run: (context, id, args, options) => {
     const timeoutMs = options?.timeoutMs;
-    return context.models.extensions.callTool(id, args ?? {}, { signal: signalOf(context, options?.signal), ...(timeoutMs === undefined ? {} : { timeoutMs }) });
+    return context.models.extensions.callTool(id, args ?? {}, { signal: signalOf(context, options?.signal), sessionId: callingSession(context), ...(timeoutMs === undefined ? {} : { timeoutMs }) });
   },
 });
 

@@ -103,7 +103,7 @@ export interface NodeClient {
   readonly docs: NodeDocs | null;
   /** Calls a node method, e.g. `fs.list`. */
   request<M extends RequestMethod<NodeMethods>>(method: M, input: MethodInput<NodeMethods[M]>, options?: MethodCallOptions): Promise<MethodResult<NodeMethods[M]>>;
-  /** Calls a stream-opening node method, e.g. `process.run`, with the `streamId` the server allocates,
+  /** Calls a stream-opening node method, e.g. `process.start`, with the `streamId` the server allocates,
    * and returns its stream (node-transport.md *Streams*). Also rejects with the method's refusal. */
   openStream<M extends StreamMethod>(method: M, input: Omit<MethodInput<NodeMethods[M]>, "streamId">, options?: MethodCallOptions): Promise<NodeStream<MethodResult<NodeMethods[M]>>>;
 }

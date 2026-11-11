@@ -44,19 +44,21 @@ test("private loopback WS negotiates, then calls the node's commands: the protoc
   }
 });
 
-test("server transport sends nothing before negotiation, and refuses incompatible versions and a hello without its docs", async () => {
+test("server transport sends nothing before negotiation, and refuses incompatible versions, saying which side to update, and a hello without its docs", async () => {
   const sent: string[] = [];
   const peer = createServerTransport({ send: data => sent.push(data), close: () => {} }, () => {});
   await expect(peer.call("pi.execKill", { execId: "e" })).rejects.toMatchObject({ code: "unavailable", message: "Node not negotiated" });
   await expect(peer.openStream(async () => ({}))).rejects.toMatchObject({ code: "unavailable", message: "Node not negotiated" });
   const { docs: _, ...withoutDocs } = rawHelloParams("x");
-  for (const [id, params] of [[1, { ...rawHelloParams("x"), minVersion: protocolVersion + 1, maxVersion: protocolVersion + 2 }], [2, withoutDocs]] as const) {
+  const older = { ...rawHelloParams("x"), minVersion: protocolVersion - 2, maxVersion: protocolVersion - 1 };
+  for (const [id, params] of [[1, { ...rawHelloParams("x"), minVersion: protocolVersion + 1, maxVersion: protocolVersion + 2 }], [2, withoutDocs], [3, older]] as const) {
     peer.receive(JSON.stringify({ jsonrpc: "2.0", method: "node.hello", params, id }));
   }
   await Bun.sleep(0);
   expect(sent.map(frame => JSON.parse(frame))).toEqual([
-    { jsonrpc: "2.0", id: 1, error: { code: NEGOTIATION_FAILED, message: `No common protocol version: this server speaks ${protocolVersion}, the node ${protocolVersion + 1} to ${protocolVersion + 2}` } },
+    { jsonrpc: "2.0", id: 1, error: { code: NEGOTIATION_FAILED, message: `No common protocol version: this server speaks ${protocolVersion}, the node ${protocolVersion + 1} to ${protocolVersion + 2}; the node is newer than this server: update the server` } },
     { jsonrpc: "2.0", id: 2, error: { code: NEGOTIATION_FAILED, message: "Invalid negotiation: the hello did not say where the node's docs are" } },
+    { jsonrpc: "2.0", id: 3, error: { code: NEGOTIATION_FAILED, message: `No common protocol version: this server speaks ${protocolVersion}, the node ${protocolVersion - 2} to ${protocolVersion - 1}; the node is too old: update it (a node from source: restart it on this server's code)` } },
   ]);
   await expect(peer.call("pi.execKill", { execId: "e" })).rejects.toMatchObject({ code: "unavailable" });
   peer.close();

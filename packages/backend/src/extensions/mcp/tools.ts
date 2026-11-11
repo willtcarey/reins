@@ -61,10 +61,13 @@ export function mcpToolProvider(servers: McpServers, tools: Pick<Tools, "match" 
     }
   };
 
+  // The calling session (`sessionId`) is not read yet: every server is the user's, reached over HTTP from the
+  // server. A server run on a node (stdio) will be started on the session's node, and a project's own servers
+  // offered to its sessions only.
   return {
     title: "MCP servers",
 
-    async search(query, { filters, signal }) {
+    async search(query, { filters, signal, sessionId: _sessionId }) {
       if (typeof filters.server === "string") return search(filters.server, query, signal);
       const enabled = (await servers.list()).filter(server => server.enabled);
       const results = await Promise.allSettled(enabled.map(server => search(server.name, query, signal)));
@@ -77,7 +80,7 @@ export function mcpToolProvider(servers: McpServers, tools: Pick<Tools, "match" 
       return tools.match(query, found);
     },
 
-    async call(localId, args, { signal, timeoutMs }) {
+    async call(localId, args, { signal, timeoutMs, sessionId: _sessionId }) {
       const id = `${extension}${SEPARATOR}${localId}`;
       const at = localId.indexOf(SEPARATOR);
       if (at <= 0) throw new Error(`Unknown tool ${id}: an MCP tool's ID is ${extension}__<server>__<tool>`);
