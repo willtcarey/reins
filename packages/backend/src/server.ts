@@ -10,7 +10,8 @@
  * (`ServerProcess.registerApp`: the runtimes the process keeps reach this app from now on). The process's
  * first app also resumes the runs the previous process left running (`recoverRuns`). `stop` unregisters
  * it and closes the hub, listener, remote node links (each node's connection drops and it redials
- * whichever app is next), and disposes its extensions (the MCP extension closes its connections). The database is the process's: no app closes it (docs/dev/hot-reload.md).
+ * whichever app is next), and disposes its extensions (the MCP extension closes its connections), having first
+ * stopped their processes without a key and let go of the keyed ones, which run on for the next app. The database is the process's: no app closes it (docs/dev/hot-reload.md).
  */
 import type { ServerProcess, WebSocketLike } from "./state.js";
 import { handleFetch } from "./handler.js";
@@ -72,6 +73,8 @@ export async function start(serverProcess: ServerProcess, { recoverRuns = false 
     async stop() {
       unregister();
       app.stop();
+      // While the node links are open: stopping a process takes its node.
+      await state.processes.release();
       const closed = Promise.all([state.nodes.close(), state.extensions.dispose()]);
       listener.stop();
       state.nodeLinks.close();

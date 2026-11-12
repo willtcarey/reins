@@ -835,6 +835,22 @@ export const MIGRATIONS: Migration[] = [
       CHECK ((source_kind = 'path') = (path IS NOT NULL))
     )`,
   ],
+  [
+    "066_processes",
+    `CREATE TABLE processes (
+      owner TEXT NOT NULL,
+      node_id TEXT NOT NULL,
+      key TEXT NOT NULL,
+      process_id TEXT NOT NULL,
+      pid INTEGER NOT NULL,
+      command_hash TEXT NOT NULL,
+      output_offset INTEGER NOT NULL DEFAULT 0,
+      ended_json TEXT,
+      started_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+      updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+      PRIMARY KEY (owner, node_id, key)
+    )`,
+  ],
 ];
 
 /** Applies those of `migrations` (all of them by default; a test may stop earlier) not applied yet, in order. */

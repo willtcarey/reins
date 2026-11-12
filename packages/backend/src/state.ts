@@ -29,6 +29,7 @@ import { createNodeHub, type NodeHubOptions } from "./nodes/node-hub.js";
 import { createNodeLinks, type NodeLinks } from "./nodes/node-link.js";
 import type { NodeBundleDelivery } from "./node-bundle/delivery.js";
 import { Extensions, type BuiltInBackendPart } from "./extension-system/extensions.js";
+import { Processes } from "./models/processes.js";
 import { createBroadcast } from "./models/broadcast.js";
 import { BUILT_IN_EXTENSIONS } from "./extensions/built-in.js";
 import { BUILT_IN_EXTENSION_NAMES } from "./extensions/built-in-names.js";
@@ -149,6 +150,8 @@ export interface AppState {
    * the built-ins registered when the app is built, all disposed when it stops. What they registered is
    * read through its `host`. */
   extensions: Extensions;
+  /** The processes this app keeps on nodes for their owners, keyed ones across reloads (`models/processes.ts`). */
+  processes: Processes;
 }
 
 /**
@@ -316,6 +319,7 @@ export function createAppState(serverProcess: ServerProcess, nodeBundle: NodeBun
     nodes: createNodeHub(() => state, hub),
     nodeLinks: createNodeLinks((socket, options) => state.nodes.accept(socket, options)),
     nodeBundle,
+    processes: new Processes(() => state),
     extensions: new Extensions({
       app: () => state,
       reservedNamespaces: new Set(API_FUNCTIONS.map(fnNamespace)),

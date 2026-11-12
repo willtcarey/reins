@@ -1,10 +1,11 @@
 /**
  * One extension's `ServerSdk` (docs/dev/server-sdk.md). Every removal it hands out is also put in `owned`, so
- * disconnecting removes what the extension's own disposer forgot.
+ * disconnecting removes what the extension's own disposer forgot. Its processes are the host's
+ * (`extension-processes.ts`): disconnecting stops those without a key and lets go of the others.
  */
 
 import type {
-  Disposer, ImagesProvider, NodeProcess, PageHandler, ProcessOptions, PromptContribution, ScriptNamespace, SecretStorage, ServerSdk, Service, SessionSettlement, ToolProvider,
+  Disposer, ImagesProvider, PageHandler, ProcessOptions, PromptContribution, ScriptNamespace, SecretStorage, ServerSdk, Service, SessionSettlement, ToolProvider,
 } from "@reins/sdk/server";
 import type { ExtensionStorage } from "../database.js";
 import type { AppState } from "../state.js";
@@ -16,13 +17,14 @@ import { bind, type CallContext } from "../sdk-host/declaration.js";
 import { TOOLS } from "../sdk-host/tools.js";
 import { SESSIONS } from "../sdk-host/sessions.js";
 import { PROJECTS, TASKS } from "../sdk-host/projects.js";
-import { NODES, spawnProcess } from "../sdk-host/nodes.js";
+import { NODES } from "../sdk-host/nodes.js";
 import { IMAGES } from "../sdk-host/images.js";
 import { UI } from "../sdk-host/ui.js";
 import { MODELS } from "../sdk-host/models.js";
 import { REVIEWS } from "../sdk-host/reviews.js";
 import { matchTools } from "./tool-docs.js";
 import { MAX_TOOL_ID_LENGTH, TOOL_ID_SEPARATOR, pagePath, type ExtensionHost, type Removal } from "./host.js";
+import type { ExtensionProcessScope } from "./extension-processes.js";
 
 export interface ExtensionSdkOptions {
   name: string;
@@ -31,32 +33,22 @@ export interface ExtensionSdkOptions {
   app: () => AppState;
   started: () => boolean;
   owned: Disposer[];
+  /** Its processes on nodes: the host's, as some outlive the extension's connection. */
+  processes: ExtensionProcessScope;
 }
 
-export function createExtensionSdk({ name, storage: { dataDir, db }, host, app, started, owned }: ExtensionSdkOptions): ServerSdk {
+/** Each call gets the app's models of that moment, as the extension acts as no session. */
+export function extensionContext(app: () => AppState, name: string): CallContext {
+  return { models: new Models(app()), caller: { kind: "extension", name } };
+}
+
+export function createExtensionSdk({ name, storage: { dataDir, db }, host, app, started, owned, processes }: ExtensionSdkOptions): ServerSdk {
   const own = (remove: Removal): Disposer => {
     owned.push(remove);
     return remove;
   };
   const broadcast = createBroadcast(app().process);
-  // Each call gets the app's models of that moment, as the extension acts as no session.
-  const context = (): CallContext => ({ models: new Models(app()), caller: { kind: "extension", name } });
-  /** Disconnecting stops the extension's processes, one that is still starting too. */
-  const spawn = async (node: string, command: string | readonly string[], options: ProcessOptions = {}): Promise<NodeProcess> => {
-    const unloaded = new AbortController();
-    let spawned: NodeProcess | undefined;
-    const remove = own(async () => { unloaded.abort(); await spawned?.stop(); });
-    const forget = () => { const at = owned.indexOf(remove); if (at >= 0) owned.splice(at, 1); };
-    const signal = options.signal ? AbortSignal.any([options.signal, unloaded.signal]) : unloaded.signal;
-    try {
-      spawned = await spawnProcess(context(), node, command, { ...options, signal });
-    } catch (error) {
-      forget();
-      throw error;
-    }
-    void spawned.exited.then(forget);
-    return spawned;
-  };
+  const context = (): CallContext => extensionContext(app, name);
   return Object.freeze<ServerSdk>({
     name,
     dataDir,
@@ -81,7 +73,9 @@ export function createExtensionSdk({ name, storage: { dataDir, db }, host, app, 
     }),
     nodes: Object.freeze({
       ...bind(NODES.methods, context),
-      spawn: (node: string, command: string | readonly string[], options?: ProcessOptions) => spawn(node, command, options),
+      spawn: (node: string, command: string | readonly string[], options?: ProcessOptions) => processes.spawn(node, command, options),
+      processes: () => processes.processes(),
+      stop: (node: string, key: string) => processes.stop(node, key),
     }),
     ui: Object.freeze(bind(UI.methods, context)),
     models: Object.freeze(bind(MODELS.methods, context)),

@@ -8,10 +8,11 @@
 
 import { types } from "node:util";
 import { Type } from "@sinclair/typebox";
-import type { NodeProcess, ProcessOptions, ScriptNamespace } from "@reins/sdk/server";
+import type { ProcessOptions, ScriptNamespace } from "@reins/sdk/server";
 import type { NodeModel, NodeView } from "../models/node.js";
 import { FileTooLargeError } from "../models/node-host.js";
 import { MAX_LINE_BYTES } from "../nodes/node-process.js";
+import type { SpawnRequest } from "../models/processes.js";
 import { SignalSchema, sdkMethod, signalOf, type CallContext } from "./declaration.js";
 
 /** A script's own bound: an agent waits for it. */
@@ -262,23 +263,31 @@ const run = sdkMethod({
 
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
+/** The longest key a process is kept under. */
+export const MAX_PROCESS_KEY_LENGTH = 256;
+
 /**
- * `nodes.spawn`, for extensions only (server-sdk.md *Nodes*): not a `ScriptMethod`, so agents' scripts do not
- * have it. A process outlives the call that starts it, and a script's work must end with the script: a
- * session's own background processes need a lifecycle of the session's, which is not built (docs/TODO.md).
+ * The arguments of `nodes.spawn`, for extensions only (server-sdk.md *Nodes*; started and kept by
+ * `models/processes.ts`): not a `ScriptMethod`, so agents' scripts do not have it. A process
+ * outlives the call that starts it, and a script's work must end with the script: a session's own background
+ * processes need a lifecycle of the session's, which is not built (docs/TODO.md).
  */
-export async function spawnProcess(context: CallContext, node: string, command: string | readonly string[], options: ProcessOptions = {}): Promise<NodeProcess> {
+export function checkSpawn(command: string | readonly string[], options: ProcessOptions = {}): SpawnRequest {
   const blank = typeof command === "string" ? !command.trim() : !Array.isArray(command) || command.length === 0 || command.some(arg => typeof arg !== "string") || !command[0];
   if (blank) throw new Error("A command is a non-blank string or an array of strings naming a program");
-  const { cwd, env, maxLineBytes, signal } = options;
+  const { cwd, env, maxLineBytes, signal, key, ifRunning } = options;
   for (const [name, value] of Object.entries(env ?? {})) {
     if (!ENV_NAME.test(name) || typeof value !== "string") throw new Error(`Not an environment variable: ${name} (a name is [A-Za-z_][A-Za-z0-9_]*, its value a string)`);
   }
   if (maxLineBytes !== undefined && (!Number.isInteger(maxLineBytes) || maxLineBytes < 1 || maxLineBytes > MAX_LINE_BYTES)) throw new Error(`maxLineBytes must be from 1 to ${MAX_LINE_BYTES}`);
-  return namedNode(context, node).host().spawn(command, {
+  if (key !== undefined && (typeof key !== "string" || key.length === 0 || key.length > MAX_PROCESS_KEY_LENGTH)) throw new Error(`A process's key is a string of 1 to ${MAX_PROCESS_KEY_LENGTH} characters`);
+  if (ifRunning !== undefined && ifRunning !== "replace" && ifRunning !== "attach") throw new Error('ifRunning is "replace" or "attach"');
+  if (ifRunning !== undefined && key === undefined) throw new Error("ifRunning says what to do with a process kept under a key: give a key");
+  return {
+    command: typeof command === "string" ? command : [...command], ifRunning: ifRunning ?? "replace",
     ...(cwd === undefined ? {} : { cwd }), ...(env === undefined ? {} : { env: { ...env } }),
-    ...(maxLineBytes === undefined ? {} : { maxLineBytes }), ...(signal === undefined ? {} : { signal }),
-  });
+    ...(maxLineBytes === undefined ? {} : { maxLineBytes }), ...(signal === undefined ? {} : { signal }), ...(key === undefined ? {} : { key }),
+  };
 }
 
 export const NODES = {

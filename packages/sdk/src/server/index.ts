@@ -542,31 +542,63 @@ export interface ProcessOptions {
   /** Where it starts: absolute, `~/…`, or relative to the node's home (the default). */
   readonly cwd?: string;
   /** Added to the node's environment. Sent to the node only to start the process: neither kept nor logged
-   * there, so a secret may go here (never in the command's text). */
+   * there, so a secret may go here (never in the command's text). The host keeps only a keyed hash of it, with the
+   * command and `cwd`, to tell whether a process kept under a key was started the same way. */
   readonly env?: Readonly<Record<string, string>>;
   /** The longest stdout line `lines` gives, in bytes: 8 MiB by default, at most 64 MiB. */
   readonly maxLineBytes?: number;
-  /** Aborting it stops the process. Give a service's `signal`. */
+  /** Aborting it stops the process. Give a service's `signal` for a process without a key; not for one with a
+   * key you mean to attach to again after a reload (a service's signal aborts at every reload). */
   readonly signal?: AbortSignal;
+  /**
+   * Keeps the process under this key, one per extension and node (1 to 256 characters: `mcp:<server>`,
+   * `dev:<project>`): the host records it, so that it outlives a reload or a restart of the server (it is let go,
+   * not stopped) and can be attached to again (`ifRunning: "attach"`), and stops it when the extension is turned
+   * off or removed. Without a key, a reload stops the process.
+   */
+  readonly key?: string;
+  /**
+   * With a key: what to do when a process is kept under it. `"replace"` (the default) stops it (resolving once it
+   * has ended) and starts a fresh one. `"attach"` gives a handle on it, `reattached: true`, reading its output from
+   * where the extension's handles had read it to; or starts one when there is none, it has ended, or it was started
+   * with another command, `cwd` or environment (`reattached: false`). Calls with one key are taken one at a time,
+   * and an app has one handle per process: a call that finds the process an earlier call of this app started gets
+   * that call's handle (its `reattached`, `signal` and `maxLineBytes` as they were). Share it between its users.
+   */
+  readonly ifRunning?: "replace" | "attach";
 }
 
 /** How a process ended: its exit code, or the signal that ended it; `error` when it ended for another reason than
- * its own (its node's link dropped, a stdout line was too long, its stdout was not read). */
+ * its own (a stdout line was too long, its stdout was not read, its node no longer has it: it restarted, or the
+ * server stayed away past its grace period of 60 s). `detached`: it did not end, the host let go of it (the
+ * extension is being unloaded) and it runs on, for the next app to attach to by its key. */
 export interface NodeProcessExit {
   readonly code: number | null;
   readonly signal: string | null;
   readonly error?: string;
+  readonly detached?: true;
 }
 
 /**
  * A process running on a node (`Nodes.spawn`), which the server writes to and reads from, as an MCP client does a
- * stdio server. It ends when it exits, when it is stopped, when its node's link drops (the node stops it: nothing
- * reattaches, so start it again) and when its extension is unloaded.
+ * stdio server. A dropped link to its node does not end it: the server attaches to it again on the node's next link
+ * (within 60 s), reading on from where it was. It ends when it exits, when it is stopped, when its node restarts and
+ * when its extension is unloaded (one with a key is let go then, and runs on: `exited` says `detached`).
  */
 export interface NodeProcess {
   readonly id: string;
   readonly nodeId: string;
   readonly pid: number;
+  /** The key it is kept under, or null. */
+  readonly key: string | null;
+  /** The process was running before this `spawn` call (`ifRunning: "attach"`): it was not started for it. */
+  readonly reattached: boolean;
+  /** How the process kept under its key last ended, when `spawn` found it gone (its exit, or lost with its node). */
+  readonly previous?: NodeProcessExit;
+  /** Bytes of its output this handle never got: its node keeps a tail of several MiB while no server reads it (a
+   * reload, a link down). A reader of whole messages (MCP) starts again when this is not 0 after a `spawn`; a log
+   * view shows a gap. */
+  readonly lostBytes: number;
   /** Its stdout as whole lines, without their `\n` (or `\r\n`), a last line without one at the end. A line longer
    * than `maxLineBytes` stops the process and throws. Read either this or `chunks`, once, and keep reading: stdout
    * nobody reads fails the process once 64 MiB are waiting. */
@@ -582,11 +614,24 @@ export interface NodeProcess {
   stderrTail(): string;
   /** Hears its stderr as it comes. */
   onStderr(listener: (text: string) => void): Disposer;
-  /** Resolves (never rejects) when it has ended. */
+  /** Resolves (never rejects) when it has ended, or was let go (`detached`). */
   readonly exited: Promise<NodeProcessExit>;
   /** Closes its stdin, then sends SIGTERM to its process group (what it started too), and SIGKILL after a few
-   * seconds; resolves once it has ended. */
+   * seconds; resolves once it has ended. Its key's record stays, saying how it ended, until the key is used again or
+   * `Nodes.stop` forgets it. */
   stop(): Promise<NodeProcessExit>;
+}
+
+/** A process the host keeps for the extension under a key (`Nodes.processes`). */
+export interface ProcessInfo {
+  readonly key: string;
+  readonly nodeId: string;
+  readonly pid: number;
+  /** `running`: a handle of this app reads it. `detached`: none does; it runs on its node unless it ended since or
+   * its node lost it (attach to find out). `ended`: a handle saw it end (`exit`). */
+  readonly state: "running" | "detached" | "ended";
+  readonly exit?: NodeProcessExit;
+  readonly startedAt: string;
 }
 
 /** A node as `Nodes.list` gives it. */
@@ -640,10 +685,18 @@ export interface Nodes {
   /**
    * Starts a long-running process on a node: `command` as argv (no shell) or a `/bin/sh -c` command. Resolves once
    * it runs. Rejects for a blank command, an environment variable that is not `[A-Za-z_][A-Za-z0-9_]*`, an unknown,
-   * removed or disconnected node, a directory that is not there, a program not on the node's `PATH`, and a node that
-   * already runs as many processes as it may (64). Extensions only: agents' scripts do not have it.
+   * removed or disconnected node, a directory that is not there, a program not on the node's `PATH`, a node that
+   * already runs as many processes as it may (64), a key that is not 1 to 256 characters, and `ifRunning` without a
+   * key. With a key, see `ProcessOptions.key`. Extensions only: agents' scripts do not have it.
    */
   spawn(node: string, command: string | readonly string[], options?: ProcessOptions): Promise<NodeProcess>;
+  /** The processes the host keeps for the extension under a key, on every node, in key order: what an earlier app
+   * of the server left running, before any `spawn`. Extensions only. */
+  processes(): Promise<ProcessInfo[]>;
+  /** Stops the process kept under `key` on `node`, without a handle, and forgets its key; resolves once it has
+   * ended, with how it ended, or null when no process is kept under the key. On a node not connected it is only
+   * forgotten: with no server attached, its node stops it after 60 s. Extensions only. */
+  stop(node: string, key: string): Promise<NodeProcessExit | null>;
 }
 
 // ---------------------------------------------------------------------------

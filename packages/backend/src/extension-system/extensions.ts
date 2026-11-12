@@ -19,6 +19,7 @@ import { BackendFailure, startBackend, type RunningBackend } from "./backend.js"
 import { installPackage, openInstalled, openPackage, PackageFailure, removeBuilds, type ExtensionPackage } from "./package.js";
 import { ManifestError, readManifest, type Manifest } from "./manifest.js";
 import { describe, type ExtensionOrigin, type ExtensionView } from "./report.js";
+import { stopProcessesOfStoppedExtensions } from "./extension-processes.js";
 
 export interface BuiltInBackendPart extends ServerExtension { name: string }
 
@@ -98,11 +99,15 @@ export class Extensions {
     ]);
   }
 
-  /** Added ones load in the background: importing them must not hold up the app. */
+  /** Added ones load in the background: importing them must not hold up the app. Once all are in, the processes
+   * kept for extensions that did not load are stopped. */
   start(): void {
     this.registerBuiltIns();
-    this.loaded = this.loadAllAdded().catch((error: unknown) => logger.error("Loading added extensions failed:", error));
+    this.loaded = this.loadAllAdded().catch((error: unknown) => logger.error("Loading added extensions failed:", error))
+      .then(() => this.settleProcesses());
   }
+
+
 
   private registerBuiltIns(): void {
     recordBuiltInExtensions([...this.builtIns.keys()]);
@@ -158,6 +163,7 @@ export class Extensions {
       bumpExtensionGeneration(name);
       await this.unload(name);
       await this.loadAdded(this.addedRow(name), { install: true });
+      await this.settleProcesses(name);
       this.changed();
       return this.view(name);
     });
@@ -169,6 +175,7 @@ export class Extensions {
       this.addedRow(name);
       await this.unload(name);
       deleteExtensionRow(name);
+      await this.settleProcesses(name);
       await removeBuilds(this.options.buildsDir, name);
       this.changed();
     });
@@ -184,6 +191,7 @@ export class Extensions {
       const now = { ...row, enabled };
       if (isAdded(now)) await this.loadAdded(now);
       else this.startBuiltIn(now);
+      await this.settleProcesses(name);
       this.changed();
     });
   }
@@ -219,12 +227,21 @@ export class Extensions {
    * is disposed first, since it may use what earlier ones registered. */
   async dispose(): Promise<void> {
     this.disposed = true;
+    this.options.app().processes.close();
     await this.loaded;
     await this.host.stopServices();
     const records = [...this.records.values()].toReversed();
     this.records.clear();
     this.packages.clear();
     for (const record of records) await this.disposeBackend(record);
+  }
+
+  /** The processes kept for an extension (`only`, else every one) that is not loaded now are stopped. */
+  private async settleProcesses(only?: string): Promise<void> {
+    if (this.disposed) return;
+    const running = (name: string) => { const state = this.records.get(name)?.state; return state?.kind === "loaded" && state.backend !== null; };
+    await stopProcessesOfStoppedExtensions(this.options.app().processes, running, only)
+      .catch((error: unknown) => logger.error("Stopping the processes of extensions not loaded failed:", error));
   }
 
   private startBuiltIn(row: ExtensionRow): void {
