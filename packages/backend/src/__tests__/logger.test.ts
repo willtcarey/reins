@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { logger, logLevelForEnv } from "../logger.js";
+import { localIsoTime, logger, logLevelForEnv } from "../logger.js";
 
 function captureConsole(method: "log" | "warn", fn: () => void): string[] {
   const original = console[method];
@@ -44,6 +44,16 @@ describe("logger", () => {
   test("keeps warnings visible under the test runner", () => {
     const logs = captureConsole("warn", () => logger.warn("unexpected condition"));
 
-    expect(logs).toEqual(["unexpected condition"]);
+    expect(logs).toHaveLength(1);
+    expect(logs[0]).toMatch(/^\[\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}\] unexpected condition$/);
+  });
+
+  test("a line's time is the server's local time", () => {
+    const at = new Date(2026, 10, 12, 9, 5, 3, 7);
+
+    const time = localIsoTime(at);
+
+    expect(time).toBe("2026-11-12T09:05:03.007");
+    expect(new Date(time).getTime()).toBe(at.getTime());
   });
 });

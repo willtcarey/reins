@@ -36,9 +36,17 @@ function shouldLog(level: Exclude<LogLevel, "silent">): boolean {
   return LOG_LEVELS[logLevelForEnv()] >= LOG_LEVELS[level];
 }
 
+const pad = (value: number, width = 2) => String(value).padStart(width, "0");
+
+/** `at` as an ISO 8601 time in the server's local time zone, without the zone (`2026-11-12T09:05:03.007`). */
+export function localIsoTime(at: Date): string {
+  return `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())}T${pad(at.getHours())}:${pad(at.getMinutes())}:${pad(at.getSeconds())}.${pad(at.getMilliseconds(), 3)}`;
+}
+
+// Each line starts with its time, so a slow request or an error can be matched to when something happened.
 function write(level: Exclude<LogLevel, "silent">, method: ConsoleMethod, args: unknown[]): void {
   if (!shouldLog(level)) return;
-  console[method](...args);
+  console[method](`[${localIsoTime(new Date())}]`, ...args);
 }
 
 export const logger = {
