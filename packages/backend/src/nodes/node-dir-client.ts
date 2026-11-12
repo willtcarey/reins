@@ -241,10 +241,12 @@ export class NodeDirClient {
   /** Runs a process to its end (`process.start` with no stdin). A start is resent only while it certainly
    * did not run: a process is not safe to repeat. The node's process limit is waited out, for up to
    * `retryWindowMs` from the first refusal even when the client does not wait for its node. `signal` stops
-   * only the start; cancelling stdout stops a started process. */
+   * only the start; cancelling stdout stops a started process (`process.stop`: the end of its stream would
+   * leave it running for the node's grace period). */
   spawner({ signal }: CallOptions = {}): Spawn {
     return async (argv, { env } = {}) => {
-      const start = (node: NodeClient) => node.openStream("process.start", { cwd: this.cwd, processId: crypto.randomUUID(), argv, stdin: false, ...(env ? { env } : {}) }, { signal, timeoutMs: NODE_CALL_TIMEOUT_MS });
+      const processId = crypto.randomUUID();
+      const start = (node: NodeClient) => node.openStream("process.start", { cwd: this.cwd, processId, argv, stdin: false, ...(env ? { env } : {}) }, { signal, timeoutMs: NODE_CALL_TIMEOUT_MS });
       let opened;
       let limitDeadline: number | undefined;
       for (let attempt = 0; ; attempt++) {
@@ -257,7 +259,10 @@ export class NodeDirClient {
         }
       }
       const stderr = stderrTail();
-      const { stdout, done } = splitOutput(opened.body, bytes => { stderr.add(bytes); });
+      const node = this.node;
+      // Not resent: a link gone with it leaves it to the node's grace period.
+      const stop = () => { void node.request("process.stop", { processId }, { timeoutMs: NODE_CALL_TIMEOUT_MS }).catch(() => undefined); };
+      const { stdout, done } = splitOutput(opened.body, bytes => { stderr.add(bytes); }, { stop });
       const exited = done.then(async failure => {
         if (failure) throw failure;
         const exit = await opened.ended;

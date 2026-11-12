@@ -176,3 +176,4 @@ The models layer covers all route handlers and some backend domain helpers:
 - `models/uploaded-file.ts` — wraps browser `File` uploads at the HTTP/model boundary and extracts validated attachment bytes/metadata
 - `models/model-settings.ts` — thinking-level schema/parsing plus resolution of stored model settings against a Pi model runtime
 - `models/broadcast.ts` — typed broadcast abstraction over the process's browser connections (`ServerProcess.broadcast`)
+- `models/processes.ts` — `Processes` (`AppState.processes`, one per app): the processes the server keeps on nodes for an owner (any string), keyed ones recorded in `processes` (`process-store.ts`) and attached to again by the next app (ADR-039). Extensions use it through `extension-system/extension-processes.ts`

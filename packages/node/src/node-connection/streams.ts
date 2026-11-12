@@ -33,8 +33,7 @@ export function createStreamSender(link: StreamLink) {
     serve(streamId: string, source: OpenStreamSource, { binary = false }: { binary?: boolean } = {}): Promise<void> {
       if (open.has(streamId)) throw new Error(`Stream ${streamId} is already open`);
       const controller = new AbortController();
-      // A stream started as its connection closes is stopped at once, so its source (a process) does not
-      // outlive the connection.
+      // A stream started as its connection closes is stopped at once: nothing could carry it.
       if (closed) controller.abort();
       else open.set(streamId, controller);
       return pump(link, streamId, source, controller, binary).finally(() => { if (open.get(streamId) === controller) open.delete(streamId); });

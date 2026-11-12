@@ -16,7 +16,8 @@ import type { AppState, SessionSettledNotice } from "../state.js";
 import { requestOrigin } from "../nodes/node-link.js";
 import { logger } from "../logger.js";
 import { ServiceRunner, type ServiceView } from "./services.js";
-import { createExtensionSdk } from "./extension-sdk.js";
+import { createExtensionSdk, extensionContext } from "./extension-sdk.js";
+import { extensionProcesses } from "./extension-processes.js";
 
 export type RouteScope = "api" | "pages";
 
@@ -82,7 +83,8 @@ export class ExtensionHost {
   connect(name: string, storage: ExtensionStorage): ExtensionConnection {
     const owned: Removal[] = [];
     let started = false;
-    const sdk = createExtensionSdk({ name, storage, host: this, app: this.app, owned, started: () => started });
+    const processes = extensionProcesses(() => this.app().processes, name, () => extensionContext(this.app, name));
+    const sdk = createExtensionSdk({ name, storage, host: this, app: this.app, owned, processes, started: () => started });
     return {
       sdk,
       start: () => {
@@ -90,10 +92,13 @@ export class ExtensionHost {
         for (const { runner } of this.services.filter(service => service.extension === name)) runner.start();
       },
       disconnect: async (dispose) => {
+        // Its keyed processes are let go before its own code runs again, so a disposer that stops its processes
+        // stops none of them: the host stops them if it is not loaded again.
+        processes.detach();
         // Without a disposer to wait for, all goes at once (a removed service stops), so nothing it registered
         // outlives the call.
         if (!dispose) {
-          await Promise.all(owned.splice(0).map(remove => remove()));
+          await Promise.all([...owned.splice(0).map(remove => remove()), processes.unload()]);
           return;
         }
         try {
@@ -101,7 +106,7 @@ export class ExtensionHost {
           await this.stopServices(name);
           await dispose?.();
         } finally {
-          await Promise.all(owned.splice(0).map(remove => remove()));
+          await Promise.all([...owned.splice(0).map(remove => remove()), processes.unload()]);
         }
       },
     };

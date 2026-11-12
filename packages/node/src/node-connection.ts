@@ -6,7 +6,7 @@
  * On each socket it answers the server's challenge with the node's key, says hello (the protocol version,
  * its build and where its docs are), and serves each server→node method from the node's
  * command (a `NodeRejection` keeps its code on the wire; any other exception is `internal`) and the
- * streams `process.start`, `fs.read`, `pi.exec` and `pi.execAttach` open, until it closes. The
+ * streams `process.start`, `process.attach`, `fs.read`, `pi.exec` and `pi.execAttach` open, until it closes. The
  * node calls nothing on the server: only its streams' frames go that way. Across sockets it redials,
  * refuses to go on when the server refuses the node, and hands
  * an update the server asks for to `onUpdate`. The transports are adapters at its seam: `unixTransport`
@@ -79,8 +79,8 @@ const UPDATE_BACKOFF: Backoff = { initialMs: 5_000, maxMs: 300_000 };
  * backoff (100 ms doubling to 5 s) that resets once a connection negotiates. A hello the server refuses
  * (`NODE_REFUSED`: an unknown or revoked node, or failed authentication), or answers in a way this node
  * cannot read, stops it instead: it never dials again and reports `refused` with the server's reason, once.
- * A hello answered `update` (ADR-025) goes to `onUpdate`. Its shell commands outlive a connection: the
- * server picks them up again on the next (node-contract.md *Shell commands*).
+ * A hello answered `update` (ADR-025) goes to `onUpdate`. Its shell commands and processes outlive a
+ * connection: the server picks them up again on the next (node-contract.md *Shell commands*, *Processes*).
  *
  * `stop()` closes the current connection and never dials again; call it before stopping the node. `tuning`
  * is for tests.
@@ -255,7 +255,8 @@ function openConnection(node: Node, wire: LinkSocket, { nodeId, key, buildId, do
     },
   } : {};
   const commands: NodeCommands = {
-    startProcess: served(input => node.startProcess(input)), writeProcess: served(input => node.writeProcess(input)),
+    startProcess: served(input => node.startProcess(input)), attachProcess: served(input => node.attachProcess(input)),
+    writeProcess: served(input => node.writeProcess(input)),
     stopProcess: served(input => node.stopProcess(input)),
     fileInfo: served(input => node.fileInfo(input)), listDirectory: served(input => node.listDirectory(input)),
     readFile: served(input => node.readFile(input)), writeFile: served(input => node.writeFile(input)),
@@ -267,6 +268,11 @@ function openConnection(node: Node, wire: LinkSocket, { nodeId, key, buildId, do
   const peer = createRpcPeer(wire, { ...authentication, ...serveMethods(nodeMethods, {
     "process.start": async input => {
       const { result, source } = await commands.startProcess(input);
+      void streams.serve(input.streamId, source, { binary: true });
+      return result;
+    },
+    "process.attach": async input => {
+      const { result, source } = await commands.attachProcess(input);
       void streams.serve(input.streamId, source, { binary: true });
       return result;
     },
