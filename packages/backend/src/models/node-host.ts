@@ -1,7 +1,8 @@
 import { constants } from "node:os";
 import { NodeDirClient, NodeFileError, type CallOptions } from "../nodes/node-dir-client.js";
 import type { NodeHub } from "../state.js";
-import { NodeProcess, type NodeProcessSpec } from "../nodes/node-process.js";
+import { APPLICATION_ERROR, RpcFailure, nodeError } from "@reins/node-protocol";
+import { NodeProcess, type HandleOptions, type NodeProcessExit, type NodeProcessSpec } from "../nodes/node-process.js";
 
 /** A copy reads in ranges, not one stream: a node sends a stream as fast as it reads it, and the server
  * fails a stream it holds too much of (`MAX_STREAM_BUFFER_BYTES`), as a slow destination would make it. */
@@ -114,17 +115,38 @@ export class NodeHost {
   }
 
   /** A long-running process (`NodeProcess`); `cwd` resolves as `run`'s does. */
-  async spawn(command: string | readonly string[], { cwd = ".", ...spec }: Omit<NodeProcessSpec, "cwd" | "argv" | "command"> & { cwd?: string }): Promise<NodeProcess> {
-    const home = await this.home(spec.signal ? { signal: spec.signal } : {});
-    const at = await refused(home.absolutePath(cwd, spec.signal ? { signal: spec.signal } : {}), why => new Error(`Cannot find ${cwd} on "${this.node.name}": ${why}`));
+  async spawn(command: string | readonly string[], { cwd = ".", ...spec }: Omit<NodeProcessSpec, "cwd" | "argv" | "command"> & { cwd?: string }, handle: Omit<HandleOptions, "maxLineBytes" | "signal"> = {}): Promise<NodeProcess> {
+    const options = spec.signal ? { signal: spec.signal } : {};
+    const home = await this.home(options);
+    const at = await refused(home.absolutePath(cwd, options), why => new Error(`Cannot find ${cwd} on "${this.node.name}": ${why}`));
     const what = typeof command === "string" ? { command } : { argv: [...command] };
     try {
-      return await NodeProcess.start(this.hub.get(this.node.id), { ...spec, ...what, cwd: at });
+      return await NodeProcess.start(this.hub.get(this.node.id), { ...spec, ...what, cwd: at }, handle);
     } catch (error) {
       if (spec.signal?.aborted) throw error;
       const shown = typeof command === "string" ? command : command.join(" ");
       throw new Error(`Cannot start ${shown.slice(0, 100)} on "${this.node.name}": ${error instanceof Error ? error.message : String(error)}`, { cause: error });
     }
+  }
+
+  /** A process started before, from `offset` of its output; the node's refusal (`not_found`: it no longer has
+   * it) is thrown as it came. */
+  attach(processId: string, offset: number, handle: HandleOptions = {}): Promise<NodeProcess> {
+    return NodeProcess.attach(this.hub.get(this.node.id), { processId, offset }, handle);
+  }
+
+  /** Stops a process started before, without reading it; resolves once it has ended, with null when the node no
+   * longer has it. */
+  async stopProcess(processId: string): Promise<NodeProcessExit | null> {
+    let attached: NodeProcess;
+    try { attached = await this.attach(processId, 0); }
+    catch (error) {
+      if (refusalCode(error) === "not_found") return null;
+      throw error;
+    }
+    // Its output is not wanted, only its end: read and dropped, so its buffer does not fill.
+    void (async () => { for await (const _ of attached.chunks); })().catch(() => undefined);
+    return attached.stop();
   }
 
   private cannotRead(path: string, why: string): Error {
@@ -140,4 +162,9 @@ export class NodeHost {
 async function refused<T>(work: Promise<T>, refusal: (why: string) => Error): Promise<T> {
   try { return await work; }
   catch (error) { throw error instanceof NodeFileError ? refusal(error.message) : error; }
+}
+
+/** The node's refusal code, for an error that is one. */
+export function refusalCode(error: unknown): string | undefined {
+  return error instanceof RpcFailure && error.code === APPLICATION_ERROR ? nodeError.safeParse(error.data).data?.code : undefined;
 }

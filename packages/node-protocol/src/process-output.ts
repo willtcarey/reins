@@ -4,7 +4,9 @@
 
 export type OutputChannel = "stdout" | "stderr";
 const CHANNELS: Record<OutputChannel, number> = { stdout: 1, stderr: 2 };
-const HEADER_BYTES = 5;
+/** A frame's channel byte and length: offsets into a process's output count these too. */
+export const OUTPUT_FRAME_HEADER_BYTES = 5;
+const HEADER_BYTES = OUTPUT_FRAME_HEADER_BYTES;
 /** Bounds what a reader holds for one frame; a writer splits longer output. */
 export const MAX_OUTPUT_FRAME_BYTES = 1024 * 1024;
 

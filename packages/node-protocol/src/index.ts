@@ -16,7 +16,7 @@
 export {
   nodeMethods, MAX_DIRECTORY_ENTRIES, MAX_NODE_PROCESSES,
   type NodeReload,
-  type ProcessStart, type ProcessStartResult, type ProcessWrite, type ProcessStop, type ProcessStopResult,
+  type ProcessStart, type ProcessStartResult, type ProcessAttach, type ProcessAttachResult, type ProcessWrite, type ProcessStop, type ProcessStopResult,
   type FsInfo, type FsInfoResult, type FsList, type FsListResult, type FsRead, type FsReadResult, type FsWrite, type FsWriteResult, type FsPath, type FsPathResult, type FileErrorData,
   execRecord, type PiExec, type PiExecAttach, type PiExecAttachResult, type PiExecKill, type PiExecKillResult, type ExecRecord,
 } from "./node-methods.js";
@@ -35,5 +35,5 @@ export {
 } from "./rpc.js";
 export { ndjsonSocketHandler, defaultLocalNodeSocketPath, HELLO_TIMEOUT_MS, LOCAL_LINK, LOCAL_MAX_FRAME_BYTES, MAX_UNIX_SOCKET_PATH_BYTES, type NdjsonSocket, type LinkOptions } from "./local-socket.js";
 export { createWebSocketLink, nodeLinkUrl, NODE_LINK_PATH, REMOTE_LINK, REMOTE_MAX_FRAME_BYTES, type MessageStream, type WebSocketLink } from "./websocket-link.js";
-export { outputFrames, outputParser, MAX_OUTPUT_FRAME_BYTES, type OutputChannel } from "./process-output.js";
+export { outputFrames, outputParser, MAX_OUTPUT_FRAME_BYTES, OUTPUT_FRAME_HEADER_BYTES, type OutputChannel } from "./process-output.js";
 export { APPLICATION_ERROR, nodeError, NodeRejection, type NodeError } from "./errors.js";

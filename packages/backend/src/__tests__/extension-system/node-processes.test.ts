@@ -96,13 +96,34 @@ describe("reins.nodes.spawn", () => {
     expect(await signalled.exited).toEqual({ code: null, signal: "SIGTERM" });
   });
 
-  test("a process whose node link drops is stopped there, and its exit says why", async () => {
-    const proc = await reins.nodes.spawn("mini", ["sleep", "100"]);
+  test("a process whose node link drops runs on: its handle reads on from where it was on the node's next link, and its writes go through", async () => {
+    const proc = await reins.nodes.spawn("mini", ["sh", "-c", "while read line; do echo \"got $line\"; done"]);
+    const { lines } = reading(proc);
+    await proc.write("1\n");
+    await until(() => lines.length === 1);
 
     loopbackLink(state, "mini").drop();
+    await proc.write("2\n");
+    loopbackLink(state, "mini").drop();
+    await proc.write("3\n");
+    await until(() => lines.length === 3);
+    await proc.closeInput();
 
-    expect(await proc.exited).toEqual({ code: null, signal: null, error: "The node's link dropped, which stopped the process" });
-    await until(() => !alive(proc.pid));
+    expect(await proc.exited).toEqual({ code: 0, signal: null });
+    expect(lines).toEqual(["got 1", "got 2", "got 3"]);
+  });
+
+  test("a process its node no longer has (the node restarted) has ended, and its exit says it was lost", async () => {
+    const proc = await reins.nodes.spawn("mini", ["sleep", "100"]);
+    let ended = false;
+    void proc.exited.then(() => { ended = true; });
+
+    await stopLoopbackNode(state, "mini");
+    await Bun.sleep(100);
+    expect(ended).toBe(false);
+    connectLoopbackNode(state, { nodeId: "mini" });
+
+    expect(await proc.exited).toEqual({ code: null, signal: null, error: "The process is gone: its node restarted, or kept it past its grace period with no server attached" });
   });
 
   test("unloading the extension stops its processes", async () => {

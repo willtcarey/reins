@@ -1,6 +1,6 @@
 /**
- * A process's output stream on the server (`process.start`, node-contract.md *Processes*): its frames split
- * into stdout, a stream of its own, and stderr, handed on as it comes. The body is read as it arrives, so
+ * A process run to its end on the server (`process.start`, node-contract.md *Processes*; `NodeDirClient.spawner`):
+ * its output stream's frames split into stdout, a stream of its own, and stderr, handed on as it comes. The body is read as it arrives, so
  * stderr is seen and the end is known whether or not anyone reads stdout; stdout not read is held up to
  * `maxBufferedBytes`, then the output fails.
  */
@@ -18,13 +18,15 @@ export interface SplitOutput {
   done: Promise<Error | undefined>;
 }
 
-export function splitOutput(body: ReadableStream<Uint8Array>, onStderr: (bytes: Uint8Array) => void, { maxBufferedBytes = MAX_STREAM_BUFFER_BYTES } = {}): SplitOutput {
+/** `stop` stops the process: a stream's end leaves it running on its node, so cancelling stdout or failing the
+ * output calls it. */
+export function splitOutput(body: ReadableStream<Uint8Array>, onStderr: (bytes: Uint8Array) => void, { maxBufferedBytes = MAX_STREAM_BUFFER_BYTES, stop = () => {} }: { maxBufferedBytes?: number; stop?: () => void } = {}): SplitOutput {
   const reader = body.getReader();
   let cancelled = false;
   let controller!: ReadableStreamDefaultController<Uint8Array>;
   const stdout = new ReadableStream<Uint8Array>({
     start(given) { controller = given; },
-    cancel(reason) { cancelled = true; return reader.cancel(reason); },
+    cancel(reason) { cancelled = true; stop(); return reader.cancel(reason); },
   }, { highWaterMark: maxBufferedBytes, size: chunk => chunk?.byteLength ?? 0 });
   const parser = outputParser((channel, bytes) => {
     if (channel === "stderr") { onStderr(bytes); return; }
@@ -45,7 +47,7 @@ export function splitOutput(body: ReadableStream<Uint8Array>, onStderr: (bytes: 
       return undefined;
     } catch (error) {
       const failure = error instanceof Error ? error : new Error(String(error));
-      if (!cancelled) controller.error(failure);
+      if (!cancelled) { controller.error(failure); stop(); }
       await reader.cancel(failure).catch(() => undefined);
       return failure;
     }

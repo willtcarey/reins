@@ -3,7 +3,7 @@ import { nodeMethods } from "./node-methods.js";
 import { serverMethods } from "./server-methods.js";
 
 test("the node serves its processes, files and Pi's commands: nothing of a session crosses the link (ADR-029)", () => {
-  expect(Object.keys(nodeMethods)).toEqual(["process.start", "process.write", "process.stop", "fs.info", "fs.list", "fs.read", "fs.write", "fs.absolutePath", "fs.canonicalPath", "stream.cancel", "node.reload", "pi.exec", "pi.execAttach", "pi.execKill"]);
+  expect(Object.keys(nodeMethods)).toEqual(["process.start", "process.attach", "process.write", "process.stop", "fs.info", "fs.list", "fs.read", "fs.write", "fs.absolutePath", "fs.canonicalPath", "stream.cancel", "node.reload", "pi.exec", "pi.execAttach", "pi.execKill"]);
   // The node calls nothing on the server: only its streams' frames go that way.
   expect(Object.keys(serverMethods)).toEqual(["stream.data", "stream.end"]);
 });
@@ -35,4 +35,11 @@ test("a process is started from argv or a shell command, never both or neither",
   expect(start.safeParse({ ...base, argv: ["cat"], command: "cat" }).success).toBe(false);
   expect(start.safeParse(base).success).toBe(false);
   expect(start.safeParse({ ...base, argv: [""] }).success).toBe(false);
+});
+
+test("a write to a process's stdin says where its bytes go, so one sent again is recognised; an attach says where to read from", () => {
+  expect(nodeMethods["process.write"].params.safeParse({ processId: "p", offset: 0, data: "eA==" }).success).toBe(true);
+  expect(nodeMethods["process.write"].params.safeParse({ processId: "p", data: "eA==" }).success).toBe(false);
+  expect(nodeMethods["process.attach"].params.safeParse({ streamId: "s2", processId: "p", offset: 1024 }).success).toBe(true);
+  expect(nodeMethods["process.attach"].params.safeParse({ streamId: "s2", processId: "p" }).success).toBe(false);
 });

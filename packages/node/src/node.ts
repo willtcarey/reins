@@ -4,7 +4,7 @@ import { join } from "node:path";
 import {
   NodeRejection, type FsInfo, type FsInfoResult, type FsList, type FsListResult, type FsPath, type FsPathResult, type FsRead, type FsReadResult, type FsWrite,
   type FsWriteResult, type NodeReload, type PiExec, type PiExecAttach, type PiExecAttachResult, type PiExecKill, type PiExecKillResult, type ProcessExit,
-  type ProcessStart, type ProcessStartResult, type ProcessStop, type ProcessStopResult, type ProcessWrite,
+  type ProcessAttach, type ProcessAttachResult, type ProcessStart, type ProcessStartResult, type ProcessStop, type ProcessStopResult, type ProcessWrite,
 } from "@reins/node-protocol";
 import { createProcesses } from "./processes.js";
 import { createFiles, partialWrites } from "./files.js";
@@ -16,7 +16,7 @@ import { createPiExec } from "./pi-exec.js";
  * iteration returns, if anything, is the stream's `exit` (a process stream). */
 export type StreamSource = AsyncIterable<string | Uint8Array, ProcessExit | void>;
 /** Starts a stream's source. `signal` aborts when the stream is cancelled or its connection closes:
- * stop the producer then (e.g. kill its process). The connection also finishes the iteration (`return()`:
+ * stop producing for it then (a file read stops; a command's or process's output is kept for an attach). The connection also finishes the iteration (`return()`:
  * a generator runs its `finally`, a `ReadableStream` is cancelled). See node-transport.md *Streams*. */
 export type OpenStreamSource = (signal: AbortSignal) => StreamSource;
 
@@ -25,9 +25,11 @@ export type OpenStreamSource = (signal: AbortSignal) => StreamSource;
  * sent as `internal`. */
 export interface NodeCommands {
   /** `process.start`: starts the process and returns its pid and the source of its output stream (binary:
-   * stdout and stderr as frames),
-   * which the connection serves under the request's `streamId`. Stopping that source stops the process. */
+   * stdout and stderr as frames), which the connection serves under the request's `streamId`. Stopping that
+   * source leaves the process running, for an attach within the grace period. */
   startProcess(input: ProcessStart): Promise<{ result: ProcessStartResult; source: OpenStreamSource }>;
+  /** `process.attach`: where its output stream starts again, what was lost, and the source of it (binary). */
+  attachProcess(input: ProcessAttach): Promise<{ result: ProcessAttachResult; source: OpenStreamSource }>;
   /** `process.write`: answered once the process's stdin has taken the bytes. */
   writeProcess(input: ProcessWrite): Promise<Record<string, never>>;
   /** `process.stop`. */
@@ -58,7 +60,7 @@ export interface NodeCommands {
  * One node (ADR-029): a process, file and command host for the sources on its machine. Each command is its own method,
  * taking and returning its wire params/result (`connectNode` serves them as-is). A definite rejection
  * throws `NodeRejection` (`invalid_request`; `not_found`; `unavailable`, retryable); any other exception
- * is a node failure, sent as `internal`. It holds nothing durable: only the shell commands it runs.
+ * is a node failure, sent as `internal`. It holds nothing durable: only the shell commands and processes it runs.
  */
 export interface Node extends NodeCommands {
   /**
@@ -93,6 +95,12 @@ export interface NodeOptions {
   /** How much of a command's output the node keeps for a server picking it up again: `EXEC_TAIL_BYTES`
    * by default. */
   execTailBytes?: number;
+  /** How long a process (`process.start`) with no stream open runs on before it is stopped: `PROCESS_GRACE_MS`
+   * by default. */
+  processGraceMs?: number;
+  /** How much of a process's output the node keeps for a server attaching again: `PROCESS_TAIL_BYTES` by
+   * default. */
+  processTailBytes?: number;
   /** How many processes (`process.start`) may run at once: `MAX_NODE_PROCESSES` by default. */
   maxProcesses?: number;
   /** How long a stopped process has between SIGTERM and SIGKILL: `PROCESS_STOP_GRACE_MS` by default. */
@@ -109,14 +117,17 @@ export const RELOAD_DRAIN_TIMEOUT_MS = 60_000;
 const PAUSE_POLL_MS = 10;
 
 /** Starts a node. Every call is a new node. Takes no in-process server dependency. */
-export function startNode({ dataDir: givenDataDir, reload: reloader, execGraceMs, execTailBytes, maxProcesses, processStopGraceMs }: NodeOptions = {}): Node {
+export function startNode({ dataDir: givenDataDir, reload: reloader, execGraceMs, execTailBytes, maxProcesses, processStopGraceMs, processGraceMs, processTailBytes }: NodeOptions = {}): Node {
   const dataDir = givenDataDir ?? mkdtempSync(join(tmpdir(), "reins-node-"));
   const partials = partialWrites(dataDir);
   // Writes a previous run of the node left unfinished.
   partials.clear();
   const files = createFiles(partials);
   const host = createPiExec({ graceMs: execGraceMs, tailBytes: execTailBytes });
-  const processes = createProcesses({ ...(maxProcesses === undefined ? {} : { maxProcesses }), ...(processStopGraceMs === undefined ? {} : { stopGraceMs: processStopGraceMs }) });
+  const processes = createProcesses({
+    ...(maxProcesses === undefined ? {} : { maxProcesses }), ...(processStopGraceMs === undefined ? {} : { stopGraceMs: processStopGraceMs }),
+    ...(processGraceMs === undefined ? {} : { graceMs: processGraceMs }), ...(processTailBytes === undefined ? {} : { tailBytes: processTailBytes }),
+  });
   let running = true;
   // While the node pauses (a reload or shutdown), new shell commands are refused.
   let pausing = false;
@@ -126,6 +137,7 @@ export function startNode({ dataDir: givenDataDir, reload: reloader, execGraceMs
     // Not refused while the node pauses, unlike a shell command: a pause does not wait for processes,
     // and a reload stops them.
     async startProcess(input) { started(); return processes.start(input); },
+    async attachProcess(input) { started(); return processes.attach(input); },
     async writeProcess(input) { started(); return processes.write(input); },
     async stopProcess(input) { started(); return processes.stop(input); },
     async fileInfo(input) { started(); return files.info(input); },

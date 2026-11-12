@@ -3,44 +3,57 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { outputParser } from "@reins/node-protocol";
-import { startNode, type Node } from "./node.js";
+import { startNode, type Node, type OpenStreamSource } from "./node.js";
 
 const until = async (condition: () => boolean) => { for (let i = 0; i < 400 && !condition(); i++) await Bun.sleep(5); expect(condition()).toBe(true); };
 const base64 = (text: string) => Buffer.from(text).toString("base64");
 const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
 
-/** Starts a process on `node` and reads its output stream as the connection would: `stdout()` and `stderr()` are
- * what it printed so far, `output()` both in the order they came, `exit` its stream's end, `stopStream()` stops
- * the stream (a cancel, or the link lost). */
-async function started(node: Node, input: { argv?: string[]; command?: string; env?: Record<string, string>; cwd?: string; stdin?: boolean }) {
-  const processId = crypto.randomUUID();
-  const { result, source } = await node.startProcess({ cwd: input.cwd ?? tmpdir(), streamId: crypto.randomUUID(), processId, ...input });
+/** Reads a process's output stream as the connection would: `stdout()` and `stderr()` are what it printed so
+ * far, `output()` both in the order they came, `bytes()` how many bytes of frames came, `exit` its stream's end
+ * (rejecting when the stream failed), `stopStream()` stops the stream (a cancel, or the link lost). */
+function reading(source: OpenStreamSource) {
   const stream = new AbortController();
   const output: { channel: "stdout" | "stderr"; text: string }[] = [];
-  const parser = outputParser((channel, bytes) => output.push({ channel, text: Buffer.from(bytes).toString("utf8") }));
+  let bytes = 0;
+  const parser = outputParser((channel, data) => output.push({ channel, text: Buffer.from(data).toString("utf8") }));
   const exit = (async () => {
     const iterator = source(stream.signal)[Symbol.asyncIterator]();
     for (;;) {
       const step = await iterator.next();
       if (step.done) { parser.end(); return step.value || undefined; }
-      parser.push(typeof step.value === "string" ? Buffer.from(step.value) : step.value);
+      const chunk = typeof step.value === "string" ? Buffer.from(step.value) : step.value;
+      bytes += chunk.byteLength;
+      parser.push(chunk);
     }
   })();
+  exit.catch(() => undefined);
   const of = (channel: "stdout" | "stderr") => output.filter(part => part.channel === channel).map(part => part.text).join("");
-  return { processId, pid: result.pid, exit, stdout: () => of("stdout"), stderr: () => of("stderr"), output: () => output, stopStream: () => stream.abort() };
+  return { exit, stdout: () => of("stdout"), stderr: () => of("stderr"), output: () => output, bytes: () => bytes, stopStream: () => stream.abort() };
 }
+
+/** Starts a process on `node` and reads its output stream (`reading`). */
+async function started(node: Node, input: { argv?: string[]; command?: string; env?: Record<string, string>; cwd?: string; stdin?: boolean }) {
+  const processId = crypto.randomUUID();
+  const { result, source } = await node.startProcess({ cwd: input.cwd ?? tmpdir(), streamId: crypto.randomUUID(), processId, ...input });
+  return { processId, pid: result.pid, ...reading(source) };
+}
+
+/** Writes `text` to a process's stdin at `offset`. */
+const write = (node: Node, processId: string, offset: number, text: string, end?: boolean) =>
+  node.writeProcess({ processId, offset, data: base64(text), ...(end ? { end } : {}) });
 
 test("a process reads what the server writes to its stdin, its stdout streams back, and closing its input ends it", async () => {
   const node = startNode();
   try {
     const cat = await started(node, { argv: ["cat"] });
-    await node.writeProcess({ processId: cat.processId, data: base64("{\"jsonrpc\":\"2.0\",\"id\":1}\n") });
+    await write(node, cat.processId, 0, "{\"jsonrpc\":\"2.0\",\"id\":1}\n");
     await until(() => cat.stdout() === "{\"jsonrpc\":\"2.0\",\"id\":1}\n");
-    await node.writeProcess({ processId: cat.processId, data: base64("bye"), end: true });
+    await write(node, cat.processId, 25, "bye", true);
 
     expect(await cat.exit).toEqual({ code: 0, signal: null });
     expect(cat.stdout()).toBe("{\"jsonrpc\":\"2.0\",\"id\":1}\nbye");
-    await expect(node.writeProcess({ processId: cat.processId, data: base64("late") })).rejects.toMatchObject({ error: { code: "not_found" } });
+    await expect(write(node, cat.processId, 28, "late")).rejects.toMatchObject({ error: { code: "not_found" } });
   } finally { await node.shutdown(); }
 });
 
@@ -51,7 +64,7 @@ test("a process started without stdin reads nothing and takes no input", async (
 
     expect(await reader.exit).toEqual({ code: 0, signal: null });
     expect(reader.stdout()).toBe("done\n");
-    await expect(node.writeProcess({ processId: reader.processId, end: true })).rejects.toMatchObject({ error: { code: "not_found" } });
+    await expect(node.writeProcess({ processId: reader.processId, offset: 0, end: true })).rejects.toMatchObject({ error: { code: "not_found" } });
   } finally { await node.shutdown(); }
 });
 
@@ -72,7 +85,7 @@ test("stdout and stderr come in one stream, in the order the node read them, whi
   try {
     const proc = await started(node, { command: "echo starting >&2; read line; echo \"got $line\"; echo \"failed: $line\" >&2" });
     await until(() => proc.stderr() === "starting\n");
-    await node.writeProcess({ processId: proc.processId, data: base64("no token\n") });
+    await write(node, proc.processId, 0, "no token\n");
 
     expect(await proc.exit).toEqual({ code: 0, signal: null });
     expect(proc.output()).toEqual([
@@ -122,14 +135,80 @@ test("when a process exits, what is left of its group is stopped, so its stream 
   } finally { await node.shutdown(); }
 });
 
-test("a process belongs to its stdout stream: stopping the stream (a cancel, or its connection lost) stops the process", async () => {
+test("a process outlives its stream: attaching again from an offset gets its output from there, and stops the stream still open", async () => {
   const node = startNode();
   try {
-    const proc = await started(node, { argv: ["sleep", "100"] });
+    const proc = await started(node, { command: "echo one; read go; echo two >&2; read go; echo three" });
+    await until(() => proc.stdout() === "one\n");
+    const taken = proc.bytes();
     proc.stopStream();
+    await write(node, proc.processId, 0, "go\n");
+    await Bun.sleep(50);
+
+    const { result, source } = await node.attachProcess({ streamId: "s2", processId: proc.processId, offset: taken });
+    const again = reading(source);
+    await until(() => again.stderr() === "two\n");
+    const { source: third } = await node.attachProcess({ streamId: "s3", processId: proc.processId, offset: taken });
+    const last = reading(third);
+    await write(node, proc.processId, 3, "go\n");
+
+    expect(result).toEqual({ pid: proc.pid, offset: taken, lost: 0, input: 3 });
+    expect(await last.exit).toEqual({ code: 0, signal: null });
+    expect(last.output()).toEqual([{ channel: "stderr", text: "two\n" }, { channel: "stdout", text: "three\n" }]);
+    await expect(again.exit).rejects.toThrow("Another stream attached to this output");
+    // Its exit is kept for the grace period, for a server that missed it.
+    const { result: afterExit, source: ended } = await node.attachProcess({ streamId: "s4", processId: proc.processId, offset: taken });
+    expect(afterExit.lost).toBeGreaterThan(0);
+    expect(await reading(ended).exit).toEqual({ code: 0, signal: null });
+  } finally { await node.shutdown(); }
+});
+
+test("output older than the kept tail is gone: attaching from before it starts at the oldest frame kept, saying how many bytes were lost", async () => {
+  const node = startNode({ processTailBytes: 1024 });
+  try {
+    const proc = await started(node, { command: "for i in 1 2 3 4 5 6; do head -c 400 /dev/zero | tr '\\0' $i; sleep 0.02; done; read go" });
+    proc.stopStream();
+    await Bun.sleep(300);
+
+    const { result, source } = await node.attachProcess({ streamId: "s2", processId: proc.processId, offset: 0 });
+    const resumed = reading(source);
+    await until(() => resumed.stdout().endsWith("6".repeat(400)));
+
+    expect(result.lost).toBe(result.offset);
+    expect(result.lost).toBeGreaterThanOrEqual(3 * 405);
+    expect(resumed.stdout().startsWith("1")).toBe(false);
+    expect(resumed.bytes()).toBeLessThanOrEqual(1024 + 405);
+    await expect(node.attachProcess({ streamId: "s3", processId: proc.processId, offset: result.offset + 1 })).rejects.toMatchObject({ error: { code: "invalid_request" } });
+  } finally { await node.shutdown(); }
+});
+
+test("a process nobody attaches to within the grace period is stopped and forgotten", async () => {
+  const node = startNode({ processGraceMs: 100 });
+  try {
+    const proc = await started(node, { command: "sleep 100 & sleep 100" });
+    proc.stopStream();
+    await Bun.sleep(30);
+    expect(alive(proc.pid)).toBe(true);
 
     await until(() => !alive(proc.pid));
-    await expect(node.writeProcess({ processId: proc.processId, data: base64("x") })).rejects.toMatchObject({ error: { code: "not_found" } });
+    await Bun.sleep(50);
+    await expect(node.attachProcess({ streamId: "s2", processId: proc.processId, offset: 0 })).rejects.toMatchObject({ error: { code: "not_found" } });
+  } finally { await node.shutdown(); }
+});
+
+test("a write sent again at its offset is not taken twice; one past what the process was given is refused", async () => {
+  const node = startNode();
+  try {
+    const cat = await started(node, { argv: ["cat"] });
+    await write(node, cat.processId, 0, "abc");
+    await write(node, cat.processId, 0, "abc");
+    await write(node, cat.processId, 1, "bcde");
+    await expect(write(node, cat.processId, 9, "x")).rejects.toMatchObject({ error: { code: "invalid_request" } });
+    await node.writeProcess({ processId: cat.processId, offset: 5, end: true });
+    await node.writeProcess({ processId: cat.processId, offset: 5, end: true });
+
+    expect(await cat.exit).toEqual({ code: 0, signal: null });
+    expect(cat.stdout()).toBe("abcde");
   } finally { await node.shutdown(); }
 });
 
@@ -138,10 +217,10 @@ test("a write is answered once the process has taken its bytes, so one that does
   try {
     const slow = await started(node, { command: "sleep 0.3; cat > /dev/null" });
     const written = Date.now();
-    await node.writeProcess({ processId: slow.processId, data: Buffer.alloc(512 * 1024, 120).toString("base64") });
+    await node.writeProcess({ processId: slow.processId, offset: 0, data: Buffer.alloc(512 * 1024, 120).toString("base64") });
 
     expect(Date.now() - written).toBeGreaterThanOrEqual(250);
-    await node.writeProcess({ processId: slow.processId, end: true });
+    await node.writeProcess({ processId: slow.processId, offset: 512 * 1024, end: true });
     expect(await slow.exit).toMatchObject({ code: 0 });
   } finally { await node.shutdown(); }
 });
@@ -166,9 +245,9 @@ test("a process is refused for a missing directory, a program not on PATH, an ID
     await expect(started(node, { argv: ["no-such-program-reins"] })).rejects.toMatchObject({ error: { code: "invalid_request", message: "Program not found: no-such-program-reins" } });
     const cat = await started(node, { argv: ["cat"] });
     await expect(node.startProcess({ cwd: tmpdir(), streamId: "s", processId: cat.processId, argv: ["cat"] })).rejects.toMatchObject({ error: { code: "invalid_request" } });
-    await node.writeProcess({ processId: cat.processId, end: true });
-    await expect(node.writeProcess({ processId: cat.processId, data: base64("x") })).rejects.toMatchObject({ error: { code: "invalid_request", message: "The process's input is closed" } });
-    for (const call of [() => node.writeProcess({ processId: "nope", end: true }), () => node.stopProcess({ processId: "nope" })]) {
+    await node.writeProcess({ processId: cat.processId, offset: 0, end: true });
+    await expect(write(node, cat.processId, 0, "x")).rejects.toMatchObject({ error: { code: "invalid_request", message: "The process's input is closed" } });
+    for (const call of [() => node.writeProcess({ processId: "nope", offset: 0, end: true }), () => node.stopProcess({ processId: "nope" }), () => node.attachProcess({ streamId: "s", processId: "nope", offset: 0 })]) {
       await expect(call()).rejects.toMatchObject({ error: { code: "not_found", message: "Unknown process: nope" } });
     }
   } finally { await node.shutdown(); }

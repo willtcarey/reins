@@ -96,7 +96,7 @@ const commands = [
   [methods.fsCanonicalPath, { cwd: CWD, path: "src" }, { ok: false, error: { code: "not_found", message: "missing" } }],
   [methods.nodeReload, { force: true }, { scheduled: true }],
   [methods.piExecKill, { execId: "e" }, { killed: true }],
-  [methods.processWrite, { processId: "p", data: "aGk=", end: true }, {}],
+  [methods.processWrite, { processId: "p", offset: 0, data: "aGk=", end: true }, {}],
   [methods.processStop, { processId: "p" }, { stopping: true }],
 ] as const;
 
@@ -104,6 +104,7 @@ const commands = [
 function recordingNode(onCall: (input: unknown) => void | Promise<void>) {
   return scriptedNode({
     startProcess: async input => { await onCall(input); return { result: { pid: 1 }, source: async function* () { yield "out"; } }; },
+    attachProcess: async input => { await onCall(input); return { result: { pid: 1, offset: 0, lost: 0, input: 0 }, source: async function* () {} }; },
     fileInfo: async input => { await onCall(input); return { ok: true, value: { name: "src", path: `${CWD}/src`, kind: "directory", size: 0, mtimeMs: 0 } }; },
     listDirectory: async input => { await onCall(input); return { ok: true, value: { path: `${CWD}/src`, entries: [] } }; },
     readFile: async input => { await onCall(input); return { result: { ok: true, value: { size: 0 } }, source: async function* () {} }; },
@@ -559,18 +560,29 @@ test("a node that cannot update itself (no onUpdate) is stopped by an update as 
 
 const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
 
-test("a process the server started stops when the connection that started it closes: nothing reattaches it", async () => {
+test("a process the server started runs on when its connection closes, and the server attaches to it on the next from where it was", async () => {
+  const chunks: { streamId: string; data: string }[] = [];
+  const ends: { streamId: string; exit?: unknown }[] = [];
   const node = startNode();
-  const server = memoryServer({ handlers: { "stream.data": { params: z.any(), notify: () => {} }, "stream.end": { params: z.any(), notify: () => {} } } });
+  const server = memoryServer({ handlers: {
+    "stream.data": { params: z.any(), notify: (chunk: unknown) => { chunks.push(z.object({ streamId: z.string(), data: z.string() }).parse(chunk)); } },
+    "stream.end": { params: z.any(), notify: (end: unknown) => { ends.push(z.object({ streamId: z.string(), exit: z.unknown() }).parse(end)); } },
+  } });
   const linked = await connected(node, server);
+  const output = (streamId: string) => Buffer.concat(chunks.filter(chunk => chunk.streamId === streamId).map(chunk => Buffer.from(chunk.data, "base64")));
   try {
-    const { pid } = z.object({ pid: z.number() }).parse(await server.call("process.start", { cwd: "/tmp", streamId: "s1", processId: "p1", command: "sleep 100 & sleep 100" }));
-    expect(alive(pid)).toBe(true);
+    const { pid } = z.object({ pid: z.number() }).parse(await server.call("process.start", { cwd: "/tmp", streamId: "s1", processId: "p1", command: "echo before; read go; echo after" }));
+    await until(() => output("s1").byteLength > 0);
+    const taken = output("s1").byteLength;
 
     server.connections.at(-1)!.socket.close();
-
-    await until(() => !alive(pid));
     await until(() => server.connections.length === 2 && linked.states.at(-1)?.state === "connected");
-    await expect(server.call("process.stop", { processId: "p1" })).rejects.toMatchObject({ data: { code: "not_found" } });
+    expect(alive(pid)).toBe(true);
+    expect(await server.call("process.attach", { streamId: "s2", processId: "p1", offset: taken })).toEqual({ pid, offset: taken, lost: 0, input: 0 });
+    await server.call("process.write", { processId: "p1", offset: 0, data: Buffer.from("go\n").toString("base64") });
+
+    await until(() => ends.some(end => end.streamId === "s2"));
+    expect(output("s2").subarray(5).toString()).toBe("after\n");
+    expect(ends).toEqual([{ streamId: "s2", exit: { code: 0, signal: null } }]);
   } finally { linked.stop(); await node.shutdown(); }
 });

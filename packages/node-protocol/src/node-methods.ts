@@ -9,14 +9,16 @@ import type { MethodInput, MethodTable } from "./method-table.js";
 
 export const MAX_PROCESS_ARGS = 1024;
 
-/** Processes on the node (`process.*`, protocol 17; node-contract.md *Processes*): every process the server
- * runs there, git's included (the server waits for those to end: `NodeDirClient.spawner`), and long-running
- * ones it writes to and reads from, as an MCP client does a stdio server. A process belongs to its output
- * stream: cancelling that stream, or losing the connection that carries it, stops the process; there is
- * no reattaching. Stopping is closing stdin, SIGTERM to its process group, then SIGKILL after the node's
- * grace period; when the process exits, what is left of its group is stopped too. At most
- * `MAX_NODE_PROCESSES` run at once on a node: one more is refused `unavailable`, retryable (it did not
- * start). */
+/** Processes on the node (`process.*`, protocol 17; attaching, protocol 18; node-contract.md *Processes*):
+ * every process the server runs there, git's included (the server waits for those to end:
+ * `NodeDirClient.spawner`), and long-running ones it writes to and reads from, as an MCP client does a stdio
+ * server. A process outlives its output stream: when the stream stops (cancelled, its connection lost, or
+ * another stream attached) it runs on with no stream for the node's grace period, keeping a bounded tail of
+ * its output, and `process.attach` opens a new stream from an offset; no attach within the grace period
+ * stops it. Only `process.stop` stops it at once. Stopping is closing stdin, SIGTERM to its process group,
+ * then SIGKILL after the node's stop grace period; when the process exits, what is left of its group is
+ * stopped too. At most `MAX_NODE_PROCESSES` run at once on a node: one more is refused `unavailable`,
+ * retryable (it did not start). */
 export const MAX_NODE_PROCESSES = 64;
 const environment = z.record(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/), z.string().max(65_536));
 /** `process.start`: starts `argv` (no shell) or `command` (`/bin/sh -c`) in `cwd` with `env` merged over
@@ -34,11 +36,25 @@ export const processStartParams = z.strictObject({
   stdin: z.boolean().optional(),
 }).refine(({ argv, command }) => (argv === undefined) !== (command === undefined), "Exactly one of argv and command");
 export const processStartResult = z.strictObject({ pid: z.number().int().positive() });
-/** `process.write`: writes `data` (base64, at most `WRITE_CHUNK_BYTES`) to the process's stdin, then
- * closes it when `end`. Answered once the bytes are in the pipe, so a process that does not read its
- * input holds the answer up: send the next write after the answer. Unknown or exited: `not_found`;
- * stdin already closed: `invalid_request`. */
-export const processWriteParams = z.strictObject({ processId: id, data: base64Chunk.optional(), end: z.boolean().optional() });
+/** `process.attach`: reopens a process's output stream on this connection from `offset`, a frame boundary of
+ * its output (the bytes of the frames, from 0 at its start; the server's count of what it took), stopping any
+ * stream still open for it. The node keeps only the tail of the frames: from an older offset the stream starts
+ * at the oldest frame kept, and `lost` says how many bytes were not kept (0 otherwise). `offset` is where the
+ * stream starts. `input` is how many bytes its stdin was given: where a new attacher's writes start (`process.write`'s
+ * `offset`). The stream ends as `process.start`'s does, with the exit; a process that has exited is still
+ * attached to for the grace period. An offset past its output or not at a frame boundary is
+ * `invalid_request`; an unknown process (the node restarted, or forgot it after the grace period)
+ * `not_found`. */
+export const processAttachParams = z.strictObject({ streamId, processId: id, offset: z.number().int().nonnegative() });
+export const processAttachResult = z.strictObject({ pid: z.number().int().positive(), offset: z.number().int().nonnegative(), lost: z.number().int().nonnegative(), input: z.number().int().nonnegative() });
+/** `process.write`: writes `data` (base64, at most `WRITE_CHUNK_BYTES`) to the process's stdin at `offset`
+ * (the bytes written to it before these), then closes it when `end`. Answered once the bytes are in the
+ * pipe, so a process that does not read its input holds the answer up: send the next write after the
+ * answer. A write sent again (its answer lost with a link) is not taken twice: bytes before what the
+ * process has been given are skipped, and the answer waits for those to be taken. An offset past what it
+ * was given is `invalid_request`. Unknown or exited: `not_found`; stdin closed (or never opened), with bytes
+ * to write: `invalid_request`. */
+export const processWriteParams = z.strictObject({ processId: id, offset: z.number().int().nonnegative(), data: base64Chunk.optional(), end: z.boolean().optional() });
 export const processWriteResult = z.strictObject({});
 /** `process.stop`: starts stopping the process (see above) and answers at once; its output stream ends
  * with its exit. `stopping`: whether it was still running. Unknown: `not_found`. */
@@ -152,7 +168,7 @@ export const piExecKillResult = z.strictObject({ killed: z.boolean() });
 
 /** `stream.cancel`: the server no longer wants a stream it opened on this connection (its consumer
  * cancelled, or it failed on the server). The node stops the stream's source and sends nothing more for
- * it; an unknown stream is ignored. */
+ * it; an unknown stream is ignored. A process's stream stops without the process (see `process.*`). */
 export const streamCancelParams = z.strictObject({ streamId });
 
 /** `node.reload`: restart the node on its current code at a clean point (ADR-021). The node refuses when
@@ -166,6 +182,7 @@ export const nodeReloadResult = z.strictObject({ scheduled: z.literal(true) });
  * `NodeError` as `data`. The server bounds each call itself (its caller's timeout). */
 export const nodeMethods = {
   "process.start": { params: processStartParams, result: processStartResult, errorData: nodeError },
+  "process.attach": { params: processAttachParams, result: processAttachResult, errorData: nodeError },
   "process.write": { params: processWriteParams, result: processWriteResult, errorData: nodeError },
   "process.stop": { params: processStopParams, result: processStopResult, errorData: nodeError },
   "fs.info": { params: fsInfoParams, result: fsInfoResult, errorData: nodeError },
@@ -184,6 +201,8 @@ export const nodeMethods = {
 type NodeInput<M extends keyof typeof nodeMethods> = MethodInput<(typeof nodeMethods)[M]>;
 export type ProcessStart = NodeInput<"process.start">;
 export type ProcessStartResult = z.infer<typeof processStartResult>;
+export type ProcessAttach = NodeInput<"process.attach">;
+export type ProcessAttachResult = z.infer<typeof processAttachResult>;
 export type ProcessWrite = NodeInput<"process.write">;
 export type ProcessStop = NodeInput<"process.stop">;
 export type ProcessStopResult = z.infer<typeof processStopResult>;
