@@ -35,12 +35,14 @@
 import { LitElement, html, nothing, type TemplateResult } from "lit";
 import { customElement, property, query } from "lit/decorators.js";
 
-/** `sm`: 24rem (forms, confirmations); `md`: 28rem. Both leave a 1rem margin on a phone. */
-export type DialogWidth = "sm" | "md";
+/** `sm`: 24rem (forms, confirmations); `md`: 28rem; `lg`: 36rem (long forms: commands, paths, rows of fields). Each
+ * leaves a 1rem margin on a phone. */
+export type DialogWidth = "sm" | "md" | "lg";
 
 const PANEL_WIDTHS: Record<DialogWidth, string> = {
   sm: "max-w-96",
   md: "max-w-[28rem]",
+  lg: "max-w-[36rem]",
 };
 
 export type DialogButtonVariant = "cancel" | "primary" | "destructive";
