@@ -108,6 +108,16 @@ describe("StreamingTelemetry", () => {
     });
   });
 
+  test("sends no window in which nothing streamed and no long task happened", () => {
+    const { telemetry, records, timers } = harness();
+
+    telemetry.socketEvent({ receivedAt: 0, handledMs: 1, latencyMs: 10, bytes: 100 });
+    telemetry.panelRendered(2);
+    timers[0]!();
+
+    expect(records).toEqual([]);
+  });
+
   test("does no work when telemetry is disabled", () => {
     const { telemetry, records, timers, paints } = harness(false);
     telemetry.frameNotified({ streamIds: new Set(["stream-1"]), events: 1, firstReceivedAt: 0 });

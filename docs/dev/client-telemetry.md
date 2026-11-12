@@ -73,7 +73,7 @@ The known `DiffHunksRenderer.processDiffResult` null-line assertion is classifie
 
 ## Live streaming capture
 
-The `streaming` scope measures the cost of live assistant output (`message_update` / `tool_execution_update`). Per-token work is aggregated in memory by `models/streaming-telemetry.ts` and exported as at most one `streaming` / `window` event per second while something is streaming, never one event per token. Nothing is recorded, and no timers run, when telemetry is disabled.
+The `streaming` scope measures the cost of live assistant output (`message_update` / `tool_execution_update`). Per-token work is aggregated in memory by `models/streaming-telemetry.ts` and exported as at most one `streaming` / `window` event per second while something is streaming, never one event per token. A window with no streamed frame and no long task is not sent: socket messages and renders open one too, and without a frame it says nothing about streaming. Nothing is recorded, and no timers run, when telemetry is disabled.
 
 ```bash
 jq -c 'select(.scope == "streaming") | .attributes' /tmp/reins-client-telemetry.jsonl*

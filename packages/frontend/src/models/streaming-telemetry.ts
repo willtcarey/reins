@@ -154,6 +154,9 @@ export class StreamingTelemetry {
   }
 
   private export(window: StreamingWindow, durationMs: number): void {
+    // Socket messages and renders open a window too; without a streamed frame or a long task, it says nothing
+    // about streaming, and most windows were such (once a second per open browser).
+    if (window.frames === 0 && window.longTaskMs.count === 0) return;
     const streamIds = [...window.streamIds];
     this.recorder.record("streaming", "window", {
       windowMs: roundMs(durationMs),
