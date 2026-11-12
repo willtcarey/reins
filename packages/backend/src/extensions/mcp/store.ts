@@ -14,38 +14,64 @@ const NOW = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')";
 export const McpAuthKindSchema = Type.Union([Type.Literal("oauth"), Type.Literal("header"), Type.Literal("none")]);
 export type McpAuthKind = Static<typeof McpAuthKindSchema>;
 /** How Reins reaches a server: `http`, streamable HTTP (the current MCP transport); `sse`, the legacy HTTP+SSE
- * transport of servers from before it. */
-export const McpTransportKindSchema = Type.Union([Type.Literal("http"), Type.Literal("sse")]);
+ * transport of servers from before it; `stdio`, a command run on the calling session's node. */
+export const McpTransportKindSchema = Type.Union([Type.Literal("http"), Type.Literal("sse"), Type.Literal("stdio")]);
 export type McpTransportKind = Static<typeof McpTransportKindSchema>;
-/** What is kept encrypted for a server: the header's value, a pre-registered client's secret, and its
- * OAuth state (`McpOAuthProvider`): the registered client, tokens, discovery, and a sign-in's PKCE
- * verifier and the client it registered, until it completes. */
+/** The transports of a remote server, reached at a URL. */
+export const McpRemoteTransportSchema = Type.Union([Type.Literal("http"), Type.Literal("sse")]);
+export type McpRemoteTransport = Static<typeof McpRemoteTransportSchema>;
+/** What is kept encrypted for a server: the header's value, a pre-registered client's secret, its
+ * OAuth state (`McpOAuthProvider`: the registered client, tokens, discovery, and a sign-in's PKCE
+ * verifier and the client it registered, until it completes), and a stdio server's environment (`env`, a JSON object). */
 const MCP_SECRET_KINDS = [
-  "header_value", "client_secret", "client_information", "tokens", "discovery", "code_verifier", "sign_in_client_information",
+  "header_value", "client_secret", "client_information", "tokens", "discovery", "code_verifier", "sign_in_client_information", "env",
 ] as const;
 export type McpSecretKind = typeof MCP_SECRET_KINDS[number];
 
-/** What the user configures. */
-export interface McpServerFields {
+/** What the user configures of any server. */
+interface McpCommonFields {
   name: string;
   /** Given to agents in their system prompt: what the server is for and how to use it. */
   instructions: string;
+  enabled: boolean;
+}
+
+/** A remote server: reached at its URL, with its auth kind's fields (the others null). */
+export interface McpRemoteFields extends McpCommonFields {
+  transport: McpRemoteTransport;
   url: string;
-  transport: McpTransportKind;
   authKind: McpAuthKind;
   headerName: string | null;
   oauthClientId: string | null;
   oauthScope: string | null;
-  enabled: boolean;
 }
 
-export interface McpServerRow extends McpServerFields {
+/** A stdio server: a program run for each calling session, in its checkout. Its environment is a secret (`env`). */
+export interface McpStdioFields extends McpCommonFields {
+  transport: "stdio";
+  command: string;
+  args: string[];
+  /** Where it starts: null, the checkout; relative, inside it; absolute or `~/…`, as it is. */
+  cwd: string | null;
+}
+
+/** What the user configures: a remote server or a stdio one, told apart by `transport`. */
+export type McpServerFields = McpRemoteFields | McpStdioFields;
+
+interface McpRowFields {
   id: number;
-  /** The callback URL its signed-in client was registered for, set when a sign-in completes. */
-  oauthRedirectUrl: string | null;
   createdAt: string;
   updatedAt: string;
 }
+
+export interface McpRemoteRow extends McpRemoteFields, McpRowFields {
+  /** The callback URL its signed-in client was registered for, set when a sign-in completes. */
+  oauthRedirectUrl: string | null;
+}
+
+export interface McpStdioRow extends McpStdioFields, McpRowFields {}
+
+export type McpServerRow = McpRemoteRow | McpStdioRow;
 
 export interface McpSignIn {
   serverId: number;
@@ -54,8 +80,11 @@ export interface McpSignIn {
   ageSeconds: number;
 }
 
+/** A stdio server's tool list as it last listed it, on the node it ran on. */
+export interface McpToolList { nodeId: string; tools: string; listedAt: string }
+
 interface RawRow {
-  id: number; name: string; instructions: string; url: string; transport: McpTransportKind; auth_kind: McpAuthKind;
+  id: number; name: string; instructions: string; url: string; transport: McpTransportKind; command: string | null; args: string; cwd: string | null; auth_kind: McpAuthKind;
   header_name: string | null; oauth_client_id: string | null; oauth_scope: string | null; enabled: number;
   oauth_redirect_url: string | null; created_at: string; updated_at: string;
 }
@@ -64,19 +93,36 @@ interface RawRow {
 const secretPrefix = (id: number) => `servers/${id}/`;
 const secretKey = (id: number, kind: McpSecretKind) => `${secretPrefix(id)}${kind}`;
 
-const COLUMNS = "id, name, instructions, url, transport, auth_kind, header_name, oauth_client_id, oauth_scope, enabled, oauth_redirect_url, created_at, updated_at";
+const COLUMNS = "id, name, instructions, url, transport, command, args, cwd, auth_kind, header_name, oauth_client_id, oauth_scope, enabled, oauth_redirect_url, created_at, updated_at";
 
+// The table is flat: a kind's columns are empty for the other kind (a stdio server's `url` "", its `auth_kind`
+// "none"). Only `toRow` and `fieldValues` know it.
 function toRow(raw: RawRow): McpServerRow {
+  const common = { id: raw.id, name: raw.name, instructions: raw.instructions, enabled: raw.enabled === 1, createdAt: raw.created_at, updatedAt: raw.updated_at };
+  if (raw.transport === "stdio") {
+    return { ...common, transport: "stdio", command: raw.command ?? "", args: parseArgs(raw.args), cwd: raw.cwd };
+  }
   return {
-    id: raw.id, name: raw.name, instructions: raw.instructions, url: raw.url, transport: raw.transport, authKind: raw.auth_kind,
-    headerName: raw.header_name, oauthClientId: raw.oauth_client_id, oauthScope: raw.oauth_scope, enabled: raw.enabled === 1,
-    oauthRedirectUrl: raw.oauth_redirect_url, createdAt: raw.created_at, updatedAt: raw.updated_at,
+    ...common, transport: raw.transport, url: raw.url, authKind: raw.auth_kind, headerName: raw.header_name,
+    oauthClientId: raw.oauth_client_id, oauthScope: raw.oauth_scope, oauthRedirectUrl: raw.oauth_redirect_url,
   };
 }
 
-type FieldValues = [string, string, string, McpTransportKind, McpAuthKind, string | null, string | null, string | null, number];
+function parseArgs(json: string): string[] {
+  const args: string[] = JSON.parse(json);
+  return args;
+}
+
+type FieldValues = [string, string, string, McpTransportKind, string | null, string, string | null, McpAuthKind, string | null, string | null, string | null, number];
 function fieldValues(fields: McpServerFields): FieldValues {
-  return [fields.name, fields.instructions, fields.url, fields.transport, fields.authKind, fields.headerName, fields.oauthClientId, fields.oauthScope, fields.enabled ? 1 : 0];
+  const enabled = fields.enabled ? 1 : 0;
+  if (fields.transport === "stdio") {
+    return [fields.name, fields.instructions, "", "stdio", fields.command, JSON.stringify(fields.args), fields.cwd, "none", null, null, null, enabled];
+  }
+  return [
+    fields.name, fields.instructions, fields.url, fields.transport, null, "[]", null,
+    fields.authKind, fields.headerName, fields.oauthClientId, fields.oauthScope, enabled,
+  ];
 }
 
 export class McpStore {
@@ -100,15 +146,15 @@ export class McpStore {
   /** Throws a UNIQUE constraint error when the name is taken. */
   insert(fields: McpServerFields): McpServerRow {
     return toRow(this.db.query<RawRow, FieldValues>(
-      `INSERT INTO mcp_servers (name, instructions, url, transport, auth_kind, header_name, oauth_client_id, oauth_scope, enabled, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ${NOW}, ${NOW}) RETURNING ${COLUMNS}`,
+      `INSERT INTO mcp_servers (name, instructions, url, transport, command, args, cwd, auth_kind, header_name, oauth_client_id, oauth_scope, enabled, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ${NOW}, ${NOW}) RETURNING ${COLUMNS}`,
     ).get(...fieldValues(fields))!);
   }
 
   /** Throws a UNIQUE constraint error when the name is taken by another server. */
   update(id: number, fields: McpServerFields): McpServerRow | null {
     const raw = this.db.query<RawRow, [...FieldValues, number]>(
-      `UPDATE mcp_servers SET name = ?, instructions = ?, url = ?, transport = ?, auth_kind = ?, header_name = ?,
+      `UPDATE mcp_servers SET name = ?, instructions = ?, url = ?, transport = ?, command = ?, args = ?, cwd = ?, auth_kind = ?, header_name = ?,
          oauth_client_id = ?, oauth_scope = ?, enabled = ?, updated_at = ${NOW}
        WHERE id = ? RETURNING ${COLUMNS}`,
     ).get(...fieldValues(fields), id);
@@ -118,7 +164,26 @@ export class McpStore {
   /** Deletes its secrets, then it: stopped between the two, it stays without them rather than they without it. */
   async delete(id: number): Promise<boolean> {
     for (const key of await this.secrets.keys(secretPrefix(id))) await this.secrets.delete(key);
+    this.deleteToolLists(id);
     return this.db.query("DELETE FROM mcp_servers WHERE id = ?").run(id).changes > 0;
+  }
+
+  /** A stdio server's tool lists, by the node it listed them on, the latest first. */
+  toolLists(id: number): McpToolList[] {
+    return this.db.query<McpToolList, [number]>(
+      "SELECT node_id AS nodeId, tools, listed_at AS listedAt FROM mcp_tool_lists WHERE server_id = ? ORDER BY listed_at DESC, node_id",
+    ).all(id);
+  }
+
+  setToolList(id: number, nodeId: string, tools: string): void {
+    this.db.query(
+      `INSERT INTO mcp_tool_lists (server_id, node_id, tools, listed_at) VALUES (?, ?, ?, ${NOW})
+       ON CONFLICT (server_id, node_id) DO UPDATE SET tools = excluded.tools, listed_at = excluded.listed_at`,
+    ).run(id, nodeId, tools);
+  }
+
+  deleteToolLists(id: number): void {
+    this.db.query("DELETE FROM mcp_tool_lists WHERE server_id = ?").run(id);
   }
 
   async getSecret(id: number, kind: McpSecretKind): Promise<string | null> {

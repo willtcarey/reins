@@ -8,7 +8,7 @@
  */
 
 import type { McpApi } from "@backend/extensions/mcp/api.js";
-import type { McpMessage, McpServerView } from "@backend/extensions/mcp/servers.js";
+import type { McpMessage, McpRemoteServerView, McpServerView, McpStdioServerView } from "@backend/extensions/mcp/servers.js";
 import type { McpServerInput } from "@backend/extensions/mcp/input.js";
 import type { McpServerStatus, McpTool } from "@backend/extensions/mcp/connections.js";
 import type { Http, ReinsSdk } from "@reins/sdk";
@@ -20,10 +20,13 @@ function isMcpMessage(message: object): message is McpMessage {
 }
 
 export type McpServersStoreResult = { ok: true } | { error: string };
-export type McpAuthKind = McpServerView["authKind"];
+export type McpAuthKind = McpRemoteServerView["authKind"];
 export type McpTransportKind = McpServerView["transport"];
 
-/** The add/edit form's fields. A secret left blank is kept as it is (none for a new server). */
+/** A stdio server's environment variable in the form: its value blank keeps the stored one. */
+export interface McpEnvDraft { name: string; value: string }
+
+/** The add/edit form's fields. A secret left blank is kept as it is (none for a new server). `args`: one per line. */
 export interface McpServerDraft {
   name: string;
   instructions: string;
@@ -35,24 +38,31 @@ export interface McpServerDraft {
   oauthClientId: string;
   oauthClientSecret: string;
   oauthScope: string;
+  command: string;
+  args: string;
+  cwd: string;
+  env: McpEnvDraft[];
 }
 
 export function emptyDraft(): McpServerDraft {
-  return { name: "", instructions: "", url: "", transport: "http", authKind: "oauth", headerName: "", headerValue: "", oauthClientId: "", oauthClientSecret: "", oauthScope: "" };
+  return {
+    name: "", instructions: "", url: "", transport: "http", authKind: "oauth", headerName: "", headerValue: "", oauthClientId: "", oauthClientSecret: "", oauthScope: "",
+    command: "", args: "", cwd: "", env: [],
+  };
 }
 
-/** The form filled from a server, its secrets blank. */
+/** The form filled from a server, its secrets blank, the other kind's fields empty. */
 export function draftOf(server: McpServerView): McpServerDraft {
+  const draft = { ...emptyDraft(), name: server.name, instructions: server.instructions, transport: server.transport };
+  if (server.transport === "stdio") {
+    return { ...draft, command: server.command, args: server.args.join("\n"), cwd: server.cwd ?? "", env: server.envNames.map(name => ({ name, value: "" })) };
+  }
   return {
-    name: server.name,
-    instructions: server.instructions,
+    ...draft,
     url: server.url,
-    transport: server.transport,
     authKind: server.authKind,
     headerName: server.headerName ?? "",
-    headerValue: "",
     oauthClientId: server.oauthClientId ?? "",
-    oauthClientSecret: "",
     oauthScope: server.oauthScope ?? "",
   };
 }
@@ -61,8 +71,20 @@ function optional(value: string): string | null {
   return value.trim() || null;
 }
 
-/** What the form sends: only its auth kind's fields, and a secret only when one was typed. */
+/** What the form sends: only its transport's and auth kind's fields, and a secret only when one was typed (a stdio
+ * server's variable left blank is sent as null, which keeps its stored value). */
 export function draftRequest(draft: McpServerDraft): McpServerInput {
+  if (draft.transport === "stdio") {
+    return {
+      name: draft.name.trim(),
+      instructions: draft.instructions.trim(),
+      transport: "stdio",
+      command: draft.command.trim(),
+      args: draft.args.split("\n").filter(arg => arg.trim()),
+      cwd: optional(draft.cwd),
+      env: Object.fromEntries(draft.env.filter(row => row.name.trim()).map(row => [row.name.trim(), row.value || null])),
+    };
+  }
   return {
     name: draft.name.trim(),
     instructions: draft.instructions.trim(),
@@ -83,13 +105,19 @@ export function draftRequest(draft: McpServerDraft): McpServerInput {
 
 /** Whether the server is waiting for the user to sign in: the one status that only the user can fix. */
 export function needsSignIn(server: McpServerView): boolean {
-  return server.enabled && server.authKind === "oauth" && server.status.state === "needs_sign_in";
+  return server.enabled && server.transport !== "stdio" && server.authKind === "oauth" && server.status.state === "needs_sign_in";
 }
 
 /** Whether testing it could tell something: agents connect anyway when they use it, so this is for checking
- * it again, after a failure or a change at the server. */
+ * it again, after a failure or a change at the server. Not a stdio server: it runs in a session, and Settings has
+ * none. */
 export function mayTest(server: McpServerView): boolean {
-  return server.enabled && server.status.state !== "needs_sign_in";
+  return server.enabled && server.transport !== "stdio" && server.status.state !== "needs_sign_in";
+}
+
+/** The command line of a stdio server, as a user would type it. */
+export function commandLine(server: McpStdioServerView): string {
+  return [server.command, ...server.args.map(arg => /[\s"']/.test(arg) ? JSON.stringify(arg) : arg)].join(" ");
 }
 
 const STATUS_LABELS: Record<McpServerStatus["state"], string> = {
@@ -128,7 +156,7 @@ export class McpServersStore {
         if (!isMcpMessage(message)) return;
         if (message.type === "mcp_server_updated") {
           this._upsert(message.server);
-          if (this.signIn?.serverId === message.server.id && message.server.signedIn) this.signIn = null;
+          if (this.signIn?.serverId === message.server.id && message.server.transport !== "stdio" && message.server.signedIn) this.signIn = null;
         } else {
           this._drop(message.serverId);
         }
@@ -190,8 +218,8 @@ export class McpServersStore {
     return this._act(serverId, "saving", async () => this._upsert(await this._http.call("update", { id: serverId, changes: { enabled } })));
   }
 
-  /** Connects afresh; the server's status says how it went. Tools shown are listed again: the server
-   * may list others now. */
+  /** Connects afresh (a stdio server's process started again); the server's status says how it went. Tools shown
+   * are listed again: the server may list others now. */
   test(serverId: number): Promise<McpServersStoreResult> {
     return this._act(serverId, "testing", async () => {
       this._upsert(await this._http.call("test", { id: serverId }));

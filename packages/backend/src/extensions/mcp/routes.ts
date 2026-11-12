@@ -10,6 +10,7 @@
 import type { Disposer, Http } from "@reins/sdk/server";
 import { mcpApi } from "./api.js";
 import { McpServerUnavailableError } from "./connections.js";
+import { McpServerSessionRequiredError } from "./stdio.js";
 import { McpServerNotFoundError, McpSignInError, type McpServers } from "./servers.js";
 import { InvalidMcpServerError } from "./input.js";
 import { McpServerAuthError, McpServerNameTakenError } from "./server.js";
@@ -28,6 +29,7 @@ class RouteError extends Error {
 function translateMcpError(error: unknown): never {
   if (error instanceof McpServerNotFoundError) throw new RouteError(404, error.message);
   if (error instanceof InvalidMcpServerError) throw new RouteError(400, error.message);
+  if (error instanceof McpServerSessionRequiredError) throw new RouteError(400, `${error.message}: use it from a session first (an agent can run reins.mcp.test)`);
   if (error instanceof McpServerNameTakenError || error instanceof McpServerAuthError) throw new RouteError(409, error.message);
   if (error instanceof McpServerUnavailableError) throw new RouteError(error.status.state === "error" ? 502 : 409, error.message);
   throw error;

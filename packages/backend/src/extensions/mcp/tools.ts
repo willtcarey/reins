@@ -46,10 +46,11 @@ const describe = (error: unknown) => error instanceof Error ? error.message : St
 
 /** `extension`: the extension's name, the prefix of the IDs agents see, for errors. */
 export function mcpToolProvider(servers: McpServers, tools: Pick<Tools, "match" | "maxLocalIdLength">, extension: string): ToolProvider {
-  /** A server's tools that match, connecting to it if needed. */
-  const search = async (server: string, query: string, signal: AbortSignal) => {
+  /** A server's tools that match, connecting to it if needed (a stdio server's are those it listed last, in any
+   * session, else it is started in the calling session). */
+  const search = async (server: string, query: string, signal: AbortSignal, sessionId: string | null) => {
     const model = servers.find(server);
-    return tools.match(query, asTools(model.name, await model.listTools({ signal }), tools.maxLocalIdLength));
+    return tools.match(query, asTools(model.name, await model.listTools({ signal, sessionId }), tools.maxLocalIdLength));
   };
 
   const serverNamed = (name: string): McpServerModel | null => {
@@ -61,16 +62,15 @@ export function mcpToolProvider(servers: McpServers, tools: Pick<Tools, "match" 
     }
   };
 
-  // The calling session (`sessionId`) is not read yet: every server is the user's, reached over HTTP from the
-  // server. A server run on a node (stdio) will be started on the session's node, and a project's own servers
-  // offered to its sessions only.
+  // The calling session (`sessionId`) is a stdio server's place: its process for that session runs in the session's
+  // checkout. A remote server is reached the same way whoever calls it.
   return {
     title: "MCP servers",
 
-    async search(query, { filters, signal, sessionId: _sessionId }) {
-      if (typeof filters.server === "string") return search(filters.server, query, signal);
+    async search(query, { filters, signal, sessionId }) {
+      if (typeof filters.server === "string") return search(filters.server, query, signal, sessionId);
       const enabled = (await servers.list()).filter(server => server.enabled);
-      const results = await Promise.allSettled(enabled.map(server => search(server.name, query, signal)));
+      const results = await Promise.allSettled(enabled.map(server => search(server.name, query, signal, sessionId)));
       const found = results.flatMap(result => result.status === "fulfilled" ? result.value : []);
       const failures = results.flatMap(result => result.status === "rejected" ? [describe(result.reason)] : []);
       // A search that found nothing could have found it on a server that failed: say which.
@@ -80,17 +80,17 @@ export function mcpToolProvider(servers: McpServers, tools: Pick<Tools, "match" 
       return tools.match(query, found);
     },
 
-    async call(localId, args, { signal, timeoutMs, sessionId: _sessionId }) {
+    async call(localId, args, { signal, timeoutMs, sessionId }) {
       const id = `${extension}${SEPARATOR}${localId}`;
       const at = localId.indexOf(SEPARATOR);
       if (at <= 0) throw new Error(`Unknown tool ${id}: an MCP tool's ID is ${extension}__<server>__<tool>`);
       const server = localId.slice(0, at);
       const model = serverNamed(server);
       if (!model) throw new Error(`Unknown tool ${id}: there is no MCP server ${server}`);
-      const listed = await model.listTools({ signal });
+      const listed = await model.listTools({ signal, sessionId });
       const name = [...mcpToolIds(model.name, listed, tools.maxLocalIdLength)].find(([, toolId]) => toolId === localId)?.[0];
       if (name === undefined) throw new Error(`Unknown tool ${id}: ${model.name} has no such tool. Find its tools with reins.tools.search(query, { filters: { server: ${JSON.stringify(model.name)} } }).`);
-      return model.callTool(name, args, { signal, ...(timeoutMs === undefined ? {} : { timeoutMs }) });
+      return model.callTool(name, args, { signal, sessionId, ...(timeoutMs === undefined ? {} : { timeoutMs }) });
     },
   };
 }

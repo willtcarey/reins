@@ -289,6 +289,8 @@ describe("the server SDK's host", () => {
       clear: {},
       fail: {},
       refuse: {},
+      /** A note by its title, or by its ID. */
+      find: { input: Type.Union([Type.Object({ title: Type.String({ maxLength: 10 }) }, { additionalProperties: false }), Type.Object({ id: Type.Integer() }, { additionalProperties: false })]) },
     } satisfies HttpApi;
 
     /** The extension `notes` handling `notesApi`; `fail` throws an Error, `refuse` one with a status. */
@@ -301,6 +303,7 @@ describe("the server SDK's host", () => {
             clear: () => {},
             fail: () => { throw new Error("broke"); },
             refuse: () => { throw Object.assign(new Error("No such note"), { status: 404 }); },
+            find: () => {},
           }),
         }],
       });
@@ -326,6 +329,16 @@ describe("the server SDK's host", () => {
 
       expect(response.status).toBe(400);
       expect(await response.json()).toEqual({ error: "Invalid input: /title: Expected string" });
+    });
+
+    test("input that none of a union's objects takes names the wrong field of the object it is closest to", async () => {
+      const state = notesState();
+
+      const tooLong = await callNotes(state, "find", { title: "a title too long" });
+      const notAnId = await callNotes(state, "find", { id: "seven" });
+
+      expect(await tooLong.json()).toEqual({ error: "Invalid input: /title: Expected string length less or equal to 10" });
+      expect(await notAnId.json()).toEqual({ error: "Invalid input: /id: Expected integer" });
     });
 
     test("a thrown error with a status is answered with it; any other is a 500 with its message", async () => {

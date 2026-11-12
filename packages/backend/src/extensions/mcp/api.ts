@@ -7,13 +7,14 @@ import { Type } from "@sinclair/typebox";
 import type { HttpApi } from "@reins/sdk/server";
 import type { McpTool } from "./connections.js";
 import { McpServerInputSchema, McpServerUpdateSchema } from "./input.js";
-import { McpServerSchema, McpSignInSchema } from "./scripting.js";
+import { McpRemoteServerSchema, McpSignInSchema, McpStdioServerSchema } from "./scripting.js";
 import type { McpServerView, McpSignInStart } from "./servers.js";
 
 const ServerId = Type.Object({ id: Type.Integer({ description: "The server's ID." }) });
 
 // The views keep their TypeScript types (a status is a union of its states): the schemas describe them.
-const ServerView = Type.Unsafe<McpServerView>(Type.Composite([McpServerSchema, Type.Object({ createdAt: Type.String(), updatedAt: Type.String() })]));
+const Timestamps = Type.Object({ createdAt: Type.String(), updatedAt: Type.String() });
+const ServerView = Type.Unsafe<McpServerView>(Type.Union([Type.Composite([McpRemoteServerSchema, Timestamps]), Type.Composite([McpStdioServerSchema, Timestamps])]));
 const SignInStart = Type.Unsafe<McpSignInStart>(McpSignInSchema);
 const Tool = Type.Unsafe<McpTool>(Type.Object({ name: Type.String(), title: Type.Optional(Type.String()), description: Type.Optional(Type.String()), inputSchema: Type.Object({}) }));
 

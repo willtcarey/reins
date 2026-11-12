@@ -5,6 +5,7 @@
 
 import { KindGuard, type TSchema } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
+import { firstSchemaError } from "../schema-errors.js";
 import type {
   Disposer, HttpApi, HttpCall, ImagesProvider, Logger, PageHandler, PromptContext, PromptContribution, ScriptContext, ScriptNamespace,
   ServerSdk, Service, SessionSettlement, ToolFilters, ToolProvider, ToolResult, ToolSearchGroup,
@@ -288,7 +289,7 @@ export class ExtensionHost {
         return Response.json({ error: "Invalid JSON in request body" }, { status: 400 });
       }
       if (!Value.Check(method.input, input)) {
-        const first = Value.Errors(method.input, input).First();
+        const first = firstSchemaError(method.input, input);
         return Response.json({ error: `Invalid input: ${first ? `${first.path || "/"}: ${first.message}` : "does not match"}` }, { status: 400 });
       }
     }

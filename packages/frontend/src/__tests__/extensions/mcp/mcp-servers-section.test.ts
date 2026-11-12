@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { McpApi } from "@backend/extensions/mcp/api.js";
-import type { McpServerView } from "@backend/extensions/mcp/servers.js";
+import type { McpRemoteServerView, McpServerView, McpStdioServerView } from "@backend/extensions/mcp/servers.js";
 import { SettingsMcpServersSection } from "../../../extensions/mcp/mcp-servers-section.js";
 import { Loadable } from "../../../helpers/loadable.js";
 import { McpServersStore } from "../../../extensions/mcp/mcp-servers-store.js";
@@ -40,11 +40,19 @@ function stubToasts() {
   });
 }
 
-function server(overrides: Partial<McpServerView> = {}): McpServerView {
+function server(overrides: Partial<McpRemoteServerView> = {}): McpRemoteServerView {
   return {
     id: 1, name: "executor", instructions: "Brand New Box tools", url: "https://executor.example/mcp", transport: "http", authKind: "oauth",
     headerName: null, hasHeaderValue: false, oauthClientId: null, hasClientSecret: false, oauthScope: null, enabled: true,
     signedIn: true, status: { state: "ready" }, createdAt: "2026-10-28 10:00:00", updatedAt: "2026-10-28 10:00:00",
+    ...overrides,
+  };
+}
+
+function stdioServer(overrides: Partial<McpStdioServerView> = {}): McpStdioServerView {
+  return {
+    id: 3, name: "shopify", instructions: "", transport: "stdio", command: "npx", args: ["-y", "@shopify/dev-mcp@latest"], cwd: null,
+    envNames: ["SHOPIFY_TOKEN"], enabled: true, status: { state: "ready" }, createdAt: "2026-10-28 10:00:00", updatedAt: "2026-10-28 10:00:00",
     ...overrides,
   };
 }
@@ -156,6 +164,60 @@ describe("SettingsMcpServersSection", () => {
       body: { name: "keyed", instructions: "", url: "https://keyed.example/mcp", transport: "sse", authKind: "header", headerName: "X-Api-Key", headerValue: "s3cret" },
     }]);
     expect(section.store!.servers.data!.map(listed => listed.name)).toEqual(["executor", "keyed"]);
+  });
+
+  test("adding a stdio server sends its command, one argument per line, its environment and directory, and no sign-in", async () => {
+    Reflect.set(globalThis, "HTMLInputElement", TestInputElement);
+    Reflect.set(globalThis, "HTMLTextAreaElement", TestInputElement);
+    const requests = recordRequests(() => Response.json(stdioServer(), { status: 201 }));
+    const section = sectionListing([]);
+
+    clickButton(section.render(), "Add MCP server");
+    clickButton(section.render(), "Command (stdio)");
+    expect(visibleText(section)).not.toContain("Authentication");
+    typeIntoField(section.render(), "Name", "shopify", new TestInputElement());
+    typeIntoField(section.render(), "Command", "npx", new TestInputElement());
+    typeIntoField(section.render(), "Arguments", "-y\n@shopify/dev-mcp@latest\n", new TestInputElement());
+    clickButton(section.render(), "Add variable");
+    typeIntoField(section.render(), "Variable 1 name", "SHOPIFY_TOKEN", new TestInputElement());
+    typeIntoField(section.render(), "Variable 1 value", "s3cret", new TestInputElement());
+    typeIntoField(section.render(), "Working directory", "web", new TestInputElement());
+    submitDialog(section.render());
+
+    await until(() => requests.length === 1);
+    expect(requests).toEqual([{
+      request: "POST /api/extensions/mcp/create",
+      body: {
+        name: "shopify", instructions: "", transport: "stdio", command: "npx", args: ["-y", "@shopify/dev-mcp@latest"],
+        cwd: "web", env: { SHOPIFY_TOKEN: "s3cret" },
+      },
+    }]);
+  });
+
+  test("editing a stdio server keeps a saved variable left blank, and removes one taken out", async () => {
+    Reflect.set(globalThis, "HTMLInputElement", TestInputElement);
+    const requests = recordRequests(() => Response.json(stdioServer()));
+    const section = sectionListing([stdioServer({ envNames: ["SHOPIFY_TOKEN", "OLD"] })]);
+
+    clickButton(withMenus(section), "Edit");
+    expect(templateToString(section.render())).toContain("Saved (leave blank to keep it)");
+    clickButton(section.render(), "Remove variable 2");
+    submitDialog(section.render());
+
+    await until(() => requests.length === 1);
+    expect(requests[0]!.body).toEqual({
+      id: 3, changes: { name: "shopify", instructions: "", transport: "stdio", command: "npx", args: ["-y", "@shopify/dev-mcp@latest"], cwd: null, env: { SHOPIFY_TOKEN: null } },
+    });
+  });
+
+  test("a stdio server shows its command line, its status and why it failed; only a session can test it", () => {
+    const section = sectionListing([stdioServer({
+      status: { state: "error", message: "The process exited with code 127. Its stderr ended:\nnpx: not found" },
+    })]);
+
+    expect(visibleText(section)).toContain("shopify stdio Disable shopify");
+    expect(visibleText(section)).toContain("npx -y @shopify/dev-mcp@latest error Tools The process exited with code 127. Its stderr ended: npx: not found");
+    expect(menuText(section)).toBe("Edit Remove");
   });
 
   test("editing a server leaves its secrets out unless new ones are typed", async () => {

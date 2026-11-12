@@ -60,8 +60,8 @@ describe("MCP server routes", () => {
 
     expect(created.status).toBe(200);
     expect(created.json).toEqual({
-      id: expect.any(Number), name: "local", instructions: "A test server", url: fake.url, transport: "http", authKind: "none",
-      headerName: null, hasHeaderValue: false, oauthClientId: null, hasClientSecret: false, oauthScope: null, enabled: true,
+      id: expect.any(Number), name: "local", instructions: "A test server", url: fake.url, transport: "http",
+      authKind: "none", headerName: null, hasHeaderValue: false, oauthClientId: null, hasClientSecret: false, oauthScope: null, enabled: true,
       signedIn: false, status: { state: "ready" }, createdAt: expect.any(String), updatedAt: expect.any(String),
     });
 
@@ -75,13 +75,15 @@ describe("MCP server routes", () => {
     expect(listed).toMatchObject({ name: "local", status: { state: "ready" } });
   });
 
-  test("refuses an invalid name, URL or transport, and a name already taken", async () => {
+  test("refuses an invalid name, URL or transport, a stdio server without a command or with a sign-in, and a name already taken", async () => {
     const state = createAppState();
     await call(state, "create", { name: "taken", url: "https://example.com/mcp", authKind: "none" });
 
     expect((await call(state, "create", { name: "Not Lowercase", url: "https://example.com/mcp", authKind: "none" })).status).toBe(400);
     expect((await call(state, "create", { name: "ftp", url: "ftp://example.com", authKind: "none" })).status).toBe(400);
     expect((await call(state, "create", { name: "stdio", url: "https://example.com/mcp", transport: "stdio", authKind: "none" })).status).toBe(400);
+    expect((await call(state, "create", { name: "stdio", command: "npx", authKind: "oauth" })).status).toBe(400);
+    expect((await call(state, "create", { name: "stdio", command: "npx", env: { "NOT-A-NAME": "x" } })).status).toBe(400);
     expect((await call(state, "create", { name: "taken", url: "https://example.com/other", authKind: "none" })).status).toBe(409);
     expect((await call(state, "list")).json.map((server: McpServerView) => server.name)).toEqual(["taken"]);
   });

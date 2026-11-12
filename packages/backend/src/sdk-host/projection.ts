@@ -8,6 +8,7 @@
 import { types } from "node:util";
 import { KindGuard, Type, type TObject, type TProperties, type TSchema } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
+import { firstSchemaError } from "../schema-errors.js";
 import type { AnyScriptMethod, ScriptNamespace, ScriptParam } from "@reins/sdk/server";
 import type { Models } from "../models/models.js";
 import type { SessionModel } from "../models/session.js";
@@ -155,7 +156,7 @@ function checkedArgs(name: string, params: readonly (ScriptParam & { schema: TSc
  * misspelt or renamed option is an error, not ignored. */
 function mismatch(schema: TSchema, value: unknown, path: string): string | null {
   if (!Value.Check(schema, value)) {
-    const first = Value.Errors(schema, value).First();
+    const first = firstSchemaError(schema, value);
     return first ? `${path}${dotted(first.path)}: ${first.message}` : `${path} does not match`;
   }
   return unknownKey(schema, value, path);

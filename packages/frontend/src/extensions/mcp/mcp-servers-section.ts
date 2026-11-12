@@ -3,10 +3,10 @@ import { LitElement, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { StoreController } from "../../controllers/store-controller.js";
 import {
-  draftOf, emptyDraft, mayTest, needsSignIn, statusLabel, type McpAuthKind, type McpServerDraft, type McpServersStore,
-  type McpTransportKind,
+  commandLine, draftOf, emptyDraft, mayTest, needsSignIn, statusLabel, type McpAuthKind, type McpEnvDraft, type McpServerDraft,
+  type McpServersStore, type McpTransportKind,
 } from "./mcp-servers-store.js";
-import { chevronDownIcon, chevronRightIcon } from "../../ui/icons.js";
+import { chevronDownIcon, chevronRightIcon, closeIcon } from "../../ui/icons.js";
 import { confirmDialog } from "../../ui/confirm-dialog.js";
 import { dialogButton } from "../../ui/dialog.js";
 import "../../ui/popover-menu.js";
@@ -29,6 +29,12 @@ const AUTH_KINDS: ReadonlyArray<{ kind: McpAuthKind; label: string; hint: string
 const TRANSPORT_KINDS: ReadonlyArray<{ kind: McpTransportKind; label: string }> = [
   { kind: "http", label: "Streamable HTTP" },
   { kind: "sse", label: "HTTP+SSE (legacy)" },
+];
+
+type McpServerKind = "remote" | "stdio";
+const SERVER_KINDS: ReadonlyArray<{ kind: McpServerKind; label: string }> = [
+  { kind: "remote", label: "Remote (URL)" },
+  { kind: "stdio", label: "Command (stdio)" },
 ];
 
 const INPUT_CLASSES = "w-full px-2.5 py-1.5 text-base md:text-xs bg-zinc-700 border border-zinc-600 rounded text-zinc-100 placeholder-zinc-500 outline-none focus:border-blue-500 transition-colors";
@@ -109,7 +115,8 @@ export class SettingsMcpServersSection extends LitElement {
   };
 
   private _openEdit(server: McpServerView) {
-    this._editing = { id: server.id, draft: draftOf(server), advanced: server.transport !== "http" || server.oauthClientId !== null || server.oauthScope !== null };
+    const advanced = server.transport !== "stdio" && (server.transport === "sse" || server.oauthClientId !== null || server.oauthScope !== null);
+    this._editing = { id: server.id, draft: draftOf(server), advanced };
   }
 
   private _closeForm = () => {
@@ -118,6 +125,19 @@ export class SettingsMcpServersSection extends LitElement {
 
   private _set<K extends keyof McpServerDraft>(field: K, value: McpServerDraft[K]) {
     if (this._editing) this._editing = { ...this._editing, draft: { ...this._editing.draft, [field]: value } };
+  }
+
+  /** Remote servers are reached over HTTP (or SSE); a stdio server is a command, with no sign-in. */
+  private _setKind(kind: McpServerKind) {
+    const draft = this._editing?.draft;
+    if (!draft || (kind === "stdio") === (draft.transport === "stdio")) return;
+    this._set("transport", kind === "stdio" ? "stdio" : "http");
+  }
+
+  private _setEnv(index: number, change: Partial<McpEnvDraft> | null) {
+    const env = this._editing?.draft.env;
+    if (!env) return;
+    this._set("env", change === null ? env.filter((_, i) => i !== index) : env.map((row, i) => i === index ? { ...row, ...change } : row));
   }
 
   private _save = async () => {
@@ -197,7 +217,7 @@ export class SettingsMcpServersSection extends LitElement {
             ? html`<button class="${MENU_ITEM} text-zinc-300" ?disabled=${busy} @click=${() => void this._run(`Failed to test ${server.name}`, () => store.test(server.id))}>Test</button>`
             : nothing}
           <button class="${MENU_ITEM} text-zinc-300" @click=${() => this._openEdit(server)}>Edit</button>
-          ${server.authKind === "oauth" && server.signedIn
+          ${server.transport !== "stdio" && server.authKind === "oauth" && server.signedIn
             ? html`<button class="${MENU_ITEM} text-zinc-300" ?disabled=${busy} @click=${() => void this._run(`Failed to sign out of ${server.name}`, () => store.signOut(server.id))}>Sign out</button>`
             : nothing}
           <button class="${MENU_ITEM} text-red-400" ?disabled=${busy} @click=${() => void this._remove(server)}>Remove</button>
@@ -255,11 +275,13 @@ export class SettingsMcpServersSection extends LitElement {
     const status = server.status;
     const testing = store.actions.get(server.id) === "testing";
     const warning = !testing && (status.state === "error" || status.state === "needs_sign_in");
+    const stdio = server.transport === "stdio";
+    const where = stdio ? commandLine(server) : server.url;
     return html`
       <li class="rounded-lg border border-zinc-700/70 bg-zinc-800/40 p-3 ${server.enabled ? "" : "opacity-70"}">
         <div class="flex items-center gap-2">
           <span class="text-sm font-medium text-zinc-100 truncate">${server.name}</span>
-          <span class="text-[10px] text-zinc-400 bg-zinc-700/60 px-1.5 py-0.5 rounded shrink-0">${server.authKind === "none" ? "no auth" : server.authKind}</span>
+          ${stdio ? nothing : html`<span class="text-[10px] text-zinc-400 bg-zinc-700/60 px-1.5 py-0.5 rounded shrink-0">${server.authKind === "none" ? "no auth" : server.authKind}</span>`}
           ${server.transport === "http" ? nothing : html`<span class="text-[10px] text-zinc-400 bg-zinc-700/60 px-1.5 py-0.5 rounded shrink-0">${server.transport}</span>`}
           <span class="ml-auto flex items-center gap-2 shrink-0">
             ${this._renderSignInButton(server, store)}
@@ -268,21 +290,21 @@ export class SettingsMcpServersSection extends LitElement {
           </span>
         </div>
         ${this._renderClamped(String(server.id), server.instructions, "mt-1 text-xs text-zinc-400")}
-        <p class="mt-1 text-xs text-zinc-500 font-mono truncate" title=${server.url}>${server.url}</p>
+        <p class="mt-1 text-xs text-zinc-500 font-mono truncate" title=${where}>${where}</p>
         <div class="mt-2 flex items-center gap-3 text-xs">
           <span class="flex items-center gap-1.5 ${warning ? "text-amber-400/90" : "text-zinc-400"}">
             <span class="w-2 h-2 rounded-full shrink-0 ${testing ? TESTING_DOT : STATUS_DOTS[status.state]}" aria-hidden="true"></span>${testing ? "testing…" : statusLabel(status)}
           </span>
           ${server.enabled ? this._renderToolsToggle(server, store) : nothing}
         </div>
-        ${status.state === "error" ? html`<p class="mt-2 rounded-md bg-red-950/40 border border-red-900/50 px-3 py-2 text-xs text-red-200/90 break-words">${status.message}</p>` : nothing}
+        ${status.state === "error" ? html`<p class="mt-2 rounded-md bg-red-950/40 border border-red-900/50 px-3 py-2 text-xs text-red-200/90 break-words whitespace-pre-wrap">${status.message}</p>` : nothing}
         ${this._renderSignInWaiting(store, server)}
         ${server.enabled ? this._renderTools(server, store) : nothing}
       </li>
     `;
   }
 
-  private _field(label: string, field: Exclude<keyof McpServerDraft, "authKind" | "transport">, options: { placeholder?: string; type?: "text" | "password" | "url"; autofocus?: boolean } = {}) {
+  private _field(label: string, field: Exclude<keyof McpServerDraft, "authKind" | "transport" | "env">, options: { placeholder?: string; type?: "text" | "password" | "url"; autofocus?: boolean } = {}) {
     const draft = this._editing?.draft;
     if (!draft) return nothing;
     return html`
@@ -300,6 +322,65 @@ export class SettingsMcpServersSection extends LitElement {
           .value=${draft[field]}
         />
       </label>
+    `;
+  }
+
+  /** A stdio server's environment: a row per variable, its value masked (blank keeps a saved one). */
+  private _renderEnv(env: readonly McpEnvDraft[], saved: readonly string[]) {
+    return html`
+      <div>
+        <span class="block text-[10px] font-medium text-zinc-400 uppercase tracking-wide mb-1">Environment</span>
+        <div class="space-y-1.5">
+          ${env.map((row, index) => html`
+            <div class="flex gap-1.5 items-center">
+              <input
+                aria-label=${`Variable ${index + 1} name`}
+                autocomplete="off"
+                spellcheck="false"
+                placeholder="NAME"
+                class="${INPUT_CLASSES} font-mono flex-1"
+                @input=${(e: Event) => { if (e.target instanceof HTMLInputElement) this._setEnv(index, { name: e.target.value }); }}
+                .value=${row.name}
+              />
+              <input
+                aria-label=${`Variable ${index + 1} value`}
+                type="password"
+                autocomplete="off"
+                placeholder=${kept(saved.includes(row.name.trim()))}
+                class="${INPUT_CLASSES} flex-1"
+                @input=${(e: Event) => { if (e.target instanceof HTMLInputElement) this._setEnv(index, { value: e.target.value }); }}
+                .value=${row.value}
+              />
+              <button type="button" class="text-zinc-500 hover:text-red-400 cursor-pointer p-1" @click=${() => this._setEnv(index, null)}><span class="sr-only">Remove variable ${index + 1}</span>${closeIcon("", 12)}</button>
+            </div>
+          `)}
+        </div>
+        <button type="button" class="mt-1.5 text-[11px] text-zinc-400 hover:text-zinc-200 cursor-pointer" @click=${() => this._set("env", [...env, { name: "", value: "" }])}>Add variable</button>
+        <p class="mt-1 text-[10px] text-zinc-500">Values are stored encrypted and not shown again.</p>
+      </div>
+    `;
+  }
+
+  /** A stdio server's fields: its command line, environment and directory. */
+  private _renderStdioFields(draft: McpServerDraft, saved: readonly string[]) {
+    return html`
+      ${this._field("Command", "command", { placeholder: "npx" })}
+      <label class="block">
+        <span class="block text-[10px] font-medium text-zinc-400 uppercase tracking-wide mb-1">Arguments</span>
+        <textarea
+          aria-label="Arguments"
+          rows="3"
+          spellcheck="false"
+          placeholder=${"-y\n@modelcontextprotocol/server-everything"}
+          class="${INPUT_CLASSES} font-mono resize-y"
+          @input=${(e: Event) => { if (e.target instanceof HTMLTextAreaElement) this._set("args", e.target.value); }}
+          .value=${draft.args}
+        ></textarea>
+      </label>
+      <p class="-mt-2 text-[10px] text-zinc-500">One per line.</p>
+      ${this._renderEnv(draft.env, saved)}
+      ${this._field("Working directory", "cwd", { placeholder: "The session's checkout" })}
+      <p class="-mt-2 text-[10px] text-zinc-500">Each session that uses it starts its own process, on the session's node and in its checkout, so the command must be installed on the nodes your sessions use. A relative directory is inside the checkout.</p>
     `;
   }
 
@@ -330,6 +411,7 @@ export class SettingsMcpServersSection extends LitElement {
     return html`
       <app-dialog
         .open=${editing !== null}
+        width="lg"
         heading=${existing ? `Edit ${existing.name}` : "Add MCP server"}
         .onSubmit=${() => void this._save()}
         .body=${draft ? html`
@@ -349,6 +431,8 @@ export class SettingsMcpServersSection extends LitElement {
               ></textarea>
             </label>
             <p class="-mt-2 text-[10px] text-zinc-500">Agents are given these in their system prompt, under the server's name, in every session. Keep them short.</p>
+            <div>${this._radioGroup("Runs", SERVER_KINDS, draft.transport === "stdio" ? "stdio" : "remote", kind => this._setKind(kind))}</div>
+            ${draft.transport === "stdio" ? this._renderStdioFields(draft, existing?.transport === "stdio" ? existing.envNames : []) : html`
             ${this._field("URL", "url", { placeholder: "https://example.com/mcp", type: "url" })}
             <div>
               ${this._radioGroup("Authentication", AUTH_KINDS, draft.authKind, kind => this._set("authKind", kind))}
@@ -356,7 +440,7 @@ export class SettingsMcpServersSection extends LitElement {
             </div>
             ${draft.authKind === "header" ? html`
               ${this._field("Header name", "headerName", { placeholder: "Authorization" })}
-              ${this._field("Header value", "headerValue", { type: "password", placeholder: kept(existing?.hasHeaderValue) })}
+              ${this._field("Header value", "headerValue", { type: "password", placeholder: kept(existing?.transport !== "stdio" && existing?.hasHeaderValue) })}
             ` : nothing}
             <button
               type="button"
@@ -372,15 +456,16 @@ export class SettingsMcpServersSection extends LitElement {
               ${draft.authKind === "oauth" ? html`
                 <p class="text-[10px] text-zinc-500">For a server that needs a client registered with it beforehand (Slack): its redirect URL is ${location.origin}/extensions/mcp/oauth/callback.</p>
                 ${this._field("Client ID", "oauthClientId")}
-                ${this._field("Client secret", "oauthClientSecret", { type: "password", placeholder: kept(existing?.hasClientSecret) })}
+                ${this._field("Client secret", "oauthClientSecret", { type: "password", placeholder: kept(existing?.transport !== "stdio" && existing?.hasClientSecret) })}
                 ${this._field("Scope", "oauthScope", { placeholder: "The server's own when blank" })}
               ` : nothing}
             ` : nothing}
+            `}
           </div>
         ` : nothing}
         .actions=${html`
           ${dialogButton({ label: "Cancel", onClick: this._closeForm })}
-          ${dialogButton({ label: saving ? "Saving..." : "Save", variant: "primary", type: "submit", disabled: saving || !draft?.name.trim() || !draft?.url.trim() })}
+          ${dialogButton({ label: saving ? "Saving..." : "Save", variant: "primary", type: "submit", disabled: saving || !draft?.name.trim() || !(draft?.transport === "stdio" ? draft.command : draft?.url)?.trim() })}
         `}
         @dialog-cancel=${this._closeForm}
       ></app-dialog>

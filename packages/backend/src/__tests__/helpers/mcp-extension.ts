@@ -4,7 +4,7 @@
  */
 
 import type { BuiltInBackendPart } from "../../extension-system/extensions.js";
-import type { McpConnectionOptions } from "../../extensions/mcp/connections.js";
+import type { McpOptions } from "../../extensions/mcp/index.js";
 import type { McpServers } from "../../extensions/mcp/servers.js";
 import type { McpMessage } from "../../extensions/mcp/servers.js";
 import { mcp, startMcp } from "../../extensions/mcp/index.js";
@@ -15,7 +15,7 @@ export interface TestMcp {
   readonly servers: McpServers;
 }
 
-export function testMcp(options: McpConnectionOptions = {}): TestMcp {
+export function testMcp(options: McpOptions = {}): TestMcp {
   let servers: McpServers | undefined;
   return {
     registration: {
