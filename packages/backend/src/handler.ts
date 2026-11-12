@@ -11,6 +11,7 @@ import { API } from "./api-paths.js";
 import { buildRouter } from "./routes/index.js";
 import { serveStatic } from "./static.js";
 import { logger } from "./logger.js";
+import { describeTiming, timeRequest, type RequestTiming } from "./request-timing.js";
 
 const router = buildRouter();
 
@@ -26,17 +27,26 @@ export async function handleFetch(
   const url = new URL(req.url);
   const startedAt = performance.now();
   let status = "threw";
+  let timing: RequestTiming | undefined;
   try {
-    const response = await route(state, req, url, server);
+    const [response, spent] = await timeRequest(() => route(state, req, url, server));
+    timing = spent;
     status = response ? String(response.status) : "upgraded";
     return response;
   } finally {
     // Until the response's headers, not its body. Path only: a query can carry tokens.
     const durationMs = Math.round(performance.now() - startedAt);
-    const line = `${req.method} ${url.pathname} ${status} ${durationMs}ms`;
+    const line = `${req.method} ${url.pathname} ${status} ${durationMs}ms${detail(timing)}`;
     if (durationMs >= SLOW_REQUEST_MS) logger.info(line);
     else logger.debug(line);
   }
+}
+
+/** Where the time went, when it says something: the request's phases, or the event loop held up. */
+const NOTABLE_LAG_MS = 20;
+function detail(timing: RequestTiming | undefined): string {
+  if (!timing || (timing.phases.size === 0 && timing.maxLagMs < NOTABLE_LAG_MS)) return "";
+  return ` ${describeTiming(timing)}`;
 }
 
 async function route(state: AppState, req: Request, url: URL, server: UpgradeServer): Promise<Response | undefined> {

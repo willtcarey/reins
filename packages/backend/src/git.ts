@@ -5,6 +5,7 @@
  * through the `Spawn` it is given: a source's checkout through its node (`NodeDirClient.spawner`).
  */
 
+import { timed } from "./request-timing.js";
 
 export interface SpawnOptions {
   /** Added to the process's environment, not replacing it. */
@@ -81,6 +82,11 @@ interface CommandOptions {
   untracked?: boolean;
 }
 
+/** A git command's phase in its request's timing (request-timing.ts): `git diff`, `git diff (untracked)`. */
+function phaseName(args: string[], { untracked = false }: CommandOptions = {}): string {
+  return `git ${args[0]}${untracked ? " (untracked)" : ""}`;
+}
+
 function failure(args: string[], exit: SpawnExit): Error {
   return new Error(`git ${args[0]} failed (exit ${exit.code ?? exit.signal}): ${exit.stderr.trim()}`);
 }
@@ -96,18 +102,22 @@ export class Git {
   }
 
   /** `git <args>`: resolves with its stdout; a non-zero exit rejects with git's stderr. */
-  private async run(args: string[], options?: CommandOptions): Promise<string> {
-    const proc = await this.spawnGit(args, options);
-    const [stdout, exit] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
-    if (exit.code !== 0) throw failure(args, exit);
-    return stdout;
+  private run(args: string[], options?: CommandOptions): Promise<string> {
+    return timed(phaseName(args, options), async () => {
+      const proc = await this.spawnGit(args, options);
+      const [stdout, exit] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
+      if (exit.code !== 0) throw failure(args, exit);
+      return stdout;
+    });
   }
 
   /** Whether `git <args>` exits 0. */
-  private async succeeds(args: string[]): Promise<boolean> {
-    const proc = await this.spawnGit(args);
-    await new Response(proc.stdout).arrayBuffer();
-    return (await proc.exited).code === 0;
+  private succeeds(args: string[]): Promise<boolean> {
+    return timed(phaseName(args), async () => {
+      const proc = await this.spawnGit(args);
+      await new Response(proc.stdout).arrayBuffer();
+      return (await proc.exited).code === 0;
+    });
   }
 
   /** `git <args>`'s stdout as it arrives; a non-zero exit fails the stream with git's stderr. */

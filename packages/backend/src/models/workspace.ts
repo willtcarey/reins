@@ -4,6 +4,7 @@ import { DiffParser, type DiffFileSummary } from "./diff-parser.js";
 import type { FileSystem, ReadFile, WorkspaceFile } from "./file-system.js";
 import { GitTreeFileSystem } from "./git-tree-file-system.js";
 import { WorkingTreeFileSystem } from "./working-tree-file-system.js";
+import { timedSync } from "../request-timing.js";
 
 export type DiffMode = "branch" | "uncommitted";
 
@@ -34,7 +35,7 @@ export class Workspace {
       if (isNodeUnavailable(error)) throw error;
       return "";
     });
-    return DiffParser.parseNumstat(raw);
+    return timedSync("parse numstat", () => DiffParser.parseNumstat(raw));
   }
 
   /** Raw unified diff stream. */
