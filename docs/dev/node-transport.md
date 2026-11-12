@@ -251,7 +251,7 @@ A frame needs no proof of which connection it belongs to: it is served by the co
 
 **Naming.** Methods are named for what is happening, not which side serves them:
 
-- Requests name the resource: `process.start`, `process.write`, `process.stop`, `fs.info`, `fs.list`, `fs.read`, `fs.write`, `fs.absolutePath`, `fs.canonicalPath`.
+- Requests name the resource: `process.start`, `process.attach`, `process.write`, `process.stop`, `fs.info`, `fs.list`, `fs.read`, `fs.write`, `fs.absolutePath`, `fs.canonicalPath`.
 - Pi's shell commands are scoped `pi.` (Pi's `exec` as its local environment runs it, ADR-029): `pi.exec`, `pi.execAttach`, `pi.execKill`.
 - Notifications: the stream frames `stream.data`, `stream.end`, `stream.cancel`.
 - The `node.` prefix is for the node as a whole: the connection-level `node.authenticate`, `node.hello` and `node.ping`, and the command `node.reload`.
@@ -329,7 +329,7 @@ The server transport receives the stream frames of the streams it opened. On the
 | `request(method, input, options?)` | any request-now call, e.g. `fs.list`, `fs.info`, `pi.execKill`, `node.reload` |
 | `openStream(method, input, options?)` | a call that opens a stream, e.g. `fs.read`, `process.start`, `pi.exec`; the hub adds the `streamId` |
 
-A `NodeClient` is addressed by ID, not tied to a connection: each call uses the node's link at the time of the call, so holding one across reconnects is safe. Its calls are the transport's two primitives (calling a method, opening a stream); what a call means to product code (its timeout, how a failure is handled) belongs to the caller, e.g. `ProjectModel`, the skills route, a directory's `NodeDirClient`. Running a process in a checkout is its client's `spawner()` (`NodeDirClient`), the `Spawn` a `Git` is built on: it opens `process.start`, bounding the node accepting the process as the client bounds every call (`NODE_CALL_TIMEOUT_MS`), and returns `{stdout, exited}`; cancelling `stdout` kills the process.
+A `NodeClient` is addressed by ID, not tied to a connection: each call uses the node's link at the time of the call, so holding one across reconnects is safe. Its calls are the transport's two primitives (calling a method, opening a stream); what a call means to product code (its timeout, how a failure is handled) belongs to the caller, e.g. `ProjectModel`, the skills route, a directory's `NodeDirClient`. Running a process in a checkout is its client's `spawner()` (`NodeDirClient`), the `Spawn` a `Git` is built on: it opens `process.start`, bounding the node accepting the process as the client bounds every call (`NODE_CALL_TIMEOUT_MS`), and returns `{stdout, exited}`; cancelling `stdout` stops the process (`process.stop`).
 
 What stays on the hub is not about one node:
 
@@ -384,7 +384,7 @@ Things to notice:
 
 ## Streams
 
-A stream carries output too big or open-ended for one reply (a diff, a file, a long-running process's output) from the node to the server, mixed in with the link's other traffic. Today `process.start` opens one for a process's output (stdout and stderr, framed), `fs.read` for a file's bytes, and `pi.exec`/`pi.execAttach` for a command's output records. `NodeDirClient.spawner` uses it so a `Git` runs on the node while the git logic stays on the server ([ADR-017](../adr/017-node-link-streams.md), [ADR-018](../adr/018-process-run-and-fs-methods.md); processes are in node-contract.md *Processes*).
+A stream carries output too big or open-ended for one reply (a diff, a file, a long-running process's output) from the node to the server, mixed in with the link's other traffic. Today `process.start` and `process.attach` open one for a process's output (stdout and stderr, framed; a process outlives its stream, and `process.attach` resumes it on a later connection by offset), `fs.read` for a file's bytes, and `pi.exec`/`pi.execAttach` for a command's output records. `NodeDirClient.spawner` uses it so a `Git` runs on the node while the git logic stays on the server ([ADR-017](../adr/017-node-link-streams.md), [ADR-018](../adr/018-process-run-and-fs-methods.md); processes are in node-contract.md *Processes*).
 
 ### The happy path: `git ls-files`
 
@@ -426,7 +426,7 @@ How the pieces map to code:
 
 ### Opening a stream
 
-A server→node request opens a stream. Its params carry a `streamId`, and the connection that received it starts the stream under that ID and answers with the method's own result. `connectNode` does this for `process.start` (and `fs.read`, `pi.exec`): the `Node` method (`startProcess`) starts the process and returns its result and the stream's source, and the connection serves that source and answers the result. A stream started on a connection that has just closed is stopped at once, so its producer (a process) does not outlive it.
+A server→node request opens a stream. Its params carry a `streamId`, and the connection that received it starts the stream under that ID and answers with the method's own result. `connectNode` does this for `process.start` (and `process.attach`, `fs.read`, `pi.exec`, `pi.execAttach`): the `Node` method (`startProcess`) starts the process and returns its result and the stream's source, and the connection serves that source and answers the result. A stream started on a connection that has just closed is stopped at once (a process's producer runs on, for an attach on the next connection).
 
 **Why the server picks the ID.** The node may start sending chunks before its reply reaches the server, and one socket read can deliver the reply and the first chunks together. If the node picked the ID and announced it in its reply, the server could receive chunks for a stream it has never heard of. So the server allocates the ID (a UUID, unique on the connection) and registers the stream before sending the request. Any chunk, whenever it arrives, has somewhere to go.
 
@@ -440,7 +440,7 @@ All three are notifications, defined in the method tables.
 - `stream.end {streamId, error?, exit?}` (node→server): the stream's last frame. `error` (at most 2048 characters) means the source failed. `exit` (`{code, signal}`) is how a process stream's process ended; its stderr came in the stream. A non-zero exit is not a stream failure.
 - `stream.cancel {streamId}` (server→node): stop the stream.
 
-**Offsets.** `offset` is where the chunk's first byte sits in the whole stream: its absolute byte offset, counting a text stream's UTF-8 bytes and a binary stream's raw bytes. The server tracks how many bytes it has received. A chunk whose offset does not match is a gap, which fails that stream (not the connection). A stream itself never resumes: offsets start at 0 in every stream. A command's output (`pi.exec`) is resumed at the method level instead: the server reopens it on a new stream from an offset into the command's own output (`pi.execAttach`, node-contract.md *Tool host*).
+**Offsets.** `offset` is where the chunk's first byte sits in the whole stream: its absolute byte offset, counting a text stream's UTF-8 bytes and a binary stream's raw bytes. The server tracks how many bytes it has received. A chunk whose offset does not match is a gap, which fails that stream (not the connection). A stream itself never resumes: offsets start at 0 in every stream. A command's or a process's output is resumed at the method level instead: the server reopens it on a new stream from an offset into the command's own output (`pi.execAttach`, `process.attach`; node-contract.md *Shell commands*, *Processes*).
 
 ### Node side: pacing
 
@@ -468,11 +468,11 @@ The queue only ever holds about one chunk of any stream. There is no "send me mo
 
 **Details.**
 
-- A source is `(signal: AbortSignal) => AsyncIterable<string | Uint8Array, ProcessExit | void>` (`OpenStreamSource`); a `ReadableStream` is one. What the iteration returns becomes `stream.end`'s `exit`. `process.start`'s and `fs.read`'s streams are binary; the others text.
+- A source is `(signal: AbortSignal) => AsyncIterable<string | Uint8Array, ProcessExit | void>` (`OpenStreamSource`); a `ReadableStream` is one. What the iteration returns becomes `stream.end`'s `exit`. `process.start`'s, `process.attach`'s and `fs.read`'s streams are binary; the others text.
 - A text stream decodes bytes as UTF-8 (invalid sequences become U+FFFD). A binary stream sends bytes, and text as its UTF-8, as base64.
 - Each item is one chunk, split at `STREAM_CHUNK_BYTES` when larger.
 - A source that ends sends `stream.end`; one that throws sends `stream.end` with its message.
-- `stream.cancel`, the connection closing, or a chunk that cannot be sent stops the stream: `signal` aborts (the producer should stop, e.g. kill its process), the iteration is finished (`return()`: a generator runs its `finally`, a `ReadableStream` is cancelled) and nothing more is sent for it.
+- `stream.cancel`, the connection closing, or a chunk that cannot be sent stops the stream: `signal` aborts (the producer stops: a file read; a command's or a process's output is kept for an attach instead, node-contract.md), the iteration is finished (`return()`: a generator runs its `finally`, a `ReadableStream` is cancelled) and nothing more is sent for it.
 - A request naming a stream ID already open on the connection is refused.
 
 ### Server side: the buffer
@@ -494,7 +494,7 @@ graph LR
     A["Consumer cancels the body<br/>(e.g. HTTP client went away)"] --> C["server sends stream.cancel"]
     B["Server fails the stream<br/>(offset gap, buffer cap)"] --> C
     C --> D["node aborts the stream's signal"]
-    D --> E["generator's finally block<br/>kills the process"]
+    D --> E["generator's finally block<br/>(a process runs on: its grace period)"]
     F["Connection closes"] --> D
     F --> G["server errors every open body:<br/>'Node connection closed'"]
 ```
