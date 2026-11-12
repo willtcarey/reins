@@ -6,8 +6,8 @@
 import { Type, type Static, type TSchema } from "@sinclair/typebox";
 import type { ScriptContext, ScriptMethod, ScriptNamespace, ScriptParam } from "@reins/sdk/server";
 import type { McpServers, McpServerView } from "./servers.js";
-import { McpServerInputSchema, McpServerUpdateSchema } from "./input.js";
-import { McpAuthKindSchema, McpTransportKindSchema } from "./store.js";
+import { McpRemoteInputSchema, McpServerInputSchema, McpServerUpdateSchema, McpStdioInputSchema } from "./input.js";
+import { McpAuthKindSchema, McpRemoteTransportSchema } from "./store.js";
 
 /** A method whose `run` is typed by its schemas. */
 const scriptMethod = <const P extends readonly ScriptParam[], R extends TSchema>(method: ScriptMethod<ScriptContext, P, R, Static<R>>) => method;
@@ -24,22 +24,38 @@ export const McpServerStatusSchema = Type.Object({
   message: Type.Optional(Type.String({ description: "When state is error: why its last attempt or request failed." })),
 }, { description: `Whether agents can use the server, e.g. { state: "ready" } or { state: "error", message }. ${SIGN_IN}` });
 
-export const McpServerSchema = Type.Object({
+const commonServerProperties = {
   id: Type.Number(),
   name: Type.String({ description: "Unique; lowercase letters, digits and hyphens. Its tools' IDs are mcp__<name>__<tool>." }),
   instructions: Type.String({ description: "Given to agents in their system prompt under its name." }),
+  enabled: Type.Boolean(),
+  status: McpServerStatusSchema,
+};
+
+export const McpRemoteServerSchema = Type.Object({
+  ...commonServerProperties,
+  transport: Type.Union(McpRemoteTransportSchema.anyOf, { description: "\"http\" (streamable HTTP) or \"sse\" (legacy HTTP+SSE)." }),
   url: Type.String({ description: "Its MCP endpoint." }),
-  transport: Type.Union(McpTransportKindSchema.anyOf, { description: "\"http\" (streamable HTTP) or \"sse\" (legacy HTTP+SSE)." }),
   authKind: McpAuthKindSchema,
   headerName: Type.Union([Type.String(), Type.Null()], { description: "Header auth: the header sent with every request." }),
   hasHeaderValue: Type.Boolean({ description: "Header auth: whether its value is set (it is never returned)." }),
   oauthClientId: Type.Union([Type.String(), Type.Null()], { description: "OAuth: a pre-registered client; null registers Reins dynamically." }),
   hasClientSecret: Type.Boolean({ description: "OAuth: whether the pre-registered client's secret is set (it is never returned)." }),
   oauthScope: Type.Union([Type.String(), Type.Null()], { description: "OAuth: the scope sign-ins ask for; null for the server's own." }),
-  enabled: Type.Boolean(),
   signedIn: Type.Boolean({ description: "OAuth: whether Reins holds tokens for it." }),
-  status: McpServerStatusSchema,
-});
+}, { description: "A remote MCP server, reached at its URL." });
+
+export const McpStdioServerSchema = Type.Object({
+  ...commonServerProperties,
+  transport: Type.Literal("stdio"),
+  command: Type.String({ description: "The program, run for each calling session, on its node, in its checkout." }),
+  args: Type.Array(Type.String(), { description: "Its arguments." }),
+  cwd: Type.Union([Type.String(), Type.Null()], { description: "Where it starts; null for the session's checkout, relative inside it." }),
+  envNames: Type.Array(Type.String(), { description: "Its environment variables' names (their values are never returned)." }),
+}, { description: "A stdio MCP server: a program run for each session that uses it." });
+
+/** A server: remote or stdio, told apart by `transport`. */
+export const McpServerSchema = Type.Union([McpRemoteServerSchema, McpStdioServerSchema]);
 
 export const McpServerTestSchema = Type.Object({
   server: McpServerSchema,
@@ -48,30 +64,17 @@ export const McpServerTestSchema = Type.Object({
 
 const serverParam = { name: "server", schema: Type.Union([Type.String(), Type.Number()], { description: "Its name or ID." }) } as const;
 
-function summary(server: McpServerView) {
-  return {
-    id: server.id,
-    name: server.name,
-    instructions: server.instructions,
-    url: server.url,
-    transport: server.transport,
-    authKind: server.authKind,
-    headerName: server.headerName,
-    hasHeaderValue: server.hasHeaderValue,
-    oauthClientId: server.oauthClientId,
-    hasClientSecret: server.hasClientSecret,
-    oauthScope: server.oauthScope,
-    enabled: server.enabled,
-    signedIn: server.signedIn,
-    status: server.status,
-  };
+/** The view less its timestamps. */
+function summary(server: McpServerView): Static<typeof McpServerSchema> {
+  const { createdAt: _createdAt, updatedAt: _updatedAt, ...rest } = server;
+  return rest;
 }
 
 /** The functions over `servers`; `callbackPath` is the OAuth callback page's path from the server's root. */
 export function mcpScripting(servers: McpServers, callbackPath: string): ScriptNamespace {
 
   const list = scriptMethod({
-    description: "List the remote MCP servers set up in Reins (Settings → MCP), in name order, with each one's status. Secrets are only said to be set.",
+    description: "List the MCP servers set up in Reins (Settings → MCP), in name order, with each one's status. Secrets are only said to be set.",
     params: [],
     returns: Type.Array(McpServerSchema),
     tags: ["mcp", "servers", "list", "status", "read"],
@@ -88,21 +91,22 @@ export function mcpScripting(servers: McpServers, callbackPath: string): ScriptN
 
   const add = scriptMethod({
     description:
-      "Add a remote MCP server (HTTP; stdio is not supported). transport is \"http\" (streamable HTTP, the default) or " +
-      "\"sse\" for a legacy HTTP+SSE server. Header auth needs headerName and headerValue. " +
-      `It is not connected until used: mcp.test connects and reports. ${SIGN_IN}\n\n` +
+      "Add an MCP server: a remote one by its url, or a stdio one by its command. A stdio server runs for each session " +
+      "that uses it, on the session's node and in its checkout, so its command must be installed there. " +
+      `mcp.test connects and reports. ${SIGN_IN}\n\n` +
       "  await reins.mcp.add({ name: \"executor\", url: \"https://executor.example.com/mcp\", authKind: \"oauth\" });\n" +
-      "  return await reins.mcp.test(\"executor\");",
+      "  await reins.mcp.add({ name: \"everything\", command: \"npx\", args: [\"-y\", \"@modelcontextprotocol/server-everything\"] });\n" +
+      "  return await reins.mcp.test(\"everything\");",
     params: [{ name: "server", schema: McpServerInputSchema }],
     returns: McpServerSchema,
-    tags: ["mcp", "server", "add", "create", "write", "oauth", "header", "api key"],
+    tags: ["mcp", "server", "add", "create", "write", "oauth", "header", "api key", "stdio", "command", "npx", "env"],
     run: async (_context, server) => summary(await servers.create(server)),
   });
 
   const update = scriptMethod({
     description:
       "Change an MCP server: what is left out is kept; a secret given as null is removed. Changing its url, authKind or " +
-      "oauthClientId signs it out; changing its transport only reconnects. `enabled: false` disables it.",
+      "oauthClientId signs it out. `enabled: false` disables it.",
     params: [serverParam, { name: "changes", schema: McpServerUpdateSchema }],
     returns: McpServerSchema,
     tags: ["mcp", "server", "update", "edit", "enable", "disable", "write"],
@@ -120,12 +124,13 @@ export function mcpScripting(servers: McpServers, callbackPath: string): ScriptN
   const test = scriptMethod({
     description:
       "Connect to an MCP server afresh and list its tools: the server after the attempt (status.state ready, or error " +
-      "with status.message saying why, or needs_sign_in) and how many tools it listed (null when it failed).",
+      "with status.message saying why, or needs_sign_in) and how many tools it listed (null when it failed). A stdio " +
+      "server's process for this session is started afresh.",
     params: [serverParam],
     returns: McpServerTestSchema,
     tags: ["mcp", "server", "test", "connect", "status", "check"],
     run: async (context, name) => {
-      const { server, toolCount } = await servers.find(name).test(context.signal);
+      const { server, toolCount } = await servers.find(name).test(context.signal, { sessionId: context.sessionId });
       return { server: summary(server), toolCount };
     },
   });
@@ -193,6 +198,9 @@ export function mcpScripting(servers: McpServers, callbackPath: string): ScriptN
   return {
     namespace: "mcp",
     methods: { list, get, add, update, remove, test, signIn, finishSignIn, signOut },
-    types: { McpServer: McpServerSchema, McpServerStatus: McpServerStatusSchema, McpSignIn: McpSignInSchema, McpServerTest: McpServerTestSchema },
+    types: {
+      McpServerInput: McpServerInputSchema, McpRemoteServerInput: McpRemoteInputSchema, McpStdioServerInput: McpStdioInputSchema,
+      McpServerChanges: McpServerUpdateSchema,
+      McpServer: McpServerSchema, McpRemoteServer: McpRemoteServerSchema, McpStdioServer: McpStdioServerSchema, McpServerStatus: McpServerStatusSchema, McpSignIn: McpSignInSchema, McpServerTest: McpServerTestSchema },
   };
 }

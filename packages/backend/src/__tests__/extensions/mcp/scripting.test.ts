@@ -34,7 +34,8 @@ describe("reins.mcp", () => {
 
     if (!result.ok) throw new Error(result.error);
     const tested = {
-      id: expect.any(Number), name: "keyed", instructions: "Test tools", url: fake.url, transport: "http", authKind: "header", headerName: "X-Api-Key",
+      id: expect.any(Number), name: "keyed", instructions: "Test tools", url: fake.url, transport: "http",
+      authKind: "header", headerName: "X-Api-Key",
       hasHeaderValue: true, oauthClientId: null, hasClientSecret: false, oauthScope: null, enabled: true, signedIn: false,
       status: { state: "ready" },
     };

@@ -9,7 +9,8 @@ import { auth, discoverOAuthServerInfo, extractWWWAuthenticateParams, type OAuth
 import type { OAuthClientInformationMixed, OAuthClientMetadata, OAuthTokens } from "@modelcontextprotocol/sdk/shared/auth.js";
 import type { FetchLike } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { LATEST_PROTOCOL_VERSION } from "@modelcontextprotocol/sdk/types.js";
-import type { McpServerRow, McpSignIn, McpStore } from "./store.js";
+import type { Logger } from "@reins/sdk/server";
+import type { McpRemoteRow, McpServerRow, McpSignIn, McpStore } from "./store.js";
 
 /** The OAuth requests of a sign-in (discovery, registration, the code exchange) each get this long. */
 const OAUTH_REQUEST_TIMEOUT_MS = 15_000;
@@ -53,7 +54,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
   /** A refresh's tokens, as stored; null once they are no longer the server's (deleted, or replaced). */
   private held: string | null;
 
-  constructor(private readonly store: McpStore, private readonly server: McpServerRow, private readonly mode: McpOAuthMode) {
+  constructor(private readonly store: McpStore, private readonly server: McpRemoteRow, private readonly mode: McpOAuthMode) {
     this.held = mode.kind === "refresh" ? mode.tokens : null;
   }
 
@@ -235,7 +236,7 @@ export class McpRefreshLock {
  * lock). What it did: `superseded`, the tokens changed meanwhile (signed out or in again), so its result
  * was dropped; `signed_out`, the authorization server refused it and the tokens were deleted; `failed`,
  * it was not answered (unreachable, a server error), and the tokens are kept. */
-async function refreshMcpTokens(store: McpStore, server: McpServerRow, tokens: string, challenge: { resourceMetadataUrl?: URL; scope?: string } = {}): Promise<McpOAuthProvider["outcome"]> {
+async function refreshMcpTokens(store: McpStore, server: McpRemoteRow, tokens: string, challenge: { resourceMetadataUrl?: URL; scope?: string } = {}): Promise<McpOAuthProvider["outcome"]> {
   const provider = new McpOAuthProvider(store, server, { kind: "refresh", tokens });
   // A refresh that fails other than by refusal makes `auth()` start a sign-in, which a refresh only notes.
   await auth(provider, { serverUrl: server.url, ...challenge, fetchFn: oauthFetch }).catch(() => undefined);
@@ -247,13 +248,86 @@ async function refreshMcpTokens(store: McpStore, server: McpServerRow, tokens: s
  * authorization servers make it do after some days (docs/dev/mcp-servers.md *OAuth*): when they were
  * issued more than `maxAgeSeconds` ago and include a refresh token.
  */
-export function refreshAgedMcpTokens(store: McpStore, server: McpServerRow, lock: McpRefreshLock, maxAgeSeconds: number): Promise<"fresh" | McpOAuthProvider["outcome"]> {
+function refreshAgedMcpTokens(store: McpStore, server: McpRemoteRow, lock: McpRefreshLock, maxAgeSeconds: number): Promise<"fresh" | McpOAuthProvider["outcome"]> {
   return lock.run(server.id, async () => {
     const stored = await store.getTokens(server.id);
     if (!stored || Date.now() - Date.parse(stored.issuedAt) < maxAgeSeconds * 1000) return "fresh";
     if (!parseJson<OAuthTokens>(stored.tokens)?.refresh_token) return "fresh";
     return refreshMcpTokens(store, server, stored.tokens);
   });
+}
+
+export interface McpTokenRefreshOptions {
+  /** How often it looks for OAuth tokens to refresh in the background; the first look is at most a minute
+   * after it starts, since a reload starts it again. */
+  tokenRefreshCheckMs?: number;
+  /** Tokens issued longer ago than this are refreshed in the background. */
+  tokenRefreshAgeMs?: number;
+}
+
+const REFRESH_DEFAULTS: Required<McpTokenRefreshOptions> = {
+  // Shorter than the shortest idle lifetime of refresh tokens that authorization servers commonly set
+  // (about a week), so that one missed check does not matter.
+  tokenRefreshCheckMs: 60 * 60_000, tokenRefreshAgeMs: 24 * 60 * 60_000,
+};
+
+/**
+ * Keeps the enabled OAuth servers signed in while nobody uses them, for one app (docs/dev/mcp-servers.md *OAuth*,
+ * *Background refresh*): their refresh tokens could expire unused. A disabled server is not contacted. `changed` is
+ * told of a server its authorization server signed out. It runs until `close`.
+ */
+export class McpTokenRefresher {
+  private readonly options: Required<McpTokenRefreshOptions>;
+  private timer: ReturnType<typeof setTimeout> | null = null;
+  private closed = false;
+
+  constructor(
+    private readonly store: McpStore,
+    private readonly lock: McpRefreshLock,
+    private readonly logger: Logger,
+    private readonly changed: (serverId: number) => void,
+    options: McpTokenRefreshOptions = {},
+  ) {
+    this.options = { ...REFRESH_DEFAULTS, ...options };
+    this.schedule(Math.min(60_000, this.options.tokenRefreshCheckMs));
+  }
+
+  close(): void {
+    this.closed = true;
+    if (this.timer) clearTimeout(this.timer);
+  }
+
+  private schedule(delayMs: number) {
+    if (this.closed) return;
+    this.timer = setTimeout(() => {
+      void this.refreshAged().finally(() => this.schedule(this.options.tokenRefreshCheckMs));
+    }, delayMs);
+    this.timer.unref?.();
+  }
+
+  private async refreshAged(): Promise<void> {
+    let servers: McpRemoteRow[];
+    try {
+      servers = this.store.list().filter((server: McpServerRow): server is McpRemoteRow => server.transport !== "stdio" && server.enabled && server.authKind === "oauth");
+    } catch (error) {
+      this.logger.warn(`Looking for MCP tokens to refresh failed: ${messageOf(error)}`);
+      return;
+    }
+    for (const server of servers) {
+      if (this.closed) return;
+      const result = await refreshAgedMcpTokens(this.store, server, this.lock, this.options.tokenRefreshAgeMs / 1000)
+        .catch((error: unknown) => { this.logger.warn(`Refreshing MCP server ${server.name}'s tokens failed: ${messageOf(error)}`); return null; });
+      if (result === "failed") this.logger.warn(`Refreshing MCP server ${server.name}'s tokens failed; it is tried again at the next check`);
+      if (result === "signed_out") {
+        this.logger.info(`MCP server ${server.name} needs sign-in: its authorization server refused to refresh its tokens`);
+        this.changed(server.id);
+      }
+    }
+  }
+}
+
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 /**
@@ -268,7 +342,7 @@ export function refreshAgedMcpTokens(store: McpStore, server: McpServerRow, lock
  * posts to an endpoint of its own, and the authorization server, often on the same origin, gets the
  * transport's own OAuth requests with a client's credentials (Basic or in the form), never a bearer token.
  */
-export function oauthConnectionFetch(store: McpStore, server: McpServerRow, lock: McpRefreshLock): FetchLike {
+export function oauthConnectionFetch(store: McpStore, server: McpRemoteRow, lock: McpRefreshLock): FetchLike {
   const origin = new URL(server.url).origin;
   const accessToken = async () => parseJson<OAuthTokens>(await store.getSecret(server.id, "tokens"))?.access_token;
   const refreshAfter = (stale: string, challenge: { resourceMetadataUrl?: URL; scope?: string }): Promise<string | null> => lock.run(server.id, async () => {
@@ -316,7 +390,7 @@ async function defaultScope(serverUrl: string, challenge: { resourceMetadataUrl?
 /** Starts a sign-in to `server` whose callback is `redirectUrl`: discovery and, when the server has no
  * client for it, dynamic registration; the sign-in is recorded on the row (it replaces an earlier one).
  * Returns the authorization URL to send the user to. */
-export async function startMcpSignIn(store: McpStore, server: McpServerRow, redirectUrl: string): Promise<URL> {
+export async function startMcpSignIn(store: McpStore, server: McpRemoteRow, redirectUrl: string): Promise<URL> {
   const state = randomBytes(32).toString("base64url");
   const provider = new McpOAuthProvider(store, server, { kind: "sign-in", redirectUrl, state });
   const challenge = await probe(server.url);
@@ -334,7 +408,7 @@ export async function startMcpSignIn(store: McpStore, server: McpServerRow, redi
 
 /** Exchanges the code the callback received for tokens: they, the client they were issued to and the
  * sign-in's callback URL become the server's. */
-export async function finishMcpSignIn(store: McpStore, server: McpServerRow, signIn: McpSignIn, code: string): Promise<void> {
+export async function finishMcpSignIn(store: McpStore, server: McpRemoteRow, signIn: McpSignIn, code: string): Promise<void> {
   const provider = new McpOAuthProvider(store, server, { kind: "callback", redirectUrl: signIn.redirectUrl });
   await auth(provider, { serverUrl: server.url, authorizationCode: code, fetchFn: oauthFetch });
   if (!provider.issuedTokens) throw new Error("The authorization server issued no tokens");

@@ -1,19 +1,22 @@
 /**
- * The connections to remote MCP servers of one app (docs/dev/mcp-servers.md *Connections*, *Where
- * connections live*): at most one per server, opened on demand, shared by every caller, closed once idle,
- * on a change to the server and when the app stops. It reads each server's configuration and credentials from
- * the store when it connects.
+ * The connections to MCP servers of one app (docs/dev/mcp-servers.md *Connections*, *Where connections live*):
+ * at most one per remote server, shared by every caller, and one per stdio server and calling session (its process
+ * in the session's checkout), shared by the session's calls; opened on demand, closed once idle, on a change to the server and when the app stops. It reads each server's configuration
+ * and credentials from the store when it connects. A stdio server's tool list is kept in the store, so it is known
+ * while its process is stopped; its process is `McpStdio`'s (stdio.ts), the OAuth background refresh
+ * `McpTokenRefresher`'s (oauth-provider.ts).
  */
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport, StreamableHTTPError } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
-import type { FetchLike, Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
+import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { CallToolResultSchema, ErrorCode, McpError, type CallToolResult, type Tool } from "@modelcontextprotocol/sdk/types.js";
 import type { Logger } from "@reins/sdk/server";
-import type { McpServerRow, McpStore } from "./store.js";
-import { mcpSignedIn, McpOAuthProvider, McpRefreshLock, oauthConnectionFetch, refreshAgedMcpTokens } from "./oauth-provider.js";
+import type { McpRemoteRow, McpServerRow, McpStore } from "./store.js";
+import { McpServerSessionRequiredError, NodeProcessTransport, type McpStdio } from "./stdio.js";
+import { mcpSignedIn, McpOAuthProvider, oauthConnectionFetch, type McpRefreshLock } from "./oauth-provider.js";
 
 /**
  * Whether agents can use a server, and if not, why: `disabled` by the user; `needs_sign_in` (OAuth, with no
@@ -41,39 +44,41 @@ export class McpServerUnavailableError extends Error {
 }
 
 export interface McpConnectionOptions {
-  /** A connection no call used for this long is closed. */
+  /** A connection no call used for this long is closed (a stdio server's process stopped). */
   idleMs?: number;
   /** Connecting (the transport and `initialize`) is given this long. */
   connectTimeoutMs?: number;
+  /** Starting a stdio server and its `initialize`: longer, as `npx -y` may download it first. */
+  stdioConnectTimeoutMs?: number;
   /** A request without a timeout of its own (listing tools; a tool call unless given `timeoutMs`). */
   requestTimeoutMs?: number;
-  /** How often it looks for OAuth tokens to refresh in the background; the first look is at most a minute
-   * after it starts, since a reload starts it again. */
-  tokenRefreshCheckMs?: number;
-  /** Tokens issued longer ago than this are refreshed in the background. */
-  tokenRefreshAgeMs?: number;
 }
 
-export interface CallOptions { signal?: AbortSignal; timeoutMs?: number }
+/** The calling session: a stdio server runs a process for each, in its checkout. Null or left out for none (a
+ * remote server needs none). */
+export interface Placement { sessionId?: string | null }
+export interface CallOptions extends Placement { signal?: AbortSignal; timeoutMs?: number }
 
 const DEFAULTS: Required<McpConnectionOptions> = {
-  idleMs: 5 * 60_000, connectTimeoutMs: 15_000, requestTimeoutMs: 60_000,
-  // Shorter than the shortest idle lifetime of refresh tokens that authorization servers commonly set
-  // (about a week), so that one missed check does not matter.
-  tokenRefreshCheckMs: 60 * 60_000, tokenRefreshAgeMs: 24 * 60 * 60_000,
+  idleMs: 5 * 60_000, connectTimeoutMs: 15_000, stdioConnectTimeoutMs: 60_000, requestTimeoutMs: 60_000,
 };
 
 interface Connection {
   client: Client;
-  /** The tool list while it is known: listed on first use, forgotten on `tools/list_changed`. */
+  entry: Entry;
+  /** A stdio server's: why its process ended. */
+  stdio: NodeProcessTransport | null;
+  /** The tool list while it is known: listed on first use (a stdio server's when it connects), forgotten on
+   * `tools/list_changed` (a stdio server's listed again then). */
   tools: Promise<McpTool[]> | null;
 }
 
+/** A remote server's connection (`sessionId` null), or a stdio server's for one session. */
 interface Entry {
+  serverId: number;
+  sessionId: string | null;
   connection: Connection | null;
   connecting: Promise<Connection> | null;
-  /** The latest failure, until a connection succeeds or the server changes. */
-  failure: McpServerUnavailableError | null;
   inFlight: number;
   idleTimer: ReturnType<typeof setTimeout> | null;
   /** Bumped by `disconnect`: a connection opened for an earlier generation is closed, not kept. */
@@ -81,53 +86,71 @@ interface Entry {
 }
 
 export class McpConnections {
-  private readonly entries = new Map<number, Entry>();
+  /** By `entryKey`. */
+  private readonly entries = new Map<string, Entry>();
+  /** Each server's latest failure, until a connection of it succeeds or it changes: a stdio server's in any session. */
+  private readonly failures = new Map<number, McpServerUnavailableError>();
   private readonly options: Required<McpConnectionOptions>;
-  private readonly refreshLock = new McpRefreshLock();
-  private refreshTimer: ReturnType<typeof setTimeout> | null = null;
   private closed = false;
 
   /** `changed` is told when a server's status changes without a change to it: a failure is recorded or
-   * cleared, or a background refresh signs it out. An expiring access token is not told: the next read
-   * of the status shows it. */
+   * cleared. An expiring access token is not told: the next read of the status shows it. `refreshLock`
+   * serializes token refreshes with the background ones (`McpTokenRefresher`). */
   constructor(
     private readonly store: McpStore,
     private readonly logger: Logger,
     private readonly changed: (serverId: number) => void,
+    private readonly stdio: McpStdio,
+    private readonly refreshLock: McpRefreshLock,
     options: McpConnectionOptions = {},
   ) {
     this.options = { ...DEFAULTS, ...options };
-    this.scheduleTokenRefresh(Math.min(60_000, this.options.tokenRefreshCheckMs));
   }
 
   /** The status of `server`, as the caller read its row and whether it is signed in (`mcpSignedIn`). */
   status(server: McpServerRow, signedIn: boolean): McpServerStatus {
-    return configurationBlock(server, signedIn) ?? this.entries.get(server.id)?.failure?.status ?? { state: "ready" };
+    return configurationBlock(server, signedIn) ?? this.failures.get(server.id)?.status ?? { state: "ready" };
   }
 
-  /** Connects to the server afresh (closing a connection it has) and lists its tools: how many, or null
-   * when it failed (the failure is recorded in its status). */
-  async test(serverId: number, signal?: AbortSignal): Promise<number | null> {
-    await this.disconnect(serverId);
+  /** Connects to the server afresh (closing a connection it has; a stdio server's process for the session started
+   * again) and lists its tools: how many, or null when it failed (the failure is recorded in its status). */
+  async test(serverId: number, signal?: AbortSignal, { sessionId = null }: Placement = {}): Promise<number | null> {
+    if (this.store.get(serverId)?.transport === "stdio") {
+      const entry = sessionId ? this.entries.get(entryKey(serverId, sessionId)) : undefined;
+      if (entry) await this.reset(entry);
+    } else {
+      await this.disconnect(serverId);
+    }
     try {
-      return await this.use(serverId, signal, async connection => (await abortable(this.toolsOf(connection), signal)).length);
+      return await this.use(serverId, sessionId, signal, async connection => (await abortable(this.toolsOf(connection), signal)).length);
     } catch (error) {
       if (!(error instanceof McpServerUnavailableError)) throw error;
       return null;
     }
   }
 
-  /** The server's tools, from its connection's cache when it has one. */
-  listTools(serverId: number, { signal }: { signal?: AbortSignal } = {}): Promise<McpTool[]> {
-    return this.use(serverId, signal, connection => abortable(this.toolsOf(connection), signal));
+  /** The server's tools, from its connection's cache when it has one. A stdio server's when the session's process is
+   * not running are those it listed last, in any session, without starting it. */
+  listTools(serverId: number, { signal, sessionId = null }: { signal?: AbortSignal } & Placement = {}): Promise<McpTool[]> {
+    const server = this.store.get(serverId);
+    if (server?.transport === "stdio" && !(sessionId && this.entries.get(entryKey(serverId, sessionId))?.connection)) {
+      const blocked = configurationBlock(server, true);
+      if (blocked) return Promise.reject(new McpServerUnavailableError(server.name, blocked));
+      const kept = this.store.toolLists(serverId)[0];
+      if (kept) {
+        const tools: McpTool[] = JSON.parse(kept.tools);
+        return Promise.resolve(tools);
+      }
+    }
+    return this.use(serverId, sessionId, signal, connection => abortable(this.toolsOf(connection), signal));
   }
 
   /** Calls a tool. Throws `McpServerUnavailableError` when the server cannot be reached, and the SDK's
    * `McpError` for the server's JSON-RPC errors (an unknown tool, invalid arguments, a timeout: code
    * `RequestTimeout`). The result is the SDK's `CallToolResult`: content blocks, structured content, and
    * `isError` for a failure the tool itself reports. */
-  callTool(serverId: number, name: string, args: Record<string, unknown>, { signal, timeoutMs }: CallOptions = {}): Promise<CallToolResult> {
-    return this.use(serverId, signal, async ({ client }) => {
+  callTool(serverId: number, name: string, args: Record<string, unknown>, { signal, timeoutMs, sessionId = null }: CallOptions = {}): Promise<CallToolResult> {
+    return this.use(serverId, sessionId, signal, async ({ client }) => {
       const result = await client.callTool({ name, arguments: args }, undefined, { signal, timeout: timeoutMs ?? this.options.requestTimeoutMs });
       const parsed = CallToolResultSchema.safeParse(result);
       if (parsed.success) return parsed.data;
@@ -136,60 +159,41 @@ export class McpConnections {
     });
   }
 
-  /** Closes the server's connection and forgets its failure: after a change to it, signing out, or its
-   * removal. A call in flight on it fails. It does not tell `changed`: its callers publish the server. */
+  /** Closes the server's connections (stopping a stdio server's processes) and forgets its failure: after a change
+   * to it, signing out, or its removal. A call in flight on one fails. It does not tell `changed`: its callers
+   * publish the server. */
   async disconnect(serverId: number): Promise<void> {
-    const entry = this.entries.get(serverId);
-    if (!entry) return;
-    entry.generation++;
-    entry.failure = null;
-    entry.connecting = null;
-    await this.drop(entry);
+    this.failures.delete(serverId);
+    await Promise.all([...this.entries.values()].filter(entry => entry.serverId === serverId).map(entry => this.reset(entry)));
   }
 
   /** The app stops: every connection is closed, and nothing connects again. */
   async close(): Promise<void> {
     this.closed = true;
-    if (this.refreshTimer) clearTimeout(this.refreshTimer);
-    await Promise.all([...this.entries.keys()].map(serverId => this.disconnect(serverId)));
+    await Promise.all([...this.entries.values()].map(entry => this.reset(entry)));
     this.entries.clear();
+    this.failures.clear();
   }
 
-  private scheduleTokenRefresh(delayMs: number) {
-    if (this.closed) return;
-    this.refreshTimer = setTimeout(() => {
-      void this.refreshAgedTokens().finally(() => this.scheduleTokenRefresh(this.options.tokenRefreshCheckMs));
-    }, delayMs);
-    this.refreshTimer.unref?.();
-  }
-
-  /** Keeps the enabled OAuth servers signed in while nobody uses them: their refresh tokens could expire
-   * unused. A disabled server is not contacted. */
-  private async refreshAgedTokens(): Promise<void> {
-    let servers: McpServerRow[];
-    try {
-      servers = this.store.list().filter(server => server.enabled && server.authKind === "oauth");
-    } catch (error) {
-      this.logger.warn(`Looking for MCP tokens to refresh failed: ${describe(error)}`);
-      return;
-    }
-    for (const server of servers) {
-      if (this.closed) return;
-      const result = await refreshAgedMcpTokens(this.store, server, this.refreshLock, this.options.tokenRefreshAgeMs / 1000)
-        .catch((error: unknown) => { this.logger.warn(`Refreshing MCP server ${server.name}'s tokens failed: ${describe(error)}`); return null; });
-      if (result === "failed") this.logger.warn(`Refreshing MCP server ${server.name}'s tokens failed; it is tried again at the next check`);
-      if (result === "signed_out") {
-        this.logger.info(`MCP server ${server.name} needs sign-in: its authorization server refused to refresh its tokens`);
-        this.changed(server.id);
-      }
-    }
+  private async reset(entry: Entry): Promise<void> {
+    entry.generation++;
+    entry.connecting = null;
+    await this.drop(entry);
   }
 
   /** Runs `work` on the server's connection, connecting first if needed. A request that finds the
    * connection's MCP session gone (the server restarted: 404) was not run, so it is run once more on a
    * new connection. */
-  private async use<T>(serverId: number, signal: AbortSignal | undefined, work: (connection: Connection) => Promise<T>): Promise<T> {
-    const entry = this.entryOf(serverId);
+  private async use<T>(serverId: number, sessionId: string | null, signal: AbortSignal | undefined, work: (connection: Connection) => Promise<T>): Promise<T> {
+    const server = this.store.get(serverId);
+    // Callers find the server first (the model), so only a removal since then lands here.
+    if (!server) throw new Error(`MCP server ${serverId} was removed`);
+    const stdio = server.transport === "stdio";
+    if (stdio && !sessionId) {
+      const blocked = configurationBlock(server, true);
+      throw blocked ? new McpServerUnavailableError(server.name, blocked) : new McpServerSessionRequiredError(server.name);
+    }
+    const entry = this.entryOf(serverId, stdio ? sessionId : null);
     entry.inFlight++;
     this.clearIdle(entry);
     try {
@@ -200,7 +204,7 @@ export class McpConnections {
         } catch (error) {
           const handled = await this.requestFailed(serverId, entry, connection, error, signal);
           if (handled === "retry" && attempt === 0) continue;
-          throw handled === "retry" ? this.failure(serverId, entry, error) : handled;
+          throw handled === "retry" ? this.failure(serverId, error) : handled;
         }
       }
     } finally {
@@ -209,11 +213,12 @@ export class McpConnections {
     }
   }
 
-  private entryOf(serverId: number): Entry {
-    let entry = this.entries.get(serverId);
+  private entryOf(serverId: number, sessionId: string | null): Entry {
+    const key = entryKey(serverId, sessionId);
+    let entry = this.entries.get(key);
     if (!entry) {
-      entry = { connection: null, connecting: null, failure: null, inFlight: 0, idleTimer: null, generation: 0 };
-      this.entries.set(serverId, entry);
+      entry = { serverId, sessionId, connection: null, connecting: null, inFlight: 0, idleTimer: null, generation: 0 };
+      this.entries.set(key, entry);
     }
     return entry;
   }
@@ -242,46 +247,63 @@ export class McpConnections {
       connection = await this.connect(server, entry);
     } catch (error) {
       if (generation !== entry.generation) throw error;
-      throw this.failure(server.id, entry, error);
+      throw this.failure(server.id, error);
     }
     if (generation !== entry.generation || this.closed) {
       await connection.client.close().catch(() => undefined);
       throw new Error(`MCP server ${server.name} changed while connecting`);
     }
     entry.connection = connection;
-    if (entry.failure) {
-      entry.failure = null;
-      this.changed(server.id);
-    }
+    if (this.failures.delete(server.id)) this.changed(server.id);
     return connection;
   }
 
-  /** Connects over the server's transport (`transportFor`). */
+  /** Connects over the server's transport (`transportFor`); a stdio server's tool list is listed and kept then. */
   private async connect(server: McpServerRow, entry: Entry): Promise<Connection> {
-    const authProvider = server.authKind === "oauth" ? new McpOAuthProvider(this.store, server, { kind: "connection" }) : undefined;
-    const transport = transportFor(server, {
-      requestInit: headerRequestInit(server, await this.store.getSecret(server.id, "header_value")),
-      authProvider,
-      fetch: authProvider ? oauthConnectionFetch(this.store, server, this.refreshLock) : undefined,
-    });
-    const connection: Connection = { client: undefined!, tools: null };
+    const { transport, authProvider } = await this.transportFor(server, entry);
+    const stdio = transport instanceof NodeProcessTransport ? transport : null;
+    const connection: Connection = { client: undefined!, entry, stdio, tools: null };
     connection.client = new Client({ name: "reins", version: "1.0.0" }, {
       capabilities: {},
-      listChanged: { tools: { autoRefresh: false, debounceMs: 100, onChanged: () => { connection.tools = null; } } },
+      listChanged: {
+        tools: {
+          autoRefresh: false, debounceMs: 100,
+          onChanged: () => {
+            connection.tools = null;
+            if (stdio) void this.toolsOf(connection).catch(() => undefined);
+          },
+        },
+      },
     });
     connection.client.onclose = () => { if (entry.connection === connection) entry.connection = null; };
     connection.client.onerror = (error) => this.logger.debug(`MCP server ${server.name}: ${error.message}`);
     try {
-      await connection.client.connect(transport, { timeout: this.options.connectTimeoutMs });
+      await connection.client.connect(transport, { timeout: stdio ? this.options.stdioConnectTimeoutMs : this.options.connectTimeoutMs });
+      if (stdio) await this.toolsOf(connection);
     } catch (error) {
       await connection.client.close().catch(() => undefined);
       if (authProvider?.signInRequired) throw new UnauthorizedError();
       if (server.transport === "http" && refusedAsLegacy(error)) {
         throw new Error(`${describe(error)}. If this is a legacy HTTP+SSE server, set its transport to SSE.`, { cause: error });
       }
+      if (stdio?.endReason) throw new Error(stdio.endReason, { cause: error });
       throw error;
     }
     return connection;
+  }
+
+  /** The one place a transport kind becomes a transport: a remote server's with its credentials (an OAuth server's
+   * provider, which a failure reads), a stdio server's process for the entry's session. */
+  private async transportFor(server: McpServerRow, entry: Entry): Promise<{ transport: Transport; authProvider?: McpOAuthProvider }> {
+    if (server.transport === "stdio") return { transport: new NodeProcessTransport(() => this.stdio.start(server, entry.sessionId!)) };
+    const authProvider = server.authKind === "oauth" ? new McpOAuthProvider(this.store, server, { kind: "connection" }) : undefined;
+    const options = {
+      requestInit: headerRequestInit(server, await this.store.getSecret(server.id, "header_value")),
+      authProvider,
+      fetch: authProvider ? oauthConnectionFetch(this.store, server, this.refreshLock) : undefined,
+    };
+    const url = new URL(server.url);
+    return { transport: server.transport === "http" ? new StreamableHTTPClientTransport(url, options) : new SSEClientTransport(url, options), authProvider };
   }
 
   /** What a failed request means: `"retry"` when its session was gone (not run); else the error to throw.
@@ -296,28 +318,41 @@ export class McpConnections {
     if (signal?.aborted) return error;
     if (error instanceof McpError && error.code !== ErrorCode.ConnectionClosed) return error;
     await this.drop(entry, connection);
-    return this.failure(serverId, entry, error);
+    const ended = connection.stdio?.endReason;
+    return this.failure(serverId, ended ? new Error(ended, { cause: error }) : error);
   }
 
   /** Records why the server cannot be used, and tells. */
-  private failure(serverId: number, entry: Entry, error: unknown): McpServerUnavailableError {
+  private failure(serverId: number, error: unknown): McpServerUnavailableError {
     if (error instanceof McpServerUnavailableError) return error;
     const name = this.store.get(serverId)?.name ?? String(serverId);
     const status: McpServerUnavailableError["status"] = error instanceof UnauthorizedError
       ? { state: "needs_sign_in" }
       : { state: "error", message: describe(error) };
-    entry.failure = new McpServerUnavailableError(name, status);
+    const failure = new McpServerUnavailableError(name, status);
+    this.failures.set(serverId, failure);
     this.changed(serverId);
-    return entry.failure;
+    return failure;
   }
 
   /** The listing is shared by every caller, so no caller's signal stops it: one that gives up (a search
-   * past its deadline) leaves it to finish for the next. */
+   * past its deadline) leaves it to finish for the next. A stdio server's is kept for its node, unless the
+   * server changed meanwhile. */
   private toolsOf(connection: Connection): Promise<McpTool[]> {
     if (!connection.tools) {
+      const { entry } = connection;
+      const generation = entry.generation;
       const listing = this.listAll(connection.client);
       connection.tools = listing;
-      listing.catch(() => { if (connection.tools === listing) connection.tools = null; });
+      listing.then(tools => {
+        const nodeId = connection.stdio?.nodeId;
+        if (!nodeId || generation !== entry.generation || this.closed) return;
+        try {
+          this.store.setToolList(entry.serverId, nodeId, JSON.stringify(tools));
+        } catch (error) {
+          this.logger.warn(`Keeping MCP server ${entry.serverId}'s tool list failed: ${describe(error)}`);
+        }
+      }, () => { if (connection.tools === listing) connection.tools = null; });
     }
     return connection.tools;
   }
@@ -358,22 +393,11 @@ export class McpConnections {
   }
 }
 
-interface TransportOptions {
-  requestInit: RequestInit | undefined;
-  authProvider: McpOAuthProvider | undefined;
-  fetch: FetchLike | undefined;
+function entryKey(serverId: number, sessionId: string | null): string {
+  return sessionId === null ? String(serverId) : `${serverId}:${sessionId}`;
 }
 
-/** The one place a transport kind becomes a transport. */
-function transportFor(server: McpServerRow, options: TransportOptions): Transport {
-  const url = new URL(server.url);
-  switch (server.transport) {
-    case "http": return new StreamableHTTPClientTransport(url, options);
-    case "sse": return new SSEClientTransport(url, options);
-  }
-}
-
-function headerRequestInit(server: McpServerRow, value: string | null): RequestInit | undefined {
+function headerRequestInit(server: McpRemoteRow, value: string | null): RequestInit | undefined {
   if (server.authKind !== "header" || !server.headerName) return undefined;
   return value === null ? undefined : { headers: { [server.headerName]: value } };
 }
@@ -388,7 +412,7 @@ function refusedAsLegacy(error: unknown): boolean {
 /** What the server's configuration alone says: disabled, or OAuth without usable tokens. */
 function configurationBlock(server: McpServerRow, signedIn: boolean): McpServerUnavailableError["status"] | null {
   if (!server.enabled) return { state: "disabled" };
-  if (server.authKind === "oauth" && !signedIn) return { state: "needs_sign_in" };
+  if (server.transport !== "stdio" && server.authKind === "oauth" && !signedIn) return { state: "needs_sign_in" };
   return null;
 }
 

@@ -44,4 +44,21 @@ export const mcpMigrations: readonly Migration[] = [
       DROP TABLE mcp_server_secrets;
     `),
   },
+  {
+    // Stdio servers: a command run for each calling session, in its checkout, its environment a secret (`env`). Their
+    // tool lists are kept, by the node they ran on, so a search answers while no process runs.
+    id: "003_stdio",
+    up: db => db.exec(`
+      ALTER TABLE mcp_servers ADD COLUMN command TEXT;
+      ALTER TABLE mcp_servers ADD COLUMN args TEXT NOT NULL DEFAULT '[]';
+      ALTER TABLE mcp_servers ADD COLUMN cwd TEXT;
+      CREATE TABLE mcp_tool_lists (
+        server_id INTEGER NOT NULL,
+        node_id TEXT NOT NULL,
+        tools TEXT NOT NULL,
+        listed_at TEXT NOT NULL,
+        PRIMARY KEY (server_id, node_id)
+      );
+    `),
+  },
 ];

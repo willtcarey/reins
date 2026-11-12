@@ -4,7 +4,8 @@ import { extensionDb, useTestDb } from "../../helpers/test-db.js";
 import { createAppState, type TestAppState } from "../../helpers/app-state.js";
 import { echoTool, startFakeMcpServer, type FakeMcpServer } from "../../helpers/fake-mcp-server.js";
 import { mcpMessage, testMcp } from "../../helpers/mcp-extension.js";
-import { McpServerUnavailableError, type McpConnectionOptions } from "../../../extensions/mcp/connections.js";
+import { McpServerUnavailableError } from "../../../extensions/mcp/connections.js";
+import type { McpOptions } from "../../../extensions/mcp/index.js";
 import { McpServerNotFoundError, type McpMessage, type McpServers } from "../../../extensions/mcp/servers.js";
 
 const fakes: FakeMcpServer[] = [];
@@ -20,7 +21,7 @@ afterEach(async () => {
 });
 
 /** An app state with the MCP extension (its connections given `mcp`), whose MCP messages the test reads (`messages`). */
-function observedState({ mcp }: { mcp?: McpConnectionOptions } = {}): { state: TestAppState; servers: McpServers; messages: McpMessage[] } {
+function observedState({ mcp }: { mcp?: McpOptions } = {}): { state: TestAppState; servers: McpServers; messages: McpMessage[] } {
   const messages: McpMessage[] = [];
   const extension = testMcp(mcp);
   const send = (frame: string) => { const message = mcpMessage(frame); if (message) messages.push(message); return 0; };
