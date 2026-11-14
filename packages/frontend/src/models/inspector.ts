@@ -1,6 +1,6 @@
 /** The Inspector's tabs (docs/plans/workspace-inspector.md). */
 
-import type { Disposer, View } from "@reins/sdk";
+import { sameSource, type Disposer, type Sessions, type Source, type View, type Workspace } from "@reins/sdk";
 import type { ViewRegistry } from "../sdk-host/view-registry.js";
 
 export interface InspectorTab {
@@ -92,6 +92,15 @@ export class Inspector {
     if (this._tabs.find((tab) => tab.key === key)?.pinned === false) this.remove(key);
   }
 
+  /** Closes every tab not pinned that `which` names; the focus goes to the first tab left when its tab closed. */
+  closeTabs(which: (tab: InspectorTab) => boolean): void {
+    const left = this._tabs.filter((tab) => tab.pinned || !which(tab));
+    if (left.length === this._tabs.length) return;
+    this._tabs = left;
+    if (!this.activeTab) this._activeKey = left[0]?.key ?? null;
+    this.notify();
+  }
+
   /** Closes `view`'s tab as the user would (`workspace.close`). */
   closeView(view: View): void {
     this.close(this.views.keyOf(view));
@@ -120,4 +129,35 @@ export class Inspector {
   private notify(): void {
     for (const listener of this.listeners) listener();
   }
+}
+
+/**
+ * The Inspector's tabs belong to the checkout they were opened on (docs/features/workspace-panes.md): going to a
+ * session on another source closes those not pinned. Going to another session on the same source, or to a page of
+ * no session, closes nothing.
+ */
+export function closeTabsOnSourceChange(
+  workspace: Pick<Workspace, "currentSubject" | "onDidChange">,
+  sessions: Pick<Sessions, "get">,
+  inspector: Pick<Inspector, "tabs" | "closeTabs">,
+): Disposer {
+  let shownSession: string | null = null;
+  let shownSource: Source | null = null;
+  let latest = 0;
+  const follow = async () => {
+    const sessionId = workspace.currentSubject("session");
+    if (!sessionId || sessionId === shownSession) return;
+    shownSession = sessionId;
+    // The tabs as the switch found them: those the switch opens (an extension's view for the new session, in the
+    // same change) or opens again (a new tab object) are the new session's. The session's source may take a request.
+    const before = new Set(inspector.tabs);
+    const asked = ++latest;
+    const source = await sessions.get(sessionId).then((session) => session.source, () => null);
+    if (asked !== latest || !source) return;
+    const previous = shownSource;
+    shownSource = source;
+    if (previous && !sameSource(previous, source)) inspector.closeTabs((tab) => before.has(tab));
+  };
+  void follow();
+  return workspace.onDidChange(() => void follow());
 }

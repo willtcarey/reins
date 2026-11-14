@@ -14,7 +14,7 @@ import { SdkUi } from "../sdk-host/ui.js";
 import { Extensions } from "../extension-system/extensions.js";
 import { SdkNodes, SdkProjects, SdkTasks } from "../sdk-host/projects.js";
 import { AppClient } from "../models/ws-client.js";
-import { mainViewOf, openSettings, renderRoutePage } from "../routing/app-router.js";
+import { mainViewOf, navigate, openSettings, renderRoutePage, settingsExtensionHash } from "../routing/app-router.js";
 import { RoutedMainArea } from "../routing/main-area.js";
 import type { Route } from "../routing/router.js";
 import type { View } from "@reins/sdk";
@@ -23,7 +23,8 @@ import type { AppWorkspace } from "./app-workspace.js";
 import type { ImageLightbox } from "./image-lightbox.js";
 import { registerNewSessionPage } from "./new-session-page.js";
 import { registerDiffFileTree } from "./changes/diff-file-tree.js";
-import { openFilesOfShownSession } from "./open-file-requests.js";
+import { openFilesOfShownSession } from "../models/open-file-requests.js";
+import { closeTabsOnSourceChange } from "../models/inspector.js";
 import { registerSessionViews } from "./session-views.js";
 import type { QuickOpen } from "./quick-open.js";
 import "./file-browser/file-browser.js";
@@ -52,6 +53,7 @@ export class AppShell extends LitElement {
     containers: { inspector: this.appStore.inspector, main: this.mainArea },
     http: api,
     socket: this.appStore.client,
+    showSettings: (extension) => navigate(settingsExtensionHash(extension)),
   };
   private disposeSdk: Array<() => void> = [];
   /** The extensions' frontend parts, built in and added, as the server's report says they should be. */
@@ -98,12 +100,14 @@ export class AppShell extends LitElement {
 
   override connectedCallback() {
     // The app's own views follow the main area through the SDK's workspace, as an extension would.
-    const { workspace } = createReinsSdk({ name: "app", label: "Reins" }, this.sdkHost);
+    const { workspace, sessions } = createReinsSdk({ name: "app", label: "Reins" }, this.sdkHost);
     this.disposeSdk = [
       registerSessionViews(this.appStore.views, this.appStore),
       registerNewSessionPage(this.appStore.views, this.appStore),
       registerDiffFileTree(this.appStore.views, workspace, this.appStore.diffs),
-      openFilesOfShownSession(this.appStore.client, workspace, document),
+      openFilesOfShownSession(this.appStore.client, workspace, (source, file) => this.fileBrowserStore?.open(source, file)),
+      // Before any extension listens: a view an extension opens for the new session in the same change is not closed.
+      closeTabsOnSourceChange(workspace, sessions, this.appStore.inspector),
       this.quickOpenStore.followWorkspace(workspace),
       // A page registered or gone changes the title of the page shown.
       this.appStore.views.subscribe(() => this.updateDocumentTitle()),

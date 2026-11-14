@@ -6,13 +6,11 @@
 
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { McpContext, McpServers, McpServerView, McpSignInStart } from "./servers.js";
-import { checkMcpUpdateKind, InvalidMcpServerError, McpServerUpdateSchema, parseMcpServerInput, type McpServerUpdate } from "./input.js";
+import { checkMcpUpdateKind, InvalidMcpServerError, MCP_SERVER_NAME_PATTERN, McpServerUpdateSchema, parseMcpServerInput, type McpServerUpdate } from "./input.js";
 import type { McpRemoteFields, McpRemoteRow, McpRemoteTransport, McpSecretKind, McpServerFields, McpServerRow, McpStdioFields, McpStore } from "./store.js";
 import type { CallOptions, McpTool, Placement } from "./connections.js";
 import { startMcpSignIn, mcpSignedIn } from "./oauth-provider.js";
 
-/** A server's name is the identifier its tools will be namespaced under. */
-export const MCP_SERVER_NAME_PATTERN = /^[a-z][a-z0-9-]{0,31}$/;
 const MCP_REMOTE_TRANSPORTS: readonly McpRemoteTransport[] = ["http", "sse"];
 const OAUTH_SECRETS: readonly McpSecretKind[] = ["client_information", "tokens", "code_verifier", "discovery"];
 
@@ -125,7 +123,7 @@ export function withUniqueMcpServerName<T>(name: string, write: () => T): T {
   try {
     return write();
   } catch (error) {
-    if (error instanceof Error && /UNIQUE constraint failed: mcp_servers\.name/.test(error.message)) throw new McpServerNameTakenError(name);
+    if (error instanceof Error && /UNIQUE constraint failed: (mcp_servers\.name|index .mcp_servers_project_name.)/.test(error.message)) throw new McpServerNameTakenError(name);
     throw error;
   }
 }
@@ -169,10 +167,12 @@ export class McpServerModel {
     };
   }
 
-  /** Tells browsers the server as this model read it (`mcp_server_updated`); its view. */
+  /** Tells browsers the server as this model read it (`mcp_server_updated`; a repo server's project, `mcp_repo_changed`,
+   * as Settings' list is the user's own); its view. */
   async publish(): Promise<McpServerView> {
     const server = await this.view();
-    this.context.broadcast({ type: "mcp_server_updated", server });
+    if (this.row.projectId !== null) this.context.broadcast({ type: "mcp_repo_changed", projectId: this.row.projectId });
+    else this.context.broadcast({ type: "mcp_server_updated", server });
     return server;
   }
 
@@ -183,6 +183,7 @@ export class McpServerModel {
   async update(changes: unknown): Promise<McpServerView> {
     const update = parseMcpServerInput(McpServerUpdateSchema, changes);
     const before = this.row;
+    if (before.projectId !== null) return this.updateRepo(update);
     const fields = validMcpServerFields(changedFields(before, update));
     // The other kind's fields, as their kind's defaults, for comparisons and to clear its secrets.
     const remote = fields.transport === "stdio" ? null : fields;
@@ -220,8 +221,17 @@ export class McpServerModel {
     return this.reread().publish();
   }
 
+  /** A repo server's file defines it; whether it may run is the user's toggle, from the browser (`allow`). */
+  private async updateRepo(update: McpServerUpdate): Promise<McpServerView> {
+    const field = Object.keys(update)[0] ?? "nothing";
+    throw new InvalidMcpServerError(field === "enabled"
+      ? `${this.name} is defined by its project's .mcp.json: the user turns it on or off in a session's MCP servers list`
+      : `${this.name} is defined by its project's .mcp.json: change ${field} there`);
+  }
+
   /** Removes it with its credentials, closing its connections (stopping a stdio server's processes). */
   async remove(): Promise<void> {
+    if (this.row.projectId !== null) throw new InvalidMcpServerError(`${this.name} is defined by its project's .mcp.json: remove it there`);
     await this.context.connections.disconnect(this.id);
     if (this.row.transport === "stdio") await this.context.stdio.forget(this.name);
     await this.store.delete(this.id);

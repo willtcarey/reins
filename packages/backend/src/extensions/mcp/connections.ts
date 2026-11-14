@@ -15,29 +15,38 @@ import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { CallToolResultSchema, ErrorCode, McpError, type CallToolResult, type Tool } from "@modelcontextprotocol/sdk/types.js";
 import type { Logger } from "@reins/sdk/server";
 import type { McpRemoteRow, McpServerRow, McpStore } from "./store.js";
+import { expandTemplate } from "./repo-config.js";
+import { repoVariables } from "./repo-servers.js";
 import { McpServerSessionRequiredError, NodeProcessTransport, type McpStdio } from "./stdio.js";
 import { mcpSignedIn, McpOAuthProvider, oauthConnectionFetch, type McpRefreshLock } from "./oauth-provider.js";
+import type { McpRepoGate } from "./repo-gate.js";
 
 /**
- * Whether agents can use a server, and if not, why: `disabled` by the user; `needs_sign_in` (OAuth, with no
- * tokens, tokens that no longer refresh, or an expired access token without a refresh token); `error`, its
- * latest attempt or request having failed (`message` says why); else `ready`. The connection is not part
- * of it: one is opened on demand.
+ * Whether agents can use a server, and if not, why: `disabled` by the user (their own servers); `needs_sign_in`
+ * (OAuth, with no tokens, tokens that no longer refresh, or an expired access token without a refresh token); `off`,
+ * a repo server the user has not turned on (`McpRepoGate`, whose `message` is what agents are told); `error`, its
+ * latest attempt or request having failed (`message` says why); else `ready`. The connection is not part of it: one
+ * is opened on demand.
  */
 export type McpServerStatus =
   | { state: "ready" }
   | { state: "needs_sign_in" }
+  | { state: "off"; message: string }
   | { state: "error"; message: string }
   | { state: "disabled" };
+
+/** Why a server cannot be used now. */
+export type McpServerBlock = Exclude<McpServerStatus, { state: "ready" }>;
 
 /** A tool as the server lists it: its name, description and the JSON Schema of its arguments. */
 export type McpTool = Pick<Tool, "name" | "title" | "description" | "inputSchema" | "outputSchema" | "annotations">;
 
-/** Thrown when a server cannot be used now: disabled, needing sign-in, or failing (`status`). */
+/** Thrown when a server cannot be used now: disabled, off, needing sign-in, or failing (`status`). */
 export class McpServerUnavailableError extends Error {
-  constructor(readonly serverName: string, readonly status: Exclude<McpServerStatus, { state: "ready" }>) {
-    super(status.state === "disabled" ? `MCP server ${serverName} is disabled`
+  constructor(readonly serverName: string, readonly status: McpServerBlock) {
+    super(status.state === "disabled" ? `MCP server ${serverName} is disabled: only the user can turn it on, with /mcp`
       : status.state === "needs_sign_in" ? `MCP server ${serverName} needs sign-in`
+      : status.state === "off" ? status.message
       : `MCP server ${serverName} is unavailable: ${status.message}`);
     this.name = "McpServerUnavailableError";
   }
@@ -101,6 +110,7 @@ export class McpConnections {
     private readonly logger: Logger,
     private readonly changed: (serverId: number) => void,
     private readonly stdio: McpStdio,
+    private readonly gate: Pick<McpRepoGate, "block">,
     private readonly refreshLock: McpRefreshLock,
     options: McpConnectionOptions = {},
   ) {
@@ -134,15 +144,19 @@ export class McpConnections {
   listTools(serverId: number, { signal, sessionId = null }: { signal?: AbortSignal } & Placement = {}): Promise<McpTool[]> {
     const server = this.store.get(serverId);
     if (server?.transport === "stdio" && !(sessionId && this.entries.get(entryKey(serverId, sessionId))?.connection)) {
-      const blocked = configurationBlock(server, true);
-      if (blocked) return Promise.reject(new McpServerUnavailableError(server.name, blocked));
-      const kept = this.store.toolLists(serverId)[0];
-      if (kept) {
-        const tools: McpTool[] = JSON.parse(kept.tools);
-        return Promise.resolve(tools);
-      }
+      return this.keptTools(server, sessionId).then(kept => kept ?? this.use(serverId, sessionId, signal, connection => abortable(this.toolsOf(connection), signal)));
     }
     return this.use(serverId, sessionId, signal, connection => abortable(this.toolsOf(connection), signal));
+  }
+
+  /** A stdio server's tools as last listed in any session, when it may run for the caller; null before its first listing. */
+  private async keptTools(server: McpServerRow & { transport: "stdio" }, sessionId: string | null): Promise<McpTool[] | null> {
+    const blocked = configurationBlock(server, true) ?? await this.gate.block(server, sessionId);
+    if (blocked) throw new McpServerUnavailableError(server.name, blocked);
+    const kept = this.store.toolLists(server.id)[0];
+    if (!kept) return null;
+    const tools: McpTool[] = JSON.parse(kept.tools);
+    return tools;
   }
 
   /** Calls a tool. Throws `McpServerUnavailableError` when the server cannot be reached, and the SDK's
@@ -165,6 +179,12 @@ export class McpConnections {
   async disconnect(serverId: number): Promise<void> {
     this.failures.delete(serverId);
     await Promise.all([...this.entries.values()].filter(entry => entry.serverId === serverId).map(entry => this.reset(entry)));
+  }
+
+  /** Closes one session's connection of a stdio server (stopping its process): its entry changed in that session. */
+  async disconnectSession(serverId: number, sessionId: string): Promise<void> {
+    const entry = this.entries.get(entryKey(serverId, sessionId));
+    if (entry) await this.reset(entry);
   }
 
   /** The app stops: every connection is closed, and nothing connects again. */
@@ -229,7 +249,7 @@ export class McpConnections {
     const server = this.store.get(serverId);
     // Callers find the server first (the model), so only a removal since then lands here.
     if (!server) throw new Error(`MCP server ${serverId} was removed`);
-    const blocked = configurationBlock(server, await mcpSignedIn(this.store, server.id));
+    const blocked = configurationBlock(server, await mcpSignedIn(this.store, server.id)) ?? await this.gate.block(server, entry.sessionId);
     if (blocked) throw new McpServerUnavailableError(server.name, blocked);
     if (entry.connection) return entry.connection;
     if (!entry.connecting) {
@@ -296,9 +316,14 @@ export class McpConnections {
    * provider, which a failure reads), a stdio server's process for the entry's session. */
   private async transportFor(server: McpServerRow, entry: Entry): Promise<{ transport: Transport; authProvider?: McpOAuthProvider }> {
     if (server.transport === "stdio") return { transport: new NodeProcessTransport(() => this.stdio.start(server, entry.sessionId!)) };
-    const authProvider = server.authKind === "oauth" ? new McpOAuthProvider(this.store, server, { kind: "connection" }) : undefined;
+    // A repo server not signed in to connects without OAuth, so that one which needs none just works, and one that
+    // does refuses it (a 401: needs sign-in) without the transport registering a client at each attempt.
+    const oauth = server.authKind === "oauth" && (server.projectId === null || await this.store.getSecret(server.id, "tokens") !== null);
+    const authProvider = oauth ? new McpOAuthProvider(this.store, server, { kind: "connection" }) : undefined;
     const options = {
-      requestInit: headerRequestInit(server, await this.store.getSecret(server.id, "header_value")),
+      requestInit: server.repo?.kind === "http"
+        ? { headers: await repoHeaders(this.store, server, server.repo.headers) }
+        : headerRequestInit(server, await this.store.getSecret(server.id, "header_value")),
       authProvider,
       fetch: authProvider ? oauthConnectionFetch(this.store, server, this.refreshLock) : undefined,
     };
@@ -325,8 +350,9 @@ export class McpConnections {
   /** Records why the server cannot be used, and tells. */
   private failure(serverId: number, error: unknown): McpServerUnavailableError {
     if (error instanceof McpServerUnavailableError) return error;
-    const name = this.store.get(serverId)?.name ?? String(serverId);
-    const status: McpServerUnavailableError["status"] = error instanceof UnauthorizedError
+    const server = this.store.get(serverId);
+    const name = server?.name ?? String(serverId);
+    const status: McpServerUnavailableError["status"] = error instanceof UnauthorizedError || (server?.projectId != null && refusedUnauthorized(error))
       ? { state: "needs_sign_in" }
       : { state: "error", message: describe(error) };
     const failure = new McpServerUnavailableError(name, status);
@@ -402,6 +428,11 @@ function headerRequestInit(server: McpRemoteRow, value: string | null): RequestI
   return value === null ? undefined : { headers: { [server.headerName]: value } };
 }
 
+/** A server that refused a connection without credentials: a repo server's, which needs a sign-in. */
+function refusedUnauthorized(error: unknown): boolean {
+  return error instanceof Error && "code" in error && error.code === 401;
+}
+
 /** What a legacy HTTP+SSE server answers a streamable HTTP client's first POST (404, 405), as does a wrong
  * path: a 4xx other than authentication. */
 function refusedAsLegacy(error: unknown): boolean {
@@ -409,10 +440,28 @@ function refusedAsLegacy(error: unknown): boolean {
     && error.code !== 401 && error.code !== 403;
 }
 
-/** What the server's configuration alone says: disabled, or OAuth without usable tokens. */
+/** A repo server's headers, each `${VAR}` expanded from the values the user gave for the project, else its default.
+ * Never from the Reins server's environment: an HTTP entry runs without being turned on, so a file could otherwise
+ * send any of the server's variables to any URL. A variable with neither fails the connection. */
+async function repoHeaders(store: McpStore, server: McpRemoteRow, templates: Record<string, string>): Promise<Record<string, string>> {
+  const given = await repoVariables(store, server.id);
+  const headers: Record<string, string> = {};
+  const missing = new Set<string>();
+  for (const [name, template] of Object.entries(templates)) {
+    const expanded = expandTemplate(template, variable => given[variable]);
+    for (const variable of expanded.missing) missing.add(variable);
+    headers[name] = expanded.value;
+  }
+  if (missing.size > 0) throw new Error(`Its headers need a value for ${[...missing].join(", ")}: give it in the session's MCP servers list (/mcp)`);
+  return headers;
+}
+
+/** What the server's configuration alone says: one of the user's own disabled (a repo server's switch is
+ * `McpRepoGate`'s), or OAuth without usable tokens. A repo server's HTTP entry does not say whether it signs in: it
+ * needs sign-in once the server refuses it (a 401). */
 function configurationBlock(server: McpServerRow, signedIn: boolean): McpServerUnavailableError["status"] | null {
-  if (!server.enabled) return { state: "disabled" };
-  if (server.transport !== "stdio" && server.authKind === "oauth" && !signedIn) return { state: "needs_sign_in" };
+  if (server.projectId === null && !server.enabled) return { state: "disabled" };
+  if (server.transport !== "stdio" && server.authKind === "oauth" && !signedIn && server.projectId === null) return { state: "needs_sign_in" };
   return null;
 }
 

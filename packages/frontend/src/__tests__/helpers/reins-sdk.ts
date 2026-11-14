@@ -11,7 +11,7 @@ import { ConversationsStore } from "../../models/stores/conversations-store.js";
 import { SessionOperations } from "../../models/session-operations.js";
 import { ReinsClient } from "@reins/client";
 import type { ContainerId, CurrentView, ExtensionInfo, HttpApi, PaneContext, SessionCreation, Sessions, Source, Subject, View } from "@reins/sdk";
-import { appRouter, mainViewHash, mainViewOf } from "../../routing/app-router.js";
+import { appRouter, mainViewHash, mainViewOf, settingsExtensionHash } from "../../routing/app-router.js";
 import { RoutedMainArea, type MainHistory } from "../../routing/main-area.js";
 import { CommandRegistry } from "../../sdk-host/commands.js";
 import { DecoratorRegistry } from "../../sdk-host/decorators.js";
@@ -168,6 +168,7 @@ export function testSdk<A extends HttpApi = HttpApi>({ source = { nodeId: "node"
     containers: { inspector: { open: (view) => opened.push({ view, container: "inspector" }), closeView: (view) => closed.push(view) }, main },
     http: new ReinsClient(),
     socket: client,
+    showSettings: (name) => history.go(settingsExtensionHash(name), false),
   };
   const reins = createReinsSdk<A>(extension, host);
   const sdkFor = (other: ExtensionInfo, scope?: string) => createReinsSdk(other, host, { scope });

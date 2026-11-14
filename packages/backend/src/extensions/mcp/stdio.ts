@@ -10,13 +10,17 @@ import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { JSONRPCMessageSchema, type JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js";
 import type { Logger, NodeProcess, NodeProcessExit, Nodes, Sessions } from "@reins/sdk/server";
 import type { McpStdioRow, McpStore } from "./store.js";
+import { expandTemplate, type RepoStdioEntry } from "./repo-config.js";
+import { repoVariables } from "./repo-servers.js";
 
 /** What stdio servers need of the nodes (`reins.nodes`). */
-export type McpNodes = Pick<Nodes, "spawn" | "processes" | "stop">;
+export type McpNodes = Pick<Nodes, "spawn" | "processes" | "stop" | "run">;
 
 const KEY_PREFIX = "mcp:";
-/** The key the server's process for a session is kept under on the session's node. */
-const processKey = (serverName: string, sessionId: string) => `${KEY_PREFIX}${serverName}:${sessionId}`;
+/** The key the server's process for a session is kept under on the session's node. A repo server's has its project's
+ * ID before its name (`mcp:<project>/<name>:<session>`): a name starts with a letter, so the two never meet. */
+const processKey = (server: { name: string; projectId: number | null }, sessionId: string) =>
+  `${KEY_PREFIX}${server.projectId === null ? "" : `${server.projectId}/`}${server.name}:${sessionId}`;
 
 /** A stdio server runs in the calling session's checkout: a call with no session has none. */
 export class McpServerSessionRequiredError extends Error {
@@ -48,23 +52,68 @@ export class McpStdio {
   }
 
   /** Starts the server's process for the session: on its node, in its checkout (`processCwd`), with the server's
-   * environment, under its key (replacing what was kept there). Rejects as `reins.nodes.spawn` does: an unknown
-   * program or directory, the node away. */
+   * environment, under its key (replacing what was kept there). A repo server runs the version its session read
+   * (which `McpRepoGate.block` checked), its env's `${VAR}`s expanded from the user's values, else the node's environment.
+   * Rejects as `reins.nodes.spawn` does: an unknown program or directory, the node away; and for a variable with no
+   * value. */
   async start(server: McpStdioRow, sessionId: string): Promise<NodeProcess> {
     await this.leftoversStopped;
     const { source } = await this.sessions.get(sessionId);
+    const entry = this.entryFor(server, sessionId);
+    if (server.projectId !== null && !entry) throw new Error(`${server.name} is not a stdio server in this session's .mcp.json`);
+    const run = entry ?? { command: server.command, args: server.args, cwd: server.cwd };
+    const env = entry ? await this.repoEnv(server, entry, source.nodeId) : await this.ownEnv(server);
+    return this.nodes.spawn(source.nodeId, [run.command, ...run.args], {
+      key: processKey(server, sessionId), env, cwd: processCwd(source.path, run.cwd),
+    });
+  }
+
+  /** A repo server's stdio entry as the session read it. */
+  private entryFor(server: McpStdioRow, sessionId: string): RepoStdioEntry | null {
+    const entry = this.store.repoEntry(server, sessionId);
+    return entry?.kind === "stdio" ? entry : null;
+  }
+
+  private async ownEnv(server: McpStdioRow): Promise<Record<string, string>> {
     const stored = await this.store.getSecret(server.id, "env");
     const env: Record<string, string> = stored ? JSON.parse(stored) : {};
-    return this.nodes.spawn(source.nodeId, [server.command, ...server.args], {
-      key: processKey(server.name, sessionId), env, cwd: processCwd(source.path, server.cwd),
-    });
+    return env;
+  }
+
+  private async repoEnv(server: McpStdioRow, entry: RepoStdioEntry, nodeId: string): Promise<Record<string, string>> {
+    const given = await repoVariables(this.store, server.id);
+    const wanted = Object.values(entry.env).flatMap(value => expandTemplate(value, name => given[name]).missing);
+    const fromNode = wanted.length ? await this.nodeEnvironment(nodeId, [...new Set(wanted)]) : {};
+    const env: Record<string, string> = {};
+    const missing = new Set<string>();
+    for (const [name, template] of Object.entries(entry.env)) {
+      const expanded = expandTemplate(template, variable => given[variable] ?? fromNode[variable]);
+      for (const variable of expanded.missing) missing.add(variable);
+      env[name] = expanded.value;
+    }
+    if (missing.size > 0) {
+      throw new Error(`Its env needs a value for ${[...missing].join(", ")}: give it in the session's MCP servers list (/mcp), or set it in the node's environment`);
+    }
+    return env;
+  }
+
+  /** The node's values of these variables (names checked by `expandTemplate`'s pattern), for those it has. */
+  private async nodeEnvironment(nodeId: string, names: string[]): Promise<Record<string, string>> {
+    // Base64, so that a value of any bytes and lines comes back as it is (the output is read as text).
+    const script = `for n in ${names.join(" ")}; do if [ -n "\${!n+x}" ]; then printf '%s=%s\\n' "$n" "$(printf '%s' "\${!n}" | base64 | tr -d '\\n')"; fi; done`;
+    const { exitCode, output } = await this.nodes.run(nodeId, script, { timeoutMs: 15_000 });
+    if (exitCode !== 0) throw new Error(`Reading the node's environment failed: ${output.trim()}`);
+    return Object.fromEntries(output.split("\n").filter(line => line.includes("=")).map(line => {
+      const at = line.indexOf("=");
+      return [line.slice(0, at), Buffer.from(line.slice(at + 1), "base64").toString("utf8")];
+    }));
   }
 
   /** Stops what is kept under the server's keys on every node, and forgets them: its removal, or its renaming (the
    * keys have its name). The processes of its connections are stopped by closing those; this also reaches what no
    * handle has. */
   async forget(serverName: string): Promise<void> {
-    const prefix = processKey(serverName, "");
+    const prefix = processKey({ name: serverName, projectId: null }, "");
     try {
       const kept = (await this.nodes.processes()).filter(process => process.key.startsWith(prefix));
       await Promise.all(kept.map(process => this.nodes.stop(process.nodeId, process.key)));

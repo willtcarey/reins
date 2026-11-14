@@ -7,7 +7,8 @@
  * (created, changed, signed in or out, a failure recorded or cleared) and `mcp_server_removed {serverId}`.
  */
 
-import type { Disposer, Http } from "@reins/sdk/server";
+import type { Disposer, Http, HttpCall } from "@reins/sdk/server";
+import type { McpRepoSwitch } from "./repo-gate.js";
 import { mcpApi } from "./api.js";
 import { McpServerUnavailableError } from "./connections.js";
 import { McpServerSessionRequiredError } from "./stdio.js";
@@ -58,7 +59,13 @@ ${status === 200 ? "<script>setTimeout(() => window.close(), 1500)</script>" : "
   return new Response(body, { status, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
 }
 
-export function registerMcpRoutes(http: Http, servers: McpServers): Disposer {
+/** Turning a repo server on runs a repository's command: only the user, from the browser, does it (ADR-040). */
+function fromBrowser(call: HttpCall<unknown>): void {
+  if (!call.browser) throw new RouteError(403, "Only the user can turn this on or off, from Reins in their browser");
+}
+
+/** `toggle` turns repo servers on: the routes are its only holder, and give it only a browser's requests. */
+export function registerMcpRoutes(http: Http, servers: McpServers, toggle: McpRepoSwitch): Disposer {
   /** The server of that ID; throws its `McpServerNotFoundError` (translate it). */
   const serverOf = (id: number) => servers.get(id);
 
@@ -80,7 +87,13 @@ export function registerMcpRoutes(http: Http, servers: McpServers): Disposer {
         }
       },
       signOut: ({ input }) => translated(() => serverOf(input.id).signOut()),
-      tools: ({ input, signal }) => translated(() => serverOf(input.id).listTools({ signal })),
+      tools: ({ input, signal }) => translated(() => serverOf(input.id).listTools({ signal, sessionId: input.sessionId ?? null })),
+      setVariables: ({ input }) => translated(() => servers.context.repo.setVariables(serverOf(input.id).row, input.values)),
+      sessionServers: ({ input }) => servers.context.repo.sessionView(input.sessionId),
+      allow: call => translated(async () => {
+        fromBrowser(call);
+        await toggle.set(serverOf(call.input.id).row, call.input.allowed, call.input.sessionId);
+      }),
     }),
 
     http.page(CALLBACK_PATH, async ({ url }) => {

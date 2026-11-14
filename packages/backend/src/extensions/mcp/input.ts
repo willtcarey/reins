@@ -8,6 +8,9 @@ import { Type, type Static, type TSchema } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 import { McpAuthKindSchema, McpRemoteTransportSchema, McpTransportKindSchema } from "./store.js";
 
+/** A server's name is the identifier its tools are namespaced under (`mcp__<name>__<tool>`): it has no `_`. */
+export const MCP_SERVER_NAME_PATTERN = /^[a-z][a-z0-9-]{0,31}$/;
+
 /** Input the model refuses: the message says why, for the user or agent that gave it. */
 export class InvalidMcpServerError extends Error {
   constructor(message: string) {

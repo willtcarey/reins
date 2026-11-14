@@ -1035,6 +1035,14 @@ export interface HttpCall<I> {
   /** The origin the browser used to reach Reins (behind a proxy, from `X-Forwarded-*`), for URLs the
    * browser is sent to; null when the request's host is not usable. */
   origin: string | null;
+  /**
+   * The request is a browser's `fetch` from a Reins page: it carries the headers a browser sets and a page's script
+   * cannot, `Sec-Fetch-Site: same-origin`, or, without Fetch Metadata (a page over plain HTTP, not localhost), an
+   * `Origin` that is Reins' own. For what only the user may do from the browser (turning a repository's command on): a script or
+   * command that does not pose as a browser is told apart. Reins does not authenticate its browsers, so a process
+   * that can reach Reins and forges the headers is not.
+   */
+  browser: boolean;
 }
 
 /** A handler for each method of `A`, which returns the method's output (nothing for one without `output`). */

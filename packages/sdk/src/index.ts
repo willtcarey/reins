@@ -654,6 +654,8 @@ export interface SettingsPage {
 export interface Settings {
   /** Gives the extension a Settings page. An extension has one at a time: a second registration throws. */
   register(page: SettingsPage): Disposer;
+  /** Goes to the extension's Settings page in the main area, as a new history entry (from a view that links to it). */
+  show(): void;
 }
 
 // ---------------------------------------------------------------------------

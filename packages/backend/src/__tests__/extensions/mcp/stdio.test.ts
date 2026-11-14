@@ -181,7 +181,7 @@ describe("stdio MCP servers", () => {
     await servers.find("fake").update({ enabled: false });
 
     expect([alive(a.pid), alive(b.pid)]).toEqual([false, false]);
-    await expect(call(sessions.a, "echo")).rejects.toThrow("MCP server fake is disabled");
+    await expect(call(sessions.a, "echo")).rejects.toThrow("MCP server fake is disabled: only the user can turn it on, with /mcp");
     await servers.find("fake").update({ enabled: true });
     const again = await whoami(sessions.laptop);
     await servers.find("fake").remove();

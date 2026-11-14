@@ -32,12 +32,19 @@ describe("the MCP extension's prompt section", () => {
     expect(await state.extensions.host.promptSections(context(null))).toEqual([`MCP servers (through execute): find their tools with reins.tools.search(query), or reins.tools.search(query, { filters: { server } }) for one server's; call one with reins.tools.call(id, args). A tool's ID is mcp__<server>__<tool>. search does not list them.
 - executor: Integrations: github_com, sentry_io.
   Find their tools with search_<integration>.
-- vercel`]);
+- vercel
+Disabled (you can ask the user to turn these on with /mcp):
+- slack`]);
   });
 
-  test("no enabled server, or no execute, means no section", async () => {
+  test("no server, or no execute, means no section; only servers that are off are named alone", async () => {
     const { state, servers } = mcpState();
     expect(await state.extensions.host.promptSections(context(null))).toEqual([]);
+
+    await servers.create({ name: "slack", url: "https://slack.example.com/mcp", authKind: "none", enabled: false });
+    expect(await state.extensions.host.promptSections(context(null))).toEqual([
+      "MCP servers: none is enabled.\nDisabled (you can ask the user to turn these on with /mcp):\n- slack",
+    ]);
 
     await servers.create({ name: "vercel", url: "https://vercel.example.com/mcp", authKind: "none" });
     expect(await state.extensions.host.promptSections(context(["bash"]))).toEqual([]);
