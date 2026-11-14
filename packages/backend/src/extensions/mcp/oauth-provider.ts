@@ -308,7 +308,7 @@ export class McpTokenRefresher {
   private async refreshAged(): Promise<void> {
     let servers: McpRemoteRow[];
     try {
-      servers = this.store.list().filter((server: McpServerRow): server is McpRemoteRow => server.transport !== "stdio" && server.enabled && server.authKind === "oauth");
+      servers = this.store.all().filter((server: McpServerRow): server is McpRemoteRow => server.transport !== "stdio" && server.enabled && server.authKind === "oauth");
     } catch (error) {
       this.logger.warn(`Looking for MCP tokens to refresh failed: ${messageOf(error)}`);
       return;

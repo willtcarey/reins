@@ -8,6 +8,8 @@
 import type { McpAuthKind, McpRemoteTransport, McpSecretKind, McpServerFields, McpStore } from "./store.js";
 import type { McpConnections, McpServerStatus } from "./connections.js";
 import type { McpStdio } from "./stdio.js";
+import type { McpRepoGate } from "./repo-gate.js";
+import type { McpRepoServers } from "./repo-servers.js";
 import { finishMcpSignIn, hashSignInState } from "./oauth-provider.js";
 import { McpServerModel, mergedEnv, validRemoteFields, validStdioFields, withUniqueMcpServerName } from "./server.js";
 import { InvalidMcpServerError, parseMcpServerCreation } from "./input.js";
@@ -16,16 +18,21 @@ import { InvalidMcpServerError, parseMcpServerCreation } from "./input.js";
 export type McpMessage =
   /** The server as it is now: created, changed, signed in or out, or its status changed. */
   | { type: "mcp_server_updated"; server: McpServerView }
-  | { type: "mcp_server_removed"; serverId: number };
+  | { type: "mcp_server_removed"; serverId: number }
+  /** A project's repo servers changed: what a session read, a server's switch, sign-in, status or variables. */
+  | { type: "mcp_repo_changed"; projectId: number };
 
 /** What the servers work with: their store, the app's connections to them, the browsers, the path of
- * the OAuth callback page from the server's root, and stdio servers' processes. */
+ * the OAuth callback page from the server's root, stdio servers' processes, the projects' repo servers, and whether
+ * each may run (`gate`: it only answers; turning one on is the routes' `McpRepoSwitch`). */
 export interface McpContext {
   store: McpStore;
   connections: McpConnections;
   broadcast(message: McpMessage): void;
   callbackPath: string;
   stdio: McpStdio;
+  repo: McpRepoServers;
+  gate: McpRepoGate;
 }
 
 /** A sign-in's callback must come within this many seconds of its start. */
@@ -97,22 +104,41 @@ export class McpServers {
 
   private get store(): McpStore { return this.context.store; }
 
-  /** Every server's view, in name order. */
+  /** The user's own servers' views (not the projects'), in name order. */
   list(): Promise<McpServerView[]> {
     return Promise.all(this.store.list().map(row => new McpServerModel(this, row).view()));
   }
 
-  /** Server `serverId`; throws `McpServerNotFoundError` for an unknown one. */
+  /** The servers a session has, in name order: the user's own, and those of its checkout's `.mcp.json` (a repo
+   * entry with the name of one of the user's own is skipped). Without a session (an extension's call), the user's own. */
+  async forSession(sessionId: string | null): Promise<McpServerModel[]> {
+    const own = this.store.list();
+    if (sessionId === null) return own.map(row => new McpServerModel(this, row));
+    // A repo server never has the name of one of the user's own (`sessionServers` skips it).
+    const repo = await this.context.repo.sessionServers(sessionId);
+    return [...own, ...repo].toSorted((a, b) => a.name.localeCompare(b.name)).map(row => new McpServerModel(this, row));
+  }
+
+  /** The session's server of this name (ignoring case), as `forSession` has them; not finding it names those there are. */
+  async findFor(name: string, sessionId: string | null): Promise<McpServerModel> {
+    const servers = await this.forSession(sessionId);
+    const found = servers.find(server => server.name === name.trim().toLowerCase());
+    if (!found) throw new McpServerNotFoundError(name, servers.map(server => server.name));
+    return found;
+  }
+
+  /** Server `serverId`, the user's own or a project's; throws `McpServerNotFoundError` for an unknown one. */
   get(serverId: number): McpServerModel {
     const row = this.store.get(serverId);
     if (!row) throw new McpServerNotFoundError(serverId);
     return new McpServerModel(this, row);
   }
 
-  /** The server with this ID, or of this name (ignoring case). Not finding it names the servers there are, so
-   * a wrong guess is its own discovery. */
+  /** The user's own server with this ID, or of this name (ignoring case); never a project's, which its `.mcp.json`
+   * defines. Not finding it names the servers there are, so a wrong guess is its own discovery. */
   find(server: string | number): McpServerModel {
-    const row = typeof server === "number" ? this.store.get(server) : this.store.getByName(server.trim().toLowerCase());
+    const found = typeof server === "number" ? this.store.get(server) : this.store.getByName(server.trim().toLowerCase());
+    const row = found?.projectId === null ? found : null;
     if (!row) throw new McpServerNotFoundError(server, this.store.list().map(candidate => candidate.name));
     return new McpServerModel(this, row);
   }

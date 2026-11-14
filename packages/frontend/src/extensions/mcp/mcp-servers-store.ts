@@ -8,7 +8,7 @@
  */
 
 import type { McpApi } from "@backend/extensions/mcp/api.js";
-import type { McpMessage, McpRemoteServerView, McpServerView, McpStdioServerView } from "@backend/extensions/mcp/servers.js";
+import type { McpMessage, McpRemoteServerView, McpServerView } from "@backend/extensions/mcp/servers.js";
 import type { McpServerInput } from "@backend/extensions/mcp/input.js";
 import type { McpServerStatus, McpTool } from "@backend/extensions/mcp/connections.js";
 import type { Http, ReinsSdk } from "@reins/sdk";
@@ -116,19 +116,33 @@ export function mayTest(server: McpServerView): boolean {
 }
 
 /** The command line of a stdio server, as a user would type it. */
-export function commandLine(server: McpStdioServerView): string {
-  return [server.command, ...server.args.map(arg => /[\s"']/.test(arg) ? JSON.stringify(arg) : arg)].join(" ");
+export function commandLine(server: { command: string; args: readonly string[] }): string {
+  return [server.command, ...server.args.map(arg => /[\s"'$`\\]/.test(arg) ? JSON.stringify(arg) : arg)].join(" ");
 }
 
 const STATUS_LABELS: Record<McpServerStatus["state"], string> = {
   ready: "ready",
   needs_sign_in: "needs sign-in",
+  off: "off",
   error: "error",
   disabled: "disabled",
 };
 
 export function statusLabel(status: McpServerStatus): string {
   return STATUS_LABELS[status.state];
+}
+
+const STATUS_DOTS: Record<McpServerStatus["state"], string> = {
+  ready: "bg-green-500",
+  needs_sign_in: "bg-amber-400",
+  off: "bg-zinc-700",
+  error: "bg-red-500",
+  disabled: "bg-zinc-700",
+};
+
+/** The classes of the dot before a server's status. */
+export function statusDot(status: McpServerStatus): string {
+  return STATUS_DOTS[status.state];
 }
 
 export type McpServerAction = "saving" | "testing" | "signing-in" | "signing-out" | "removing";
@@ -157,7 +171,7 @@ export class McpServersStore {
         if (message.type === "mcp_server_updated") {
           this._upsert(message.server);
           if (this.signIn?.serverId === message.server.id && message.server.transport !== "stdio" && message.server.signedIn) this.signIn = null;
-        } else {
+        } else if (message.type === "mcp_server_removed") {
           this._drop(message.serverId);
         }
         this.notify();

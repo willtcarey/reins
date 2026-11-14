@@ -20,8 +20,10 @@ export const McpSignInSchema = Type.Object({
 });
 
 export const McpServerStatusSchema = Type.Object({
-  state: Type.Union([Type.Literal("ready"), Type.Literal("needs_sign_in"), Type.Literal("error"), Type.Literal("disabled")]),
-  message: Type.Optional(Type.String({ description: "When state is error: why its last attempt or request failed." })),
+  state: Type.Union([
+    Type.Literal("ready"), Type.Literal("needs_sign_in"), Type.Literal("off"), Type.Literal("error"), Type.Literal("disabled"),
+  ]),
+  message: Type.Optional(Type.String({ description: "When state is error: why its last attempt or request failed; when off: what to do without it." })),
 }, { description: `Whether agents can use the server, e.g. { state: "ready" } or { state: "error", message }. ${SIGN_IN}` });
 
 const commonServerProperties = {

@@ -9,6 +9,7 @@ import type { McpTool } from "./connections.js";
 import { McpServerInputSchema, McpServerUpdateSchema } from "./input.js";
 import { McpRemoteServerSchema, McpSignInSchema, McpStdioServerSchema } from "./scripting.js";
 import type { McpServerView, McpSignInStart } from "./servers.js";
+import type { McpSessionServersView } from "./repo-servers.js";
 
 const ServerId = Type.Object({ id: Type.Integer({ description: "The server's ID." }) });
 
@@ -36,8 +37,25 @@ export const mcpApi = {
   signIn: { input: ServerId, output: SignInStart },
   /** Forgets its tokens. */
   signOut: { input: ServerId, output: ServerView },
-  /** Its tools (409: disabled or needs sign-in; 502: unreachable). */
-  tools: { input: ServerId, output: Type.Array(Tool) },
+  /** Its tools (409: disabled or needs sign-in; 502: unreachable). A stdio server's start in `sessionId`'s checkout
+   * (a session's MCP servers list); without one, its kept list. */
+  tools: { input: Type.Object({ id: ServerId.properties.id, sessionId: Type.Optional(Type.String({ minLength: 1, maxLength: 100 })) }), output: Type.Array(Tool) },
+
+  /** The values the user gives for a repo server's variables (`${VAR}` in its headers or env), by name; null removes one. */
+  setVariables: {
+    input: Type.Object({
+      id: ServerId.properties.id,
+      values: Type.Record(Type.String({ pattern: "^[A-Za-z_][A-Za-z0-9_]*$" }), Type.Union([Type.String({ maxLength: 16_000 }), Type.Null()]), { maxProperties: 100 }),
+    }),
+  },
+  /** A session's MCP servers list: the repo servers of its own `.mcp.json`, each with its toggle (`allowed`). Null for a
+   * session of no project. */
+  sessionServers: { input: Type.Object({ sessionId: Type.String({ minLength: 1, maxLength: 100 }) }), output: Type.Unsafe<McpSessionServersView | null>(Type.Object({})) },
+  /** A repo server's toggle in a session's list. On: it may run, and a stdio server's command, as the session read it,
+   * is allowed for the project. Off: nothing of it runs for the project. A browser's request only (403 otherwise). */
+  allow: {
+    input: Type.Object({ id: ServerId.properties.id, allowed: Type.Boolean(), sessionId: Type.String({ minLength: 1, maxLength: 100 }) }),
+  },
 } satisfies HttpApi;
 
 export type McpApi = typeof mcpApi;

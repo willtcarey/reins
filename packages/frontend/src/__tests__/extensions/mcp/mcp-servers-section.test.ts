@@ -416,13 +416,14 @@ describe("registerMcp", () => {
     expect(shown).toBeInstanceOf(SettingsMcpServersSection);
     if (!(shown instanceof SettingsMcpServersSection)) return;
     await until(() => shown.store?.servers.data?.length === 1);
-    expect(requests.map(request => request.request)).toEqual(["POST /api/extensions/mcp/list"]);
+    const listed = () => requests.filter(request => request.request === "POST /api/extensions/mcp/list");
+    expect(listed()).toHaveLength(1);
 
     mounted?.dispose?.();
     client.fireConnection(false);
     client.fireConnection(true);
     await Bun.sleep(1);
-    expect(requests).toHaveLength(1);
+    expect(listed()).toHaveLength(1);
   });
 
   test("its disposer takes its page out of Settings", () => {

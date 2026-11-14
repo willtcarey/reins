@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { Source, View } from "@reins/sdk";
-import { testInspector } from "../helpers/reins-sdk.js";
+import { closeTabsOnSourceChange } from "../../models/inspector.js";
+import { testInspector, testSdk } from "../helpers/reins-sdk.js";
 
 const source: Source = { nodeId: "node", path: "/work" };
 const changes: View = { view: "diff-file-tree" };
@@ -195,4 +196,75 @@ describe("Inspector", () => {
     expect(opened).toEqual([readme]);
   });
 
+  test("closing the tabs that match keeps the pinned ones, and the focus moves to the first tab left", () => {
+    const inspector = testInspector();
+    inspector.pin(changes);
+    inspector.open(readme);
+    const todo: View = { view: "file", source, path: "docs/TODO.md" };
+    inspector.open(todo);
+
+    inspector.closeTabs(() => true);
+
+    expect(inspector.tabs.map((tab) => tab.view)).toEqual([changes]);
+    expect(inspector.activeTab?.view).toEqual(changes);
+  });
+});
+
+const main: Source = { nodeId: "node", path: "/work" };
+const task: Source = { nodeId: "node", path: "/work/.worktrees/task-1" };
+const file = (at: Source, path: string): View => ({ view: "file", source: at, path });
+const shown = (sessionId: string) => ({ view: { view: "session", sessionId }, subject: [{ type: "session" as const, id: sessionId }] });
+
+/** Sessions `a` and `b` on the main checkout, `t` on a task's worktree; the main area shows `a`. */
+function setup() {
+  const sdk = testSdk({ current: shown("a") });
+  const place = (id: string, at: Source) =>
+    sdk.sessions.set(id, { projectId: 1, placement: { available: true, removed: false, nodeId: at.nodeId, nodeName: "Node", path: at.path } });
+  place("a", main);
+  place("b", main);
+  place("t", task);
+  const inspector = testInspector();
+  closeTabsOnSourceChange(sdk.reins.workspace, sdk.reins.sessions, inspector);
+  return { sdk, inspector };
+}
+
+describe("Inspector tabs on a switch of source", () => {
+  test("going to a session on another checkout closes the tabs open before, but not the pinned ones", async () => {
+    const { sdk, inspector } = setup();
+    await Bun.sleep(0);
+    inspector.pin(changes);
+    inspector.open(file(main, "README.md"));
+
+    sdk.showMain(shown("t"));
+    await Bun.sleep(0);
+
+    expect(inspector.tabs.map((tab) => tab.view)).toEqual([changes]);
+  });
+
+  test("going to another session on the same checkout, or to a page of no session, keeps them", async () => {
+    const { sdk, inspector } = setup();
+    await Bun.sleep(0);
+    inspector.open(file(main, "README.md"));
+
+    sdk.showMain(shown("b"));
+    await Bun.sleep(0);
+    sdk.showMain({ view: { view: "settings" }, subject: [] });
+    await Bun.sleep(0);
+    sdk.showMain(shown("a"));
+    await Bun.sleep(0);
+
+    expect(inspector.tabs.map((tab) => tab.view)).toEqual([file(main, "README.md")]);
+  });
+
+  test("a tab opened for the new session as the switch happens stays", async () => {
+    const { sdk, inspector } = setup();
+    await Bun.sleep(0);
+    inspector.open(file(main, "README.md"));
+
+    sdk.showMain(shown("t"));
+    inspector.open(file(task, "PLAN.md"));
+    await Bun.sleep(0);
+
+    expect(inspector.tabs.map((tab) => tab.view)).toEqual([file(task, "PLAN.md")]);
+  });
 });

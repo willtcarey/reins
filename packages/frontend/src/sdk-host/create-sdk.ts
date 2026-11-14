@@ -66,6 +66,8 @@ export interface SdkHost {
   containers: SdkContainers;
   http: { extension(name: string): ExtensionClient };
   socket: Pick<IAppClient, "subscribe" | "onConnection">;
+  /** Goes to an extension's Settings page (the router, in the app). */
+  showSettings(extension: string): void;
 }
 
 /** What each SDK object's registrations and subscriptions return, so its extension's disposal can undo them. */
@@ -82,7 +84,7 @@ export function sdkDisposers(sdk: object): Disposer[] {
  */
 export function createReinsSdk<A extends HttpApi = HttpApi>(
   extension: ExtensionInfo,
-  { app, sessions, projects, tasks, nodes, ui, containers, http, socket }: SdkHost,
+  { app, sessions, projects, tasks, nodes, ui, containers, http, socket, showSettings }: SdkHost,
   { scope }: { scope?: string } = {},
 ): ReinsSdk<A> {
   const scoped = <T extends { mount: (target: HTMLElement, ...rest: never[]) => unknown }>(mountable: T): T =>
@@ -153,7 +155,10 @@ export function createReinsSdk<A extends HttpApi = HttpApi>(
     nodes: Object.freeze({ list: () => nodes.list() } satisfies Nodes),
     sidebar: Object.freeze({ registerSection: (section: SidebarSection) => own(app.sidebar.register(scoped(section), extension.name)) }),
     ui: Object.freeze({ renameSession: ui.renameSession.bind(ui) } satisfies Ui),
-    settings: Object.freeze({ register: (page: SettingsPage) => own(app.settingsPages.register(extension, scoped(page))) }),
+    settings: Object.freeze({
+      register: (page: SettingsPage) => own(app.settingsPages.register(extension, scoped(page))),
+      show: () => showSettings(extension.name),
+    }),
     http: Object.freeze({
       call: <K extends keyof A & string>(method: K, ...[input, options]: HttpCallArgs<A[K]>) => api.call<HttpOutput<A[K]>>(method, input, options),
     }),

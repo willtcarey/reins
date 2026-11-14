@@ -294,7 +294,8 @@ export class ExtensionHost {
       }
     }
     try {
-      const output = await method.handler({ input, signal: req.signal, origin: requestOrigin(req) });
+      const origin = requestOrigin(req);
+      const output = await method.handler({ input, signal: req.signal, origin, browser: fromOwnPage(req, origin) });
       return method.answers ? Response.json(output ?? null) : new Response(null, { status: 204 });
     } catch (error) {
       const status = error instanceof Error && "status" in error ? error.status : undefined;
@@ -332,4 +333,14 @@ function prefixed(prefix: string): Logger {
     warn: (...args: unknown[]) => logger.warn(prefix, ...args),
     error: (...args: unknown[]) => logger.error(prefix, ...args),
   });
+}
+
+/** A browser's `fetch` from a Reins page (`HttpCall.browser`). Browsers send Fetch Metadata only to a trustworthy
+ * origin (HTTPS, localhost), so over plain HTTP the page's own `Origin`, which a page's script cannot set either,
+ * tells instead. */
+function fromOwnPage(req: Request, origin: string | null): boolean {
+  const site = req.headers.get("sec-fetch-site");
+  if (site !== null) return site === "same-origin";
+  const sentFrom = req.headers.get("origin");
+  return origin !== null && sentFrom === origin;
 }

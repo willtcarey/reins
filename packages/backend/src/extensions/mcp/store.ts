@@ -7,6 +7,7 @@
 
 import { Type, type Static } from "@sinclair/typebox";
 import type { Database, SecretStorage } from "@reins/sdk/server";
+import type { RepoEntry, RepoFile } from "./repo-config.js";
 
 /** ADR-004. */
 const NOW = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')";
@@ -22,9 +23,10 @@ export const McpRemoteTransportSchema = Type.Union([Type.Literal("http"), Type.L
 export type McpRemoteTransport = Static<typeof McpRemoteTransportSchema>;
 /** What is kept encrypted for a server: the header's value, a pre-registered client's secret, its
  * OAuth state (`McpOAuthProvider`: the registered client, tokens, discovery, and a sign-in's PKCE
- * verifier and the client it registered, until it completes), and a stdio server's environment (`env`, a JSON object). */
+ * verifier and the client it registered, until it completes), a stdio server's environment (`env`, a JSON object),
+ * and a repo server's variables, the values the user gave for its `${VAR}`s (`variables`, a JSON object). */
 const MCP_SECRET_KINDS = [
-  "header_value", "client_secret", "client_information", "tokens", "discovery", "code_verifier", "sign_in_client_information", "env",
+  "header_value", "client_secret", "client_information", "tokens", "discovery", "code_verifier", "sign_in_client_information", "env", "variables",
 ] as const;
 export type McpSecretKind = typeof MCP_SECRET_KINDS[number];
 
@@ -60,6 +62,10 @@ export type McpServerFields = McpRemoteFields | McpStdioFields;
 
 interface McpRowFields {
   id: number;
+  /** A repo server's project (its `.mcp.json` defines it); null for the user's own. */
+  projectId: number | null;
+  /** A repo server's entry as last read in any of its project's sessions; null for the user's own. */
+  repo: RepoEntry | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -83,8 +89,11 @@ export interface McpSignIn {
 /** A stdio server's tool list as it last listed it, on the node it ran on. */
 export interface McpToolList { nodeId: string; tools: string; listedAt: string }
 
+/** What a session's runtime read of its checkout's `.mcp.json`, last time it opened. */
+export interface McpRepoRead { sessionId: string; projectId: number; file: RepoFile; readAt: string }
+
 interface RawRow {
-  id: number; name: string; instructions: string; url: string; transport: McpTransportKind; command: string | null; args: string; cwd: string | null; auth_kind: McpAuthKind;
+  id: number; project_id: number | null; repo_json: string | null; name: string; instructions: string; url: string; transport: McpTransportKind; command: string | null; args: string; cwd: string | null; auth_kind: McpAuthKind;
   header_name: string | null; oauth_client_id: string | null; oauth_scope: string | null; enabled: number;
   oauth_redirect_url: string | null; created_at: string; updated_at: string;
 }
@@ -93,12 +102,15 @@ interface RawRow {
 const secretPrefix = (id: number) => `servers/${id}/`;
 const secretKey = (id: number, kind: McpSecretKind) => `${secretPrefix(id)}${kind}`;
 
-const COLUMNS = "id, name, instructions, url, transport, command, args, cwd, auth_kind, header_name, oauth_client_id, oauth_scope, enabled, oauth_redirect_url, created_at, updated_at";
+const COLUMNS = "id, project_id, repo_json, name, instructions, url, transport, command, args, cwd, auth_kind, header_name, oauth_client_id, oauth_scope, enabled, oauth_redirect_url, created_at, updated_at";
 
 // The table is flat: a kind's columns are empty for the other kind (a stdio server's `url` "", its `auth_kind`
 // "none"). Only `toRow` and `fieldValues` know it.
 function toRow(raw: RawRow): McpServerRow {
-  const common = { id: raw.id, name: raw.name, instructions: raw.instructions, enabled: raw.enabled === 1, createdAt: raw.created_at, updatedAt: raw.updated_at };
+  const repo: RepoEntry | null = raw.repo_json === null ? null : JSON.parse(raw.repo_json);
+  const common = {
+    id: raw.id, projectId: raw.project_id, repo, name: raw.name, instructions: raw.instructions, enabled: raw.enabled === 1, createdAt: raw.created_at, updatedAt: raw.updated_at,
+  };
   if (raw.transport === "stdio") {
     return { ...common, transport: "stdio", command: raw.command ?? "", args: parseArgs(raw.args), cwd: raw.cwd };
   }
@@ -128,9 +140,70 @@ function fieldValues(fields: McpServerFields): FieldValues {
 export class McpStore {
   constructor(private readonly db: Database, private readonly secrets: SecretStorage) {}
 
-  /** In name order. */
+  /** The user's own servers (not a project's), in name order. */
   list(): McpServerRow[] {
-    return this.db.query<RawRow, []>(`SELECT ${COLUMNS} FROM mcp_servers ORDER BY name`).all().map(toRow);
+    return this.db.query<RawRow, []>(`SELECT ${COLUMNS} FROM mcp_servers WHERE project_id IS NULL ORDER BY name`).all().map(toRow);
+  }
+
+  /** Every server, the projects' too. */
+  all(): McpServerRow[] {
+    return this.db.query<RawRow, []>(`SELECT ${COLUMNS} FROM mcp_servers ORDER BY name, id`).all().map(toRow);
+  }
+
+  projectServer(projectId: number, name: string): McpServerRow | null {
+    const raw = this.db.query<RawRow, [number, string]>(`SELECT ${COLUMNS} FROM mcp_servers WHERE project_id = ? AND name = ?`).get(projectId, name);
+    return raw ? toRow(raw) : null;
+  }
+
+  /** Makes the project's row of `entry`'s name say what it says (enabled when new; its switch kept), with the row as
+   * it was before (null when new). Its kind follows the entry: a repo server's HTTP sign-in is OAuth when the server
+   * asks for it, and its headers are the entry's. */
+  upsertRepo(projectId: number, entry: RepoEntry): { row: McpServerRow; before: McpServerRow | null } {
+    const before = this.projectServer(projectId, entry.name);
+    const stdio = entry.kind === "stdio";
+    const values = [
+      stdio ? "" : entry.url, stdio ? "stdio" : entry.transport, stdio ? entry.command : null, stdio ? JSON.stringify(entry.args) : "[]",
+      stdio ? entry.cwd : null, stdio ? "none" : "oauth", JSON.stringify(entry),
+    ] as const;
+    const raw = before
+      ? this.db.query<RawRow, [...typeof values, number]>(
+        `UPDATE mcp_servers SET url = ?, transport = ?, command = ?, args = ?, cwd = ?, auth_kind = ?, repo_json = ?, updated_at = ${NOW}
+         WHERE id = ? RETURNING ${COLUMNS}`,
+      ).get(...values, before.id)!
+      : this.db.query<RawRow, [number, string, ...typeof values]>(
+        `INSERT INTO mcp_servers (project_id, name, url, transport, command, args, cwd, auth_kind, repo_json, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ${NOW}, ${NOW}) RETURNING ${COLUMNS}`,
+      ).get(projectId, entry.name, ...values)!;
+    return { row: toRow(raw), before };
+  }
+
+  /** Turns a repo server on or off for its project. */
+  setEnabled(id: number, enabled: boolean): void {
+    this.db.query(`UPDATE mcp_servers SET enabled = ?, updated_at = ${NOW} WHERE id = ?`).run(enabled ? 1 : 0, id);
+  }
+
+  repoRead(sessionId: string): McpRepoRead | null {
+    const raw = this.db.query<{ session_id: string; project_id: number; file_json: string; read_at: string }, [string]>(
+      "SELECT session_id, project_id, file_json, read_at FROM mcp_repo_reads WHERE session_id = ?",
+    ).get(sessionId);
+    return raw ? { sessionId: raw.session_id, projectId: raw.project_id, file: JSON.parse(raw.file_json), readAt: raw.read_at } : null;
+  }
+
+  /** A repo server's entry as the session read it; without a session, as last read anywhere. Null when the session's
+   * read does not have it, and for the user's own servers. */
+  repoEntry(row: McpServerRow, sessionId: string | null): RepoEntry | null {
+    if (row.projectId === null) return null;
+    if (sessionId === null) return row.repo;
+    const read = this.repoRead(sessionId);
+    if (read?.projectId !== row.projectId || read.file.state !== "read") return null;
+    return read.file.entries.find(entry => entry.name === row.name) ?? null;
+  }
+
+  setRepoRead(sessionId: string, projectId: number, file: RepoFile): void {
+    this.db.query(
+      `INSERT INTO mcp_repo_reads (session_id, project_id, file_json, read_at) VALUES (?, ?, ?, ${NOW})
+       ON CONFLICT (session_id) DO UPDATE SET project_id = excluded.project_id, file_json = excluded.file_json, read_at = excluded.read_at`,
+    ).run(sessionId, projectId, JSON.stringify(file));
   }
 
   get(id: number): McpServerRow | null {
@@ -138,8 +211,9 @@ export class McpStore {
     return raw ? toRow(raw) : null;
   }
 
+  /** The user's own server of that name. */
   getByName(name: string): McpServerRow | null {
-    const raw = this.db.query<RawRow, [string]>(`SELECT ${COLUMNS} FROM mcp_servers WHERE name = ?`).get(name);
+    const raw = this.db.query<RawRow, [string]>(`SELECT ${COLUMNS} FROM mcp_servers WHERE project_id IS NULL AND name = ?`).get(name);
     return raw ? toRow(raw) : null;
   }
 
