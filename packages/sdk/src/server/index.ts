@@ -234,11 +234,12 @@ export interface SessionInfo {
 export type ThinkingLevel = "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 
 /**
- * A message: its text, or its blocks in order. A block is a string (shown in the chat) or `{ text, hidden? }`.
- * The model gets every block. The chat shows the visible ones and collapses the hidden ones under the message,
- * for context the user need not read (a command's output, an automation's ID). Nothing tells the model which
- * blocks are hidden: say in them what it needs to know about them (e.g. that an output is not the user's words).
- * Visible blocks come first, at least one; no block is blank.
+ * A message: its text, or its blocks in order. A block is a string (shown in the chat), `{ text, hidden? }` or
+ * `{ image }` (`MessageImage`). The model gets every block. The chat shows the visible ones and collapses the
+ * hidden ones under the message, for context the user need not read (a command's output, an automation's ID).
+ * Nothing tells the model which blocks are hidden: say in them what it needs to know about them (e.g. that an
+ * output is not the user's words). Visible blocks come first, at least one; no text block is blank. Images are
+ * visible blocks: one among or after the hidden blocks is refused.
  */
 export type MessageContent = string | readonly MessageBlock[];
 
@@ -248,7 +249,21 @@ export type MessageBlock = string | {
   /** The first hidden block only: a heading the chat shows above the hidden blocks when opened (e.g. "Command
    * output"); the model does not get it. 1 to 80 characters. */
   readonly label?: string;
-};
+} | { readonly image: MessageImage };
+
+/**
+ * An image of a message, stored with the session it is sent to (the message refers to it, as the browser's
+ * attachments do). An `ImageBlock` is one, so `{ image: (await reins.images.generate(…)).images[0] }` passes a
+ * generated image on. PNG, JPEG, WebP or GIF; at most 10 MiB, and 25 MiB for a message's images in all. One over
+ * the model provider's limit (about 3.4 MiB) is scaled down first, and refused when it cannot be. A refused
+ * image rejects the call, and none of the message's images is kept.
+ */
+export interface MessageImage {
+  /** Base64 (without a `data:` prefix) or the bytes. */
+  readonly data: string | Uint8Array;
+  readonly mimeType: string;
+  readonly filename?: string;
+}
 
 /** What a message carries beside its content, for the extension's own use: any plain JSON object of at most
  * 64 KiB, kept with it in the session's transcript. The model does not get it. The keys Reins sets itself

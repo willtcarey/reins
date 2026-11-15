@@ -111,6 +111,15 @@ await reins.sessions.send(sessionId, "Also check the cancellation case.");
 return await reins.sessions.wait(sessionId, 10000);
 ```
 
+A message is a string, or blocks in order: strings, `{ text, hidden?, label? }` (a hidden block is collapsed under the message in the chat, after the visible ones) and images, `{ image: { data, mimeType, filename? } }` with `data` in base64. An image is stored with the session it is sent to, as an image the user attaches is, and the model gets it. An image from `reins.images.generate` or a tool result can be passed as it is:
+
+```javascript
+const result = await reins.images.generate("a logo for the build dashboard");
+await reins.sessions.send(sessionId, ["Use this logo:", { image: result.images[0] }]);
+```
+
+Images are PNG, JPEG, WebP or GIF, at most 10 MiB each and 25 MiB for a message. An image over the model provider's limit is scaled down first. Images are visible blocks: they come before any hidden block. A message can be images only. An image that breaks these rules (or data that is not base64) makes the call throw with the reason, and none of the message's images is kept.
+
 - **send** accepts any session, of any task or project. The message is submitted to the session on the server through native AgentHarness steering—there is no activity-state check, delivery mode parameter, or Reins-managed follow-up queue. AgentHarness joins an active operation or starts an idle run from the durable steering input. Sending and starting return without waiting for a response.
 - Sends are durably accepted before provider execution begins. Steering a passively reopened operation resumes that operation so the native harness can consume the message.
 - No hidden waiting, automatic retry, unsent-message table, or cancellation/restart fallback. Explicit abort remains separate; if you want to interrupt work, abort it deliberately before sending again.

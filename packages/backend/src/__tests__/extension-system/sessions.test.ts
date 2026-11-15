@@ -33,6 +33,21 @@ const storedInputs = (sessionId: string) => getDb().query<{ message: string }, [
 
 const sessionCount = () => getDb().query<{ n: number }, []>("SELECT COUNT(*) AS n FROM sessions").get()!.n;
 
+const storedAttachments = (sessionId: string) => getDb()
+  .query<{ id: string; mime_type: string; filename: string | null; data: Uint8Array }, [string]>("SELECT id, mime_type, filename, data FROM session_attachments WHERE session_id = ? ORDER BY rowid").all(sessionId)
+  .map(row => ({ id: row.id, mimeType: row.mime_type, filename: row.filename, data: Buffer.from(row.data).toString("base64") }));
+
+const PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+const GIF = "R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
+const MIB = 1024 * 1024;
+const pngImage = (data: string | Uint8Array) => ({ image: { data, mimeType: "image/png" } });
+
+/** The images of the latest user message the model was asked with. */
+const modelImages = (turn: { context: { messages: readonly { role: string; content: unknown }[] } }) => {
+  const content = turn.context.messages.filter(message => message.role === "user").at(-1)?.content;
+  return Array.isArray(content) ? content.filter(block => block.type === "image").map(({ data, mimeType }) => ({ data, mimeType })) : [];
+};
+
 describe("reins.sessions", () => {
   useTestDb();
   const model = useFakeModel();
@@ -192,6 +207,63 @@ describe("reins.sessions", () => {
     expect(await refusal("Hello", [1])).toBe("Metadata must be a plain object");
     expect(await refusal("Hello", { big: "x".repeat(70_000) })).toBe("Metadata must be at most 65536 bytes of JSON");
     expect(storedInputs(sessionId)).toHaveLength(1);
+  });
+
+  test("a message's images are stored with the session, in order with its text the message refers to them, and the model gets them", async () => {
+    const { sessionId } = await automation.sessions.start([{ image: { data: PNG, mimeType: "image/png", filename: "dot.png" } }], {
+      source: { nodeId: "internal", path: dir }, background: true, model: model.model,
+    });
+    const first = await model.nextTurn(sessionId);
+    first.finish();
+    await until(() => settled.automation!.length === 1, "the first run settled");
+    await automation.sessions.send(sessionId, ["Before", { image: { data: new Uint8Array(Buffer.from(GIF, "base64")), mimeType: "image/gif" } }, "After", { text: "log", hidden: true }]);
+    const second = await model.nextTurn(sessionId);
+
+    const [png, gif] = storedAttachments(sessionId);
+    expect([png, gif]).toEqual([
+      { id: expect.stringMatching(/^att_/), mimeType: "image/png", filename: "dot.png", data: PNG },
+      { id: expect.stringMatching(/^att_/), mimeType: "image/gif", filename: null, data: GIF },
+    ]);
+    const reference = (id: string, mimeType: string, data: string) => ({
+      type: "image", attachmentId: id, mimeType, byteSize: Buffer.from(data, "base64").byteLength, sha256: expect.stringMatching(/^[0-9a-f]{64}$/),
+    });
+    expect(storedInputs(sessionId)).toEqual([
+      { content: [{ ...reference(png!.id, "image/png", PNG), filename: "dot.png" }], metadata: { sourceExtension: "automation" } },
+      {
+        content: [{ type: "text", text: "Before" }, reference(gif!.id, "image/gif", GIF), { type: "text", text: "After" }, { type: "text", text: "log" }],
+        metadata: { sourceExtension: "automation", details: { label: null, start: 3 } },
+      },
+    ]);
+    expect(modelImages(first)).toEqual([{ data: PNG, mimeType: "image/png" }]);
+    expect(modelImages(second)).toEqual([{ data: GIF, mimeType: "image/gif" }]);
+    expect(second.input).toBe("Before\nAfter\n\n\nlog");
+    second.finish();
+  });
+
+  test("refuses an image it cannot store or the model cannot take, and then stores none of the message's images", async () => {
+    const { sessionId } = await automation.sessions.start("Hello", { source: { nodeId: "internal", path: dir }, background: true, model: model.model });
+    (await model.nextTurn(sessionId)).finish();
+    const dot = { image: { data: PNG, mimeType: "image/png" } };
+    // As an extension without TypeScript could give them; a valid image first, which is not kept either.
+    const refusal = (...blocks: unknown[]) => Reflect.apply(automation.sessions.send, automation.sessions, [sessionId, ["Look", dot, ...blocks]])
+      .then(() => "sent", (error: Error) => error.message);
+
+    expect(await refusal({ image: { data: PNG, mimeType: "image/bmp" } })).toBe("Unsupported image type: image/bmp (give image/png, image/jpeg, image/webp or image/gif)");
+    expect(await refusal({ image: { data: PNG } })).toBe("Unsupported image type: unknown (give image/png, image/jpeg, image/webp or image/gif)");
+    expect(await refusal(pngImage(new Uint8Array(10 * MIB + 1)))).toBe("An image must be at most 10 MiB");
+    expect(await refusal(pngImage(new Uint8Array(9 * MIB)), pngImage(new Uint8Array(9 * MIB)), pngImage(new Uint8Array(9 * MIB)))).toBe("A message's images must be at most 25 MiB in all");
+    expect(await refusal(pngImage(new Uint8Array(5 * MIB)))).toBe("An image is 5.0 MiB, over the model provider's image size limit, and could not be resized");
+    expect(await refusal({ text: "log", hidden: true }, dot)).toBe("A message's images come before its hidden blocks");
+    expect(await refusal(pngImage("not base64!"))).toBe("An image's data must be base64 (without a data: prefix) or bytes");
+    expect(await refusal(pngImage(`data:image/png;base64,${PNG}`))).toBe("An image's data must be base64 (without a data: prefix) or bytes");
+    expect(await refusal(pngImage(""))).toBe("An image must not be empty");
+    expect(await refusal({ image: { data: PNG, mimeType: "image/png", filename: 7 } })).toBe("An image's filename must be a string");
+    expect(storedAttachments(sessionId)).toEqual([]);
+    expect(storedInputs(sessionId)).toHaveLength(1);
+    // A message of images only is a message.
+    await automation.sessions.send(sessionId, [dot]);
+    expect(storedAttachments(sessionId)).toHaveLength(1);
+    (await model.nextTurn(sessionId)).finish();
   });
 
   test("lists the sessions the browser lists, of every project, the latest change first, a page at a time, with their first message and unread", async () => {

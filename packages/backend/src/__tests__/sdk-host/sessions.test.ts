@@ -464,6 +464,22 @@ describe("sessions from a script: what it starts and sends is the calling sessio
     expect(inputsOf("stranger")).toEqual([expect.objectContaining({ content: [{ type: "text", text: "Also this" }], metadata: { sourceSessionId: "source" } })]);
   });
 
+  test("a script sends images as base64, a generated image as it is, stored with the target session", async () => {
+    const project = createProject("Images", repo.dir);
+    createSession("source", project.id, withModel());
+    createSession("target", project.id, withModel());
+    const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+    const tool = reinsTool("execute", { sessionId: "source", projectId: project.id, state: loopback.state });
+    const code = `const shot = { type: "image", data: ${JSON.stringify(png)}, mimeType: "image/png" };
+      await reins.sessions.send("target", ["Here's the screenshot", { image: { data: shot.data, mimeType: "image/png", filename: "shot.png" } }, { image: shot }]);`;
+
+    expect((await executeTool(tool, "send", { code })).details).toMatchObject({ success: true });
+    const stored = getDb().query<{ id: string; filename: string | null }, []>("SELECT id, filename FROM session_attachments WHERE session_id = 'target'").all();
+    expect(stored).toEqual([{ id: expect.stringMatching(/^att_/), filename: "shot.png" }]);
+    const reference = { type: "image", attachmentId: stored[0]!.id, mimeType: "image/png", filename: "shot.png", byteSize: Buffer.from(png, "base64").byteLength, sha256: expect.any(String) };
+    expect(inputsOf("target")).toEqual([expect.objectContaining({ content: [{ type: "text", text: "Here's the screenshot" }, reference, reference], metadata: { sourceSessionId: "source" } })]);
+  });
+
   test("a child is created on the caller's source and prompted there; waiting on it resolves once it reported to its parent", async () => {
     const project = createProject("Children", repo.dir);
     const caller = createSession("parent", project.id, withModel());

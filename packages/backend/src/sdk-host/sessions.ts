@@ -10,6 +10,10 @@
 import { Type } from "@sinclair/typebox";
 import type { MessageContent, MessageMetadata, ScriptNamespace, SessionInfo, SessionStartOptions } from "@reins/sdk/server";
 import { getDb } from "../app-globals.js";
+import type { ClientPromptBlock } from "../messages-store.js";
+import type { SessionSubmission } from "../models/sessions.js";
+import { ALLOWED_IMAGE_MIME_TYPES, MAX_ATTACHMENT_BYTES, MAX_PROMPT_ATTACHMENT_BYTES, storeSessionAttachment } from "../session-attachments-store.js";
+import { fitImage, fitsProvider, formatMiB } from "../session-runtime/provider-images.js";
 import { countMessages, listSessionEntries } from "../messages-store.js";
 import { ThinkingLevelSchema } from "../models/model-settings.js";
 import type { SessionModel } from "../models/session.js";
@@ -98,8 +102,17 @@ export const MessageBlockSchema = Type.Object({
   label: Type.Optional(Type.String({ description: "The first hidden block only: the heading the chat shows above the hidden blocks." })),
 });
 
-export const MessageContentSchema = Type.Union([Type.String({ minLength: 1 }), Type.Array(Type.Union([Type.String(), MessageBlockSchema]), { minItems: 1 })], {
-  description: "Its text, or blocks in order: strings, or { text, hidden?, label? } (visible blocks first).",
+export const MessageImageSchema = Type.Object({
+  type: Type.Optional(Type.Literal("image", { description: "Left as it is in an image from images.generate or a tool result." })),
+  data: Type.String({ description: "Base64, without a data: prefix." }),
+  mimeType: Type.String({ description: "image/png, image/jpeg, image/webp or image/gif." }),
+  filename: Type.Optional(Type.String()),
+}, { description: "An image, stored with the session: at most 10 MiB, 25 MiB for a message's images in all." });
+
+export const MessageImageBlockSchema = Type.Object({ image: MessageImageSchema }, { description: "An image block: a visible block." });
+
+export const MessageContentSchema = Type.Union([Type.String({ minLength: 1 }), Type.Array(Type.Union([Type.String(), MessageBlockSchema, MessageImageBlockSchema]), { minItems: 1 })], {
+  description: "Its text, or blocks in order: strings, { text, hidden?, label? } or { image: { data, mimeType, filename? } } (visible blocks first; images are visible).",
 });
 
 const MetadataSchema = notForScripts(Type.Record(Type.String(), Type.Unknown(), { description: "The message's metadata, kept in the transcript; the model does not get it." }));
@@ -214,24 +227,79 @@ function checkedMetadata(metadata: MessageMetadata | undefined): { metadata?: Re
   return Object.keys(metadata).length > 0 ? { metadata: { ...metadata } } : {};
 }
 
-/** A message's blocks as a submission's content, and where its hidden ones begin (with their label). */
-function checkedContent(message: MessageContent, blank: string): { content: { type: "text"; text: string }[]; details?: { start: number; label: string | null } } {
+interface CheckedImage { data: Buffer; mimeType: string; filename?: string; width?: number; height?: number }
+type CheckedBlock = { type: "text"; text: string } | { type: "image"; image: CheckedImage };
+/** A message as checked, its images not stored yet (`storedContent`), and where its hidden blocks begin. */
+interface CheckedContent { blocks: CheckedBlock[]; details?: { start: number; label: string | null } }
+
+const BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
+const MIB = 1024 * 1024;
+const IMAGE_TYPES = [...ALLOWED_IMAGE_MIME_TYPES].join(", ").replace(/, ([^,]*)$/, " or $1");
+
+const isImageBlock = (block: unknown): block is { image: unknown } => typeof block === "object" && block !== null && "image" in block;
+
+/** The image's bytes and type, as the store and the provider take them; it throws why it cannot be sent. */
+function checkedImage(image: unknown): CheckedImage {
+  const [data, mimeType, filename] = ["data", "mimeType", "filename"].map(key => typeof image === "object" && image !== null ? Reflect.get(image, key) : undefined);
+  if (filename !== undefined && typeof filename !== "string") throw new Error("An image's filename must be a string");
+  if (typeof mimeType !== "string" || !ALLOWED_IMAGE_MIME_TYPES.has(mimeType)) throw new Error(`Unsupported image type: ${typeof mimeType === "string" && mimeType ? mimeType : "unknown"} (give ${IMAGE_TYPES})`);
+  // Buffer.from skips what is not base64, so a data: URL or other text would be stored as garbage.
+  const bytes = typeof data === "string" && BASE64.test(data) ? Buffer.from(data, "base64")
+    : ArrayBuffer.isView(data) ? Buffer.from(data.buffer, data.byteOffset, data.byteLength)
+    : null;
+  if (!bytes) throw new Error("An image's data must be base64 (without a data: prefix) or bytes");
+  if (bytes.byteLength === 0) throw new Error("An image must not be empty");
+  if (bytes.byteLength > MAX_ATTACHMENT_BYTES) throw new Error(`An image must be at most ${MAX_ATTACHMENT_BYTES / MIB} MiB`);
+  return { data: bytes, mimeType, ...(filename === undefined ? {} : { filename }) };
+}
+
+/** As the provider will get it, as the browser's uploads are: an image the provider refuses would fail every later turn. */
+async function fitted(image: CheckedImage): Promise<CheckedImage> {
+  if (fitsProvider(image.data.byteLength)) return image;
+  const fit = await fitImage(image.data, image.mimeType).catch(() => null);
+  if (!fit) throw new Error(`An image is ${formatMiB(image.data.byteLength)}, over the model provider's image size limit, and could not be resized`);
+  return { ...image, data: Buffer.from(fit.data, "base64"), mimeType: fit.mimeType, ...(fit.width && fit.height ? { width: fit.width, height: fit.height } : {}) };
+}
+
+/** A message's blocks, checked whole before any image is stored, and where its hidden ones begin (with their label). */
+async function checkedContent(message: MessageContent, blank: string): Promise<CheckedContent> {
   if (typeof message === "string") {
     if (!message.trim()) throw new Error(blank);
-    return { content: [{ type: "text", text: message }] };
+    return { blocks: [{ type: "text", text: message }] };
   }
   if (!Array.isArray(message)) throw new Error(blank);
-  const blocks = message.map(block => typeof block === "string" ? { text: block, hidden: false, label: undefined } : { text: block?.text, hidden: block?.hidden === true, label: block?.label });
+  const blocks = message.map(block => typeof block === "string" ? { text: block, hidden: false, label: undefined }
+    : isImageBlock(block) ? { image: block.image, hidden: false, label: undefined }
+    : { text: block?.text, hidden: block?.hidden === true, label: block?.label });
   const start = blocks.findIndex(block => block.hidden);
+  if (start >= 0 && blocks.slice(start).some(block => "image" in block)) throw new Error("A message's images come before its hidden blocks");
   if (start >= 0 && blocks.slice(start).some(block => !block.hidden)) throw new Error("A message's hidden blocks come after its visible ones");
   if (start === 0 || blocks.length === 0) throw new Error(blank);
-  if (blocks.some(block => typeof block.text !== "string" || !block.text.trim())) throw new Error("A message's blocks must not be blank");
+  if (blocks.some(block => !("image" in block) && (typeof block.text !== "string" || !block.text.trim()))) throw new Error("A message's blocks must not be blank");
   if (blocks.some((block, index) => block.label !== undefined && index !== start)) throw new Error("Only a message's first hidden block has a label");
-  const content = blocks.map(block => ({ type: "text" as const, text: block.text }));
-  if (start < 0) return { content };
+  const checked = blocks.map((block): CheckedBlock => "image" in block ? { type: "image", image: checkedImage(block.image) } : { type: "text", text: String(block.text) });
+  const total = checked.reduce((sum, block) => sum + (block.type === "image" ? block.image.data.byteLength : 0), 0);
+  if (total > MAX_PROMPT_ATTACHMENT_BYTES) throw new Error(`A message's images must be at most ${MAX_PROMPT_ATTACHMENT_BYTES / MIB} MiB in all`);
+  // One at a time, as Bun has crashed when many resizer workers were cut off at once.
+  for (const block of checked) if (block.type === "image") block.image = await fitted(block.image);
+  if (start < 0) return { blocks: checked };
   const label = blocks[start]!.label === undefined ? null : String(blocks[start]!.label).trim();
   if (label !== null && (label.length === 0 || label.length > MAX_LABEL)) throw new Error(`A hidden block's label is 1 to ${MAX_LABEL} characters`);
-  return { content, details: { start, label } };
+  return { blocks: checked, details: { start, label } };
+}
+
+/** The submission's content: each image stored as an attachment of the session, and referred to in its place. */
+function storedContent(sessionId: string, { blocks, details }: CheckedContent): Pick<SessionSubmission, "content" | "details"> {
+  const content = blocks.map((block): ClientPromptBlock => {
+    if (block.type === "text") return block;
+    const stored = storeSessionAttachment(sessionId, block.image);
+    return {
+      type: "image", attachmentId: stored.id, mimeType: stored.mimeType, byteSize: stored.byteSize, sha256: stored.sha256,
+      ...(stored.filename === undefined ? {} : { filename: stored.filename }),
+      ...(stored.width && stored.height ? { width: stored.width, height: stored.height } : {}),
+    };
+  });
+  return { content, ...(details ? { details } : {}) };
 }
 
 /** What the caller's input records as its origin: the calling session, or the extension. */
@@ -358,14 +426,14 @@ const start = sdkMethod({
   returns: SessionHandleSchema,
   tags: ["sessions", "start", "create", "delegate", "async", "parent", "title", "task"],
   async run(context, prompt, options = {}) {
-    const content = checkedContent(prompt, "A session's prompt must not be blank");
+    const content = await checkedContent(prompt, "A session's prompt must not be blank");
     const metadata = checkedMetadata(options.metadata);
     const request = placement(context, options);
     if (signalOf(context).aborted) throw new DOMException("Aborted", "AbortError");
     const sessions = context.models.sessions;
     // A refused first prompt leaves the session: it is sent to again, or moved.
     const { id } = await sessions.create(request);
-    await sessions.submit(id, { op: "prompt", clientId: crypto.randomUUID(), ...content, ...metadata, ...(context.caller.kind === "extension" ? { sourceExtension: context.caller.name } : {}) });
+    await sessions.submit(id, { op: "prompt", clientId: crypto.randomUUID(), ...storedContent(id, content), ...metadata, ...(context.caller.kind === "extension" ? { sourceExtension: context.caller.name } : {}) });
     return { sessionId: id };
   },
 });
@@ -383,10 +451,10 @@ const send = sdkMethod({
   tags: ["sessions", "send", "message", "steer", "resume", "async"],
   async run(context, sessionId, message, options = {}) {
     sessionRow(context, sessionId);
-    const content = checkedContent(message, "A message must not be blank");
+    const content = await checkedContent(message, "A message must not be blank");
     const metadata = checkedMetadata(options.metadata);
     if (signalOf(context).aborted) throw new DOMException("Aborted", "AbortError");
-    await context.models.sessions.submit(sessionId, { op: "steer", clientId: crypto.randomUUID(), ...content, ...metadata, ...origin(context) });
+    await context.models.sessions.submit(sessionId, { op: "steer", clientId: crypto.randomUUID(), ...storedContent(sessionId, content), ...metadata, ...origin(context) });
   },
 });
 
@@ -573,6 +641,8 @@ export const SESSIONS = {
     ContextUsage: ContextUsageSchema,
     MessageContent: MessageContentSchema,
     MessageBlock: MessageBlockSchema,
+    MessageImageBlock: MessageImageBlockSchema,
+    MessageImage: MessageImageSchema,
     SessionEntry: SessionEntrySchema,
     MessageEntry: MessageEntrySchema,
     ToolCallEntry: ToolCallEntrySchema,
