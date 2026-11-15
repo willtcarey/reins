@@ -1,8 +1,20 @@
 # Design tokens and a UI kit for extensions
 
-> **Changed since this was written:** extension views are no longer in shadow roots. Reins scopes an extension's stylesheet at install and mounts its views in the light DOM ([ADR-038](../adr/038-added-extensions.md), [extension-loading.md](../dev/extension-loading.md) *Styles*), so the app's styles, and so its components, reach extension views. The parts below about shadow roots, `:host` and registries in shadow roots need revisiting with that in mind.
+> **Changed since this was first written:** extension views are no longer in shadow roots. Reins scopes an extension's stylesheet at install and mounts its views in the light DOM ([ADR-038](../adr/038-added-extensions.md), [extension-loading.md](../dev/extension-loading.md) *Styles*), so the app's styles, and so its components, reach extension views. The parts below about shadow roots, `:host` and registries in shadow roots need revisiting with that in mind.
 
-Status: **planned** — not started.
+Status: **in progress** (2026-11-15): slice 1 below (`@reins/ui` with the sidebar row and badge) is task #431. The current look is the contract: the user will adjust values over time, which tokens and the kit then carry to every extension.
+
+## Three layers (decided 2026-11-15)
+
+Consistency comes from three layers, strongest first. Use the strongest one that fits.
+
+1. **Reins draws it from data**, where the shape is fixed and Reins owns the interaction: Launcher items, and later `confirm`, `prompt`, `toast`, menus. The extension gives data; it cannot drift because it does not draw.
+2. **Kit components that the page provides** (`@reins/ui`), for what an extension draws itself inside its own mounts: a sidebar row, a badge, and later a pane, a section, a list row, an empty state, buttons, inputs. The extension keeps its mount and its framework; the component is Reins' current code at run time, so a change to Reins' look reaches every extension with no rebuild. Reins does not take over the rendering of sidebar sections or views: `registerSection({ mount })` and views' `mount` stay the base, and the kit is used inside them.
+3. **Tokens and the Tailwind theme file** underneath, for anything custom (the token list below).
+
+Why the kit is page-provided and not a package extensions bundle: a bundled helper freezes the look at the extension's build, so two extensions built at different times differ again (Spoke's and Inbox's sidebar rows were copied from each other and already differed: one has icons in its count chips, the other does not, with other colors).
+
+**Slices, in order:** (1) `@reins/ui` with `<reins-sidebar-row>` and `<reins-badge>`, used by the built-in sidebar sections where they fit, Spoke and Inbox; (2) tokens and the theme file (the old slices 1–2 below); (3) more kit components, pattern components first (pane, section, list row, empty state), with a gallery page; (4) the SDK actions (`confirm`, `prompt`, `toast`). The old *Slices* section below is kept for its detail; where it and this section disagree, this section wins.
 
 ## Goal
 
