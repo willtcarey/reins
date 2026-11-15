@@ -42,13 +42,13 @@ describe("ExtensionHost", () => {
         extension: viewer,
         status: "loaded",
         error: null,
-        registrations: { views: ["file", "file-reference"], decorators: 1, commands: [], settingsPage: true, sidebarSections: [] },
+        registrations: { views: ["file", "file-reference"], decorators: 1, commands: [], launcherItems: false, settingsPage: true, sidebarSections: [] },
       },
       {
         extension: commands,
         status: "loaded",
         error: null,
-        registrations: { views: [], decorators: 0, commands: ["compact", "new"], settingsPage: false, sidebarSections: [] },
+        registrations: { views: [], decorators: 0, commands: ["compact", "new"], launcherItems: false, settingsPage: false, sidebarSections: [] },
       },
     ]);
   });
@@ -70,7 +70,7 @@ describe("ExtensionHost", () => {
     const disposeViewer = sdk.extensionHost.activate(viewer, sdk.sdkFor(viewer));
     sdk.extensionHost.activate(other, sdk.sdkFor(other));
     removeView?.();
-    expect(sdk.extensionHost.list()[0]?.registrations).toEqual({ views: [], decorators: 1, commands: [], settingsPage: false, sidebarSections: [] });
+    expect(sdk.extensionHost.list()[0]?.registrations).toEqual({ views: [], decorators: 1, commands: [], launcherItems: false, settingsPage: false, sidebarSections: [] });
 
     disposeViewer();
     expect(sdk.extensionHost.list().map(({ extension }) => extension.name)).toEqual(["other"]);

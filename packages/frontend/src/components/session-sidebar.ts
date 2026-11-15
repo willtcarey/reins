@@ -15,7 +15,7 @@ import { repeat } from "lit/directives/repeat.js";
 import type { SidebarSection } from "@reins/sdk";
 import type { AppStore } from "../models/stores/app-store.js";
 import { chevronLeftIcon, chevronRightIcon } from "../ui/icons.js";
-import { openQuickOpenEvent, openSettingsEvent } from "./events.js";
+import { openLauncherEvent, openSettingsEvent } from "./events.js";
 import { ViewportController } from "../controllers/viewport-controller.js";
 import "./nav-icon.js";
 import "./view-mount.js";
@@ -66,8 +66,8 @@ export class SessionSidebar extends LitElement {
     this.onToggleCollapse?.();
   }
 
-  private openQuickOpen() {
-    this.dispatchEvent(openQuickOpenEvent());
+  private openLauncher() {
+    this.dispatchEvent(openLauncherEvent());
   }
 
   private openSettings() {
@@ -127,11 +127,11 @@ export class SessionSidebar extends LitElement {
                 ${chevronRightIcon()}
                 ${this.renderRailBadge()}
               </button>
-              <nav-icon icon="search" label="Search sessions (Cmd+K)" compact @click=${this.openQuickOpen}></nav-icon>
+              <nav-icon icon="search" label="Launcher (Cmd+K)" compact @click=${this.openLauncher}></nav-icon>
               <nav-icon icon="settings" label="Settings" compact @click=${this.openSettings}></nav-icon>
             </div>
           ` : html`
-            <nav-icon icon="search" label="Search sessions (Cmd+K)" .size=${18} @click=${this.openQuickOpen}></nav-icon>
+            <nav-icon icon="search" label="Launcher (Cmd+K)" .size=${18} @click=${this.openLauncher}></nav-icon>
             <nav-icon icon="settings" label="Settings" .size=${18} @click=${this.openSettings}></nav-icon>
             <div class="flex-1 min-w-0"></div>
             <button

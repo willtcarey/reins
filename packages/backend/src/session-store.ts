@@ -82,16 +82,6 @@ export interface SessionMetadataUpdates {
   archived?: boolean;
 }
 
-export interface PaletteItem {
-  sessionId: string;
-  projectId: number;
-  projectName: string;
-  taskId: number | null;
-  taskTitle: string | null;
-  firstMessage: string | null;
-  updatedAt: string;
-}
-
 // ---- Activity ---------------------------------------------------------------
 
 /**
@@ -287,62 +277,6 @@ export function listSessions(options: SessionListOptions): SessionRow[] {
     .query<SessionRow, (string | number)[]>(sql)
     .all(...binds)
     .map((r) => withLiveActivity({ ...r, first_message: stripLeadingSkillBlocks(r.first_message ?? null) }));
-}
-
-export function listPaletteItems(): PaletteItem[] {
-  const db = getDb();
-  const rows = db
-    .query<PaletteItem, []>(
-      `WITH eligible_sessions AS (
-         SELECT s.*
-         FROM sessions s
-         LEFT JOIN tasks t ON t.id = s.task_id
-         WHERE s.parent_session_id IS NULL
-           AND s.archived_at IS NULL
-           AND s.background = 0
-           AND (s.task_id IS NULL OR t.closed_at IS NULL)
-           AND EXISTS (
-             SELECT 1 FROM session_messages sm
-             WHERE sm.session_id = s.id
-           )
-       ),
-       latest_project_assistants AS (
-         SELECT id
-         FROM (
-           SELECT
-             id,
-             ROW_NUMBER() OVER (
-               PARTITION BY project_id
-               ORDER BY (pinned_at IS NOT NULL) DESC, updated_at DESC
-             ) AS recency_rank
-           FROM eligible_sessions
-           WHERE task_id IS NULL
-         )
-         WHERE recency_rank = 1
-       )
-       SELECT
-         s.id AS sessionId,
-         s.project_id AS projectId,
-         p.name AS projectName,
-         s.task_id AS taskId,
-         t.title AS taskTitle,
-         (
-           SELECT json_extract(sm.message_json, '$.message.content[0].text')
-           FROM session_messages sm
-           WHERE sm.session_id = s.id AND sm.role = 'reinsInput' AND json_valid(sm.message_json)
-           ORDER BY sm.seq
-           LIMIT 1
-         ) AS firstMessage,
-         s.updated_at AS updatedAt
-       FROM eligible_sessions s
-       JOIN projects p ON p.id = s.project_id
-       LEFT JOIN tasks t ON t.id = s.task_id
-       WHERE s.task_id IS NOT NULL
-          OR s.id IN (SELECT id FROM latest_project_assistants)
-       ORDER BY (s.pinned_at IS NOT NULL) DESC, s.updated_at DESC`,
-    )
-    .all();
-  return rows.map((r) => ({ ...r, firstMessage: stripLeadingSkillBlocks(r.firstMessage) }));
 }
 
 export function updateSessionMetadata(

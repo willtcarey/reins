@@ -14,7 +14,7 @@
 
 import { LitElement, html, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
-import { sameSource, type Disposer, type Views, type Workspace } from "@reins/sdk";
+import { sameSource, type Commands, type Disposer, type Views, type Workspace } from "@reins/sdk";
 import type { DiffFileSummary } from "@backend/models/diff-parser.js";
 import type { DiffStore } from "../../models/stores/diff-store.js";
 import type { CodeReviewStore } from "../../models/stores/code-review-store.js";
@@ -349,6 +349,21 @@ export function registerDiffFileTree(views: Views, workspace: Workspace, diffs: 
           },
         };
       },
+    },
+  });
+}
+
+/** `/changes`, the Launcher's Changes: the Changes tab, focused, beside a session. */
+export function registerChangesCommand(commands: Commands, workspace: Workspace): Disposer {
+  return commands.register({
+    name: "changes",
+    title: "Changes",
+    description: "Show the files this session changed, in the Inspector",
+    icon: paneIcon(diffIcon),
+    available: () => workspace.currentSubject("session") !== null,
+    run: () => {
+      if (!workspace.currentSubject("session")) throw new Error("There is no session here");
+      workspace.open({ view: "diff-file-tree" }, { in: "inspector" });
     },
   });
 }

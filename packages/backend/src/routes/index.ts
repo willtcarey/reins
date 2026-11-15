@@ -17,7 +17,6 @@ import { registerDiffRoutes } from "./diff.js";
 import { registerNodeFileRoutes, registerSessionFileRoutes } from "./files.js";
 import { registerTaskRoutes } from "./tasks.js";
 import { registerGitRoutes } from "./git.js";
-import { registerPaletteRoutes } from "./palette.js";
 import { registerSkillRoutes } from "./skills.js";
 import { registerSettingsRoutes } from "./settings.js";
 import { registerModelsRoutes } from "./models.js";
@@ -64,7 +63,6 @@ export function buildRouter() {
   registerNodeRoutes(router);
   registerNodeFileRoutes(router);
   registerSkillRoutes(router);
-  registerPaletteRoutes(router);
   registerSettingsRoutes(router);
   registerModelsRoutes(router);
   registerExtensionRoutes(router);

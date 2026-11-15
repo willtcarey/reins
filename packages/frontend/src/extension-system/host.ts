@@ -15,6 +15,8 @@ export interface FrontendExtension {
     /** Decorators have no names: how many. */
     decorators: number;
     commands: string[];
+    /** It gives Launcher items (`launcher.items`). */
+    launcherItems: boolean;
     settingsPage: boolean;
     sidebarSections: string[];
   };
@@ -27,12 +29,13 @@ export class ExtensionHost {
   private readonly listeners = new Set<() => void>();
   private readonly unsubscribe: Disposer[];
 
-  constructor(private readonly registries: Pick<SdkBacking, "views" | "decorators" | "commands" | "settingsPages" | "sidebar">) {
+  constructor(private readonly registries: Pick<SdkBacking, "views" | "decorators" | "commands" | "launcher" | "settingsPages" | "sidebar">) {
     const changed = () => this.notify();
     this.unsubscribe = [
       registries.views.subscribe(changed),
       registries.decorators.subscribe(changed),
       registries.commands.subscribe(changed),
+      registries.launcher.subscribe(changed),
       registries.settingsPages.subscribe(changed),
       registries.sidebar.subscribe(changed),
     ];
@@ -74,7 +77,7 @@ export class ExtensionHost {
   }
 
   list(): FrontendExtension[] {
-    const { views, decorators, commands, settingsPages, sidebar } = this.registries;
+    const { views, decorators, commands, launcher, settingsPages, sidebar } = this.registries;
     return this.activations.map(({ extension, error }) => ({
       extension,
       status: error === null ? "loaded" : "failed",
@@ -83,6 +86,7 @@ export class ExtensionHost {
         views: views.registeredBy(extension.name),
         decorators: decorators.registeredBy(extension.name),
         commands: commands.registeredBy(extension.name),
+        launcherItems: launcher.registeredBy(extension.name),
         settingsPage: settingsPages.page(extension.name) !== null,
         sidebarSections: sidebar.registeredBy(extension.name),
       },

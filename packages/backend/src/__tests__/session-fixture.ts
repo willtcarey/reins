@@ -1,5 +1,5 @@
-import { getSession, listSessions, listPaletteItems, updateSessionMeta, updateActivityState, updateSessionMetadata } from "../session-store.js";
-export { getSession, listSessions, listPaletteItems, updateSessionMeta, updateActivityState, updateSessionMetadata };
+import { getSession, listSessions, updateSessionMeta, updateActivityState, updateSessionMetadata } from "../session-store.js";
+export { getSession, listSessions, updateSessionMeta, updateActivityState, updateSessionMetadata };
 import { createSession as insertSession } from "../session-store.js";
 import { defaultSourceOf } from "../models/sources.js";
 

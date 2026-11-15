@@ -3,6 +3,7 @@
 import type { ExtensionInfo } from "@reins/sdk";
 import type { ProjectView as ProjectInfo } from "@backend/routes/projects.js";
 import { CommandRegistry } from "../../sdk-host/commands.js";
+import { LauncherSources } from "../../sdk-host/launcher.js";
 import { SendHandoff } from "../send-handoff.js";
 import { DecoratorRegistry } from "../../sdk-host/decorators.js";
 import { ExtensionHost } from "../../extension-system/host.js";
@@ -58,6 +59,7 @@ export class AppStore {
   readonly views = new ViewRegistry();
   readonly decorators = new DecoratorRegistry(this.views);
   readonly commands = new CommandRegistry();
+  readonly launcher = new LauncherSources();
   /** The extensions' Settings pages, which the settings page lists after its own sections. */
   readonly settingsPages = new SettingsPages();
   /** The sidebar's sections, in the order the user gave them (Settings → Sidebar). */

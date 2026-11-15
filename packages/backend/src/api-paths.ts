@@ -5,7 +5,6 @@ export const API = {
   nodes: "/api/nodes",
   sessions: "/api/sessions",
   tasks: "/api/tasks",
-  palette: "/api/palette",
   settings: "/api/settings",
   models: "/api/models",
   auth: "/api/auth",

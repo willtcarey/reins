@@ -18,13 +18,13 @@ Overlapping UI elements use a shared z-index system rather than magic numbers. C
 --layer-content: 10;   /* sticky headers, in-page floating elements */
 --layer-sidebar: 40;   /* mobile sidebar backdrop */
 --layer-overlay: 50;   /* modal overlays (file browser, delete dialog, popovers) */
---layer-palette: 60;   /* command palettes (quick-open, file search) */
+--layer-palette: 60;   /* command palettes (the Launcher, file search) */
 --layer-toast: 70;     /* toast notifications — always on top */
 ```
 
 ```
   toast      ─── 70  (always visible, e.g. copy confirmations)
-  palette    ─── 60  (quick-open, file search)
+  palette    ─── 60  (the Launcher, file search)
   overlay    ─── 50  (file browser, delete dialog, popovers)
   sidebar    ─── 40  (mobile sidebar backdrop)
   content    ─── 10  (sticky diff card headers, etc.)

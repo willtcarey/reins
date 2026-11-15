@@ -30,7 +30,6 @@ import type { SessionContextSnapshot } from "@reins/backend/models/session-conte
 import type { RuntimeProviderInfo } from "@reins/backend/pi/model-catalog.js";
 import type { TelemetryEvent } from "@reins/telemetry";
 import type { SessionAttachmentInfo } from "@reins/backend/session-attachments-store.js";
-import type { PaletteItem } from "@reins/backend/session-store.js";
 import type { AnySettingEntry } from "@reins/backend/settings-store.js";
 import type { TaskRow } from "@reins/backend/task-store.js";
 
@@ -257,10 +256,6 @@ export class ReinsClient {
 
   readonly models = {
     list: (options?: RequestOptions) => this.json<RuntimeProviderInfo[]>("GET", "/api/models", undefined, options),
-  };
-
-  readonly palette = {
-    list: (options?: RequestOptions) => this.json<PaletteItem[]>("GET", "/api/palette", undefined, options),
   };
 
   readonly telemetry = {

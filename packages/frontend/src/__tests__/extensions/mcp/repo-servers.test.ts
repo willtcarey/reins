@@ -99,6 +99,17 @@ describe("a session's MCP servers list in the Inspector", () => {
     expect(sdk.opened).toEqual([{ view: listOf(main, "s3"), container: "inspector" }]);
   });
 
+  test("is the Launcher's MCP servers, which applies only where a session is shown", () => {
+    const sdk = mcpSdk({ current: sessionShown("s4") });
+    registerMcpSessionServers(sdk.reins);
+    const mcp = sdk.commands.list().find(({ name }) => name === "mcp");
+
+    expect(mcp?.title).toBe("MCP servers");
+    expect(mcp?.available?.()).toBe(true);
+    sdk.showMain(null);
+    expect(mcp?.available?.()).toBe(false);
+  });
+
   test("is one tab per checkout, and follows the session shown on its checkout", async () => {
     backend({ view: listing([]) });
     const sdk = mcpSdk({ current: sessionShown("s1") });

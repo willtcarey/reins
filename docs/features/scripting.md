@@ -102,7 +102,7 @@ const task = await reins.tasks.create("Fix the build", "The CI build fails on ma
 return await reins.sessions.start("Fix the build.", { parentSessionId: "current", projectId: 7, taskId: task.id });
 ```
 
-Scripts cannot start **background sessions**: sessions that Reins features start, which run, settle and report like any other but never appear in the browser (session lists, the palette, task session counts and activity/unread badges). Session results expose `background: true/false`, and `sessions.list()` omits background sessions unless `options.background` asks for them.
+Scripts cannot start **background sessions**: sessions that Reins features start, which run, settle and report like any other but never appear in the browser (session lists, the Launcher, task session counts and activity/unread badges). Session results expose `background: true/false`, and `sessions.list()` omits background sessions unless `options.background` asks for them.
 
 Follow up in a later script using only the session ID:
 

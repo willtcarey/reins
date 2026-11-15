@@ -1,10 +1,13 @@
 /** The built-in `/new` command, registered through the SDK as an extension's would be. */
 
 import type { Disposer, ReinsSdk } from "@reins/sdk";
+import { paneIcon, plusIcon } from "../../ui/icons.js";
 
 export function registerNewSessionCommand(reins: ReinsSdk): Disposer {
   return reins.commands.register({
     name: "new",
+    title: "New session",
+    icon: paneIcon(plusIcon),
     description: "Open a new session here; text after it starts the session with that message",
     run: async ({ args }) => {
       const { workspace } = reins;

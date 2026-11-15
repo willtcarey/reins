@@ -8,7 +8,7 @@
  * overflow:hidden (e.g. the collapsed sidebar rail).
  *
  * Usage:
- *   <nav-icon icon="search" label="Search sessions (Cmd+K)" @click=${handler}></nav-icon>
+ *   <nav-icon icon="search" label="Launcher (Cmd+K)" @click=${handler}></nav-icon>
  */
 
 import { LitElement, html, nothing } from "lit";
