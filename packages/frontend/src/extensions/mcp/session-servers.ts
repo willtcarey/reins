@@ -33,6 +33,9 @@ export function registerMcpSessionServers(reins: McpSdk): Disposer {
   const disposers: Disposer[] = [
     reins.commands.register({
       name: "mcp",
+      title: "MCP servers",
+      icon: paneIcon(lockIcon),
+      available: () => reins.workspace.currentSubject("session") !== null,
       description: "Show this session's MCP servers, and turn them on or off",
       run: async () => {
         const sessionId = reins.workspace.currentSubject("session");

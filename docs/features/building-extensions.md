@@ -158,9 +158,36 @@ What `reins` gives (in depth in [reins-sdk.md](../dev/reins-sdk.md)):
 - **`sidebar.registerSection({ id, title, mount })`**: a section of the sidebar (the user orders and hides sections in Settings → Sidebar; a new one comes last).
 - **`views.register(name, { pane: { title, description, icon, mount } })`** and **`workspace.open(view, { in: "main" })`**: a page in the main area, with its own URL (`#/view/<name>?…`), or `{ in: "inspector" }` for a tab beside the conversation; `workspace.close(view)` closes that tab again (a form sent). Declare your view's type for TypeScript: `declare module "@reins/sdk" { interface ViewTypes { "hello-page": { view: "hello-page" } } }` (a `type`, not an `interface`). Open a session with `workspace.open({ view: "session", sessionId }, { in: "main" })` (declare `session: { view: "session"; sessionId: string }` the same way).
 - **`settings.register({ mount })`**: its page in Settings (Settings → <label>).
-- **`commands.register({ name, description, run })`**: a `/name` command in the composer. **`messages.registerDecorator`**: views in place of pieces of message text.
+- **`commands.register({ name, description, run })`**: a `/name` command in the composer, and an item of the Launcher (`Cmd+K`). Give it a `title` (the Launcher's name for it), an `icon` and `available()` (whether it applies where the user is: `() => reins.workspace.currentSubject("session") !== null`). The Launcher runs it with no text after its name: if it needs some, throw an error that says what to type (`/remind <what>`), which the Launcher shows. **`messages.registerDecorator`**: views in place of pieces of message text.
+- **`launcher.items(context => items)`**: other Launcher items, read each time the Launcher opens (*Launcher items* below).
 - **`sessions`**, **`projects`**, **`tasks`**: live lists with change events, and their actions; **`workspace.current()`** and **`onDidChange`**: what the main area shows.
 - External links: plain `<a href target="_blank" rel="noopener noreferrer">`.
+
+### Launcher items
+
+The Launcher ([launcher.md](launcher.md)) lists every extension's commands by itself. For anything else to open or do (one item per running process, per open pull request), give one function:
+
+```ts
+reins.launcher.items(async ({ current, session }) => {
+  const processes = await reins.http.call("processes", { sessionId: session?.id ?? null });
+  return processes.map((process) => ({
+    id: `process:${process.id}`,
+    icon: { mount: (target) => { target.textContent = "▶"; } },
+    title: process.name,
+    detail: process.command,
+    detailStyle: "code",
+    status: process.running ? "active" : undefined,
+    run: () => reins.workspace.open({ view: "process-log", processId: process.id }, { in: "inspector" }),
+  }));
+});
+```
+
+- Reins calls it each time the Launcher opens, with where the user is: `current` (the main area's view and what it is about) and `session` (the session shown, with its `source`; null for none).
+- Return the items, or a promise of them. Reins shows your last answer until the new one comes, and waits 1.5 s at most; a throw, a rejection or a late answer keeps your last answer (none the first time) and is logged in the browser's console. Reins also calls it soon after your extension loads. Keep it fast: read what you have, or one HTTP call.
+- `id` is stable across openings (`<kind>:<id>`): the Launcher puts the items the user ran lately first by it.
+- `icon` is a mount into a 14 px box, in `currentColor`, like a view's icon.
+- `run()` does the item's action after the Launcher closes; a rejection's message is shown to the user.
+- One function per extension: calling `items` again replaces it. It returns a disposer, and goes when the extension is unloaded.
 
 Keep schemas (TypeBox values) out of what the frontend imports as values: import the API module with `import type`, or the frontend bundle holds TypeBox too.
 

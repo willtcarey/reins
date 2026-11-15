@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { Source, View } from "@reins/sdk";
-import { DiffFileTree, registerDiffFileTree } from "../../../components/changes/diff-file-tree.js";
+import { DiffFileTree, registerChangesCommand, registerDiffFileTree } from "../../../components/changes/diff-file-tree.js";
 import { AppStore } from "../../../models/stores/app-store.js";
 import { mockFetch, restoreFetch } from "../../helpers/mock-fetch.js";
 import { paneContext, shownNewSession, shownSession, testSdk } from "../../helpers/reins-sdk.js";
@@ -196,5 +196,21 @@ describe("the diff-file-tree view", () => {
     mounted?.dispose?.();
 
     expect(diffOf("s1")).not.toBe(shown);
+  });
+});
+
+describe("the Changes command", () => {
+  test("opens the Changes tab in the Inspector, or brings it back, only where a session is shown", async () => {
+    const { reins, commands, opened, showMain } = testSdk({ current: shownSession("s1") });
+    registerChangesCommand(commands, reins.workspace);
+    const [changes] = commands.list();
+
+    expect(changes).toMatchObject({ name: "changes", title: "Changes" });
+    expect(changes?.available?.()).toBe(true);
+    await commands.run(commands.invocation("/changes")!);
+    expect(opened).toEqual([{ view: { view: "diff-file-tree" }, container: "inspector" }]);
+
+    showMain(shownNewSession(1));
+    expect(changes?.available?.()).toBe(false);
   });
 });

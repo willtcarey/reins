@@ -62,3 +62,13 @@ export class CommandRegistry implements Commands {
     for (const listener of this.listeners) listener();
   }
 }
+
+/** Whether the command applies where the user is now (`Command.available`); one whose check throws does not. */
+export function commandAvailable(command: Command): boolean {
+  try {
+    return command.available?.() ?? true;
+  } catch (error) {
+    console.error(`The /${command.name} command's available() failed:`, error);
+    return false;
+  }
+}

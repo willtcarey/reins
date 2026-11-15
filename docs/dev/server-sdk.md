@@ -34,6 +34,7 @@ packages/backend/src/
     mcp/                  #   the MCP extension (backend part)
     automations/          #   the automations extension (backend only)
     recent-sessions/      #   the Recent sessions extension (backend part: which sessions are recent)
+    launcher-sessions/    #   the Launcher's sessions extension (backend part: which sessions the Launcher lists)
     openai-images/        #   the OpenAI images extension (backend only: endpoints.json and the image provider)
   tools/execute.ts        # runScript: a script's vm, with reins (buildApiObject) and text()/image()
   tools/search.ts         # searchScriptApi: search's answer
@@ -168,6 +169,13 @@ The third built-in (`extensions/recent-sessions/`, with a frontend part, `packag
 - **A closed task puts its sessions away** (`recentSessions` in `index.ts`): a session of a closed task is left out unless a run started in it after the task closed (`lastRunStartedAt` later than `closedAt`), or the task is reopened. A run going when the task closed (an agent closing its own task) ends after it, which changes `updatedAt`, but does not bring the session back, as it does not mark it unread (`runStartedBeforeTaskClosed` in `sessions/session-runs.ts`). It reads `sessions.list` 50 at a time until it has `limit` (at most 500 read), and each project and task once per answer.
 - **Liveness is the frontend part's** (reins-sdk.md *The sidebar*): it asks again after the browser hears sessions, tasks or projects change. The backend part broadcasts nothing.
 - **Tests:** `__tests__/extensions/recent-sessions/` through the HTTP route; the SDK's reads in `__tests__/extension-system/sessions.test.ts`.
+
+## The Launcher's sessions extension
+
+`launcher-sessions` (`extensions/launcher-sessions/`, with a frontend part, `packages/frontend/src/extensions/launcher-sessions/`, reins-sdk.md *The Launcher*; user doc [features/launcher.md](../features/launcher.md)) decides which sessions the Launcher lists, over `projects.list`, `tasks.list("open", projectId)` and `sessions.list`.
+
+- **Its one method, `list()`** (`api.ts`, `launcherSessionsApi`): for each project, its latest session of no task (its first of `sessions.list({ projectId, taskId: null })`, pinned first, then the latest change) and every session of its open tasks; only sessions with a message (`minMessages: 1`), without sub-sessions (`parentSessionId`), and with the list's defaults (no archived or background ones). All of them, pinned first, then the latest change, each `{ id, name, project, task (null for none), firstMessage, updatedAt, activity }`. It reads 200 sessions at a time; the reads of no task stop at the first that is not a sub-session.
+- **Tests:** `__tests__/extensions/launcher-sessions/` through the HTTP route.
 
 ## Services
 

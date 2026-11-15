@@ -609,8 +609,19 @@ export interface Command {
   readonly name: string;
   /** One line, shown with the command in the composer's suggestions. */
   readonly description: string;
+  /** What the Launcher calls it ("MCP servers"); its name without one. */
+  readonly title?: string;
+  /** Its icon in the Launcher, drawn into a 14 px box in `currentColor`; the host's command icon without one. */
+  readonly icon?: Icon;
   /**
-   * Runs the command. What it acts on it reads from the SDK (`workspace.currentSubject`), before its
+   * Whether it applies where the user is now (MCP servers only beside a session), read from the SDK
+   * (`workspace.currentSubject`). The Launcher and the composer's suggestions leave it out when it answers false;
+   * typed in full, it still runs, and throws there as it would. Always available without it.
+   */
+  available?(): boolean;
+  /**
+   * Runs the command; the Launcher runs it with empty `args`, so one that needs text throws a message that says so.
+   * What it acts on it reads from the SDK (`workspace.currentSubject`), before its
    * first `await`: by then the user may have gone to another page. One that cannot run there throws.
    * The composer is busy until it settles. Once it resolves, the composer clears the text; when it
    * rejects, the composer shows the error's message and keeps the text to try again.
@@ -626,6 +637,54 @@ export interface Commands {
    * second, or a name that cannot follow a slash, throws.
    */
   register(command: Command): Disposer;
+}
+
+// ---------------------------------------------------------------------------
+// Launcher
+// ---------------------------------------------------------------------------
+
+/** Something drawn into a small box the host made (14 px), in `currentColor`, with a Settings page's lifecycle. */
+export interface Icon {
+  mount(target: HTMLElement): Mounted | void;
+}
+
+/** One row of the Launcher (Cmd+K): something to open or do. */
+export interface LauncherItem {
+  /**
+   * Stable across openings, so the Launcher can put the items run lately first: a kind and an ID
+   * (`session:<id>`, `process:<node>:<pid>`). Two items of one ID are one: the first is kept.
+   */
+  readonly id: string;
+  readonly icon: Icon;
+  readonly title: string;
+  /** A second line, after the title: what it is about. The Launcher's search reads it too. */
+  readonly detail?: string;
+  /** `"code"` shows the detail monospaced and cut at its end: a command, a path. */
+  readonly detailStyle?: "text" | "code";
+  /** A dot after it: `"active"` green and pulsing (running), `"attention"` amber (something to look at). */
+  readonly status?: "active" | "attention";
+  /** Does what the item is for; the Launcher closes first. A rejection is shown to the user. */
+  run(): void | Promise<void>;
+}
+
+/** Where the user is when the Launcher opens. */
+export interface LauncherContext {
+  /** The main area's view and what it is about (`workspace.current()`). */
+  readonly current: CurrentView | null;
+  /** The session the main area is about, with its source; null for none, or one that could not be read. */
+  readonly session: Session | null;
+}
+
+export type LauncherItems = (context: LauncherContext) => readonly LauncherItem[] | Promise<readonly LauncherItem[]>;
+
+export interface Launcher {
+  /**
+   * Gives the extension's items each time the Launcher opens. An extension has one function: a second call
+   * replaces the first. Every extension's commands are items already (`Command.title`, `available`): this is for
+   * the rest, such as one item for each thing that runs now. It may answer a promise; the Launcher waits a short
+   * time for it (1.5 s), and leaves the extension's items out when it rejects or answers late.
+   */
+  items(provide: LauncherItems): Disposer;
 }
 
 // ---------------------------------------------------------------------------
@@ -756,7 +815,7 @@ export interface ExtensionInfo {
   /** What its Settings page is for: the page's header, and its row on a phone. */
   readonly description?: string;
   /** Draws its icon into a 14 px box, in `currentColor`, with a Settings page's lifecycle. */
-  readonly icon?: { mount(target: HTMLElement): Mounted | void };
+  readonly icon?: Icon;
 }
 
 /** A built-in extension: its info and its register function, which gets an SDK of its own. */
@@ -775,6 +834,7 @@ export interface ReinsSdk<A extends HttpApi = HttpApi> {
   readonly views: Views;
   readonly messages: Messages;
   readonly commands: Commands;
+  readonly launcher: Launcher;
   readonly projects: Projects;
   readonly tasks: Tasks;
   readonly sessions: Sessions;

@@ -15,6 +15,7 @@ import { appRouter, mainViewHash, mainViewOf, settingsExtensionHash } from "../.
 import { RoutedMainArea, type MainHistory } from "../../routing/main-area.js";
 import { CommandRegistry } from "../../sdk-host/commands.js";
 import { DecoratorRegistry } from "../../sdk-host/decorators.js";
+import { LauncherSources } from "../../sdk-host/launcher.js";
 import { ExtensionHost } from "../../extension-system/host.js";
 import { createReinsSdk, type SdkHost } from "../../sdk-host/create-sdk.js";
 import { SettingsPages } from "../../sdk-host/settings-pages.js";
@@ -127,9 +128,10 @@ export function testSdk<A extends HttpApi = HttpApi>({ source = { nodeId: "node"
   const views = new ViewRegistry();
   const decorators = new DecoratorRegistry(views);
   const commands = new CommandRegistry();
+  const launcher = new LauncherSources();
   const settingsPages = new SettingsPages();
   const sidebar = new SidebarSections(sidebarLayout);
-  const extensionHost = new ExtensionHost({ views, decorators, commands, settingsPages, sidebar });
+  const extensionHost = new ExtensionHost({ views, decorators, commands, launcher, settingsPages, sidebar });
   const projectsStore = new ProjectsStore(sessions, client);
   const live = new SdkSessions({ sessionCache: sessions, projectsStore, sessionOperations: new SessionOperations({ conversations: new ConversationsStore({ sessionCache: sessions }) }) });
   const opened: OpenedView[] = [];
@@ -159,7 +161,7 @@ export function testSdk<A extends HttpApi = HttpApi>({ source = { nodeId: "node"
   };
   const recorded = recordingSessions(sessionCalls, live, sessions, sessionOverrides);
   const host: SdkHost = {
-    app: { files, views, decorators, commands, settingsPages, sidebar },
+    app: { files, views, decorators, commands, launcher, settingsPages, sidebar },
     sessions: recorded,
     ui: new SdkUi(sessions, recorded),
     projects: new SdkProjects(projectsStore),
@@ -172,7 +174,7 @@ export function testSdk<A extends HttpApi = HttpApi>({ source = { nodeId: "node"
   };
   const reins = createReinsSdk<A>(extension, host);
   const sdkFor = (other: ExtensionInfo, scope?: string) => createReinsSdk(other, host, { scope });
-  return { client, sessions, projectsStore, files, views, decorators, commands, settingsPages, sidebar, extensionHost, reins, sdkFor, source, opened, closed, shownViews, mainHistory, sessionCalls, showMain };
+  return { client, sessions, projectsStore, files, views, decorators, commands, launcher, settingsPages, sidebar, extensionHost, reins, sdkFor, source, opened, closed, shownViews, mainHistory, sessionCalls, showMain };
 }
 
 /** An Inspector over views that know the file viewer's `file` view, as the app's do. */

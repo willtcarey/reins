@@ -25,4 +25,9 @@ describe("slashSuggestions", () => {
       { kind: "skill", name: "new", description: "A skill named like a command" },
     ]);
   });
+
+  test("leaves out a command that does not apply here, and still hides the skill of its name, which it would win over", () => {
+    const here = [...commands, { name: "dip", description: "Only beside a session", available: () => false, run: () => {} }];
+    expect(slashSuggestions("", { commands: here, skills, atStart: true }).map(({ name }) => name)).toEqual(["compact", "new"]);
+  });
 });

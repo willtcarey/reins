@@ -12,6 +12,7 @@ import type { BuiltInExtensionName } from "@backend/extensions/built-in-names.js
 import { registerFileViewer } from "../components/file-viewer/file-viewer.js";
 import { registerCompactCommand } from "./compact-command/compact-command.js";
 import { registerMcp } from "./mcp/index.js";
+import { registerLauncherSessions } from "./launcher-sessions/launcher-sessions.js";
 import { registerFileReferences } from "./message-file-references/message-file-references.js";
 import { registerNewSessionCommand } from "./new-session-command/new-session-command.js";
 import { registerRecentSessions } from "./recent-sessions/recent-sessions.js";
@@ -29,6 +30,7 @@ export const BUILT_IN_EXTENSIONS: readonly BuiltIn<ExtensionRegistration>[] = [
   { name: "file-references", label: "File references", description: "Turns file paths in messages into links that open the file, at its lines, in the inspector.", register: registerFileReferences },
   { name: "compact-command", label: "/compact", description: "Summarizes the conversation so far to free its context.", register: registerCompactCommand },
   { name: "new-session-command", label: "/new", description: "Opens a new session here, started with the text after it.", register: registerNewSessionCommand },
+  { name: "launcher-sessions", label: "Sessions in the Launcher", description: "The Launcher's sessions: those of open tasks and each project's latest session of no task.", register: registerLauncherSessions },
   {
     name: "mcp",
     label: "MCP",

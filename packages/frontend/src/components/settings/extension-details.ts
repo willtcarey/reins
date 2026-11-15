@@ -131,9 +131,10 @@ export class SettingsExtensionDetails extends LitElement {
   /** What users get from it in the app: all from its frontend part. */
   private _renderInTheApp(extension: ExtensionSummary) {
     const r = extension.frontend?.registrations;
-    if (!r || (r.views.length + r.commands.length + r.decorators + r.sidebarSections.length === 0 && !r.settingsPage)) return nothing;
+    if (!r || (r.views.length + r.commands.length + r.decorators + r.sidebarSections.length === 0 && !r.settingsPage && !r.launcherItems)) return nothing;
     return group("In the app", html`
       ${row("Commands", names(r.commands, "/"))}
+      ${row("Launcher items", r.launcherItems ? "Yes" : null)}
       ${row("Views", names(r.views))}
       ${row("Sidebar sections", names(r.sidebarSections))}
       ${row("Message decorators", count(r.decorators))}

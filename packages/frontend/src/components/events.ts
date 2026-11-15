@@ -18,7 +18,7 @@ declare global {
   interface DocumentEventMap {
     "open-in-browser": CustomEvent<OpenInBrowserDetail>;
     "open-image-viewer": CustomEvent<OpenImageViewerDetail>;
-    "open-quick-open": CustomEvent<void>;
+    "open-launcher": CustomEvent<void>;
     "open-file-search": CustomEvent<SourceDetail>;
     "open-settings": CustomEvent<void>;
   }
@@ -26,7 +26,7 @@ declare global {
   interface HTMLElementEventMap {
     "open-in-browser": CustomEvent<OpenInBrowserDetail>;
     "open-image-viewer": CustomEvent<OpenImageViewerDetail>;
-    "open-quick-open": CustomEvent<void>;
+    "open-launcher": CustomEvent<void>;
     "open-file-search": CustomEvent<SourceDetail>;
     "open-settings": CustomEvent<void>;
     "open-file-browser": CustomEvent<SourceDetail>;
@@ -89,9 +89,9 @@ export function openImageViewerEvent(detail: OpenImageViewerDetail) {
   return componentEvent("open-image-viewer", detail);
 }
 
-/** Request to open the quick-open (session search) palette. */
-export function openQuickOpenEvent() {
-  return componentSignal("open-quick-open");
+/** Request to open the Launcher (Cmd+K). */
+export function openLauncherEvent() {
+  return componentSignal("open-launcher");
 }
 
 /** Request to open the file-search palette. */

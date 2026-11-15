@@ -5,13 +5,14 @@
 
 import type { ExtensionClient } from "@reins/client";
 import type {
-  Command, Commands, ContainerId, CurrentView, Disposer, ExtensionInfo, Files, HttpApi, HttpCallArgs, HttpOutput, MessageDecorator, Messages, Nodes, OpenOptions, PanePresentation, Projects,
+  Command, Commands, ContainerId, CurrentView, Disposer, ExtensionInfo, Files, HttpApi, HttpCallArgs, HttpOutput, Launcher, LauncherItems, MessageDecorator, Messages, Nodes, OpenOptions, PanePresentation, Projects,
   ReinsSdk, Sessions, SettingsPage, SidebarSection, Subject, SubjectTypes, Tasks, Ui, View, ViewRenderer, Views, ViewTypes,
 } from "@reins/sdk";
 import { SCOPE_ATTRIBUTE } from "@reins/sdk";
 import type { IAppClient } from "../models/ws-client.js";
 import type { CommandRegistry } from "./commands.js";
 import type { DecoratorRegistry } from "./decorators.js";
+import type { LauncherSources } from "./launcher.js";
 import type { SettingsPages } from "./settings-pages.js";
 import type { SidebarSections } from "./sidebar-sections.js";
 import type { ViewRegistry } from "./view-registry.js";
@@ -23,6 +24,7 @@ export interface SdkBacking {
   readonly views: ViewRegistry;
   readonly decorators: DecoratorRegistry;
   readonly commands: CommandRegistry;
+  readonly launcher: LauncherSources;
   readonly settingsPages: SettingsPages;
   readonly sidebar: SidebarSections;
 }
@@ -123,6 +125,7 @@ export function createReinsSdk<A extends HttpApi = HttpApi>(
     } satisfies Views),
     messages: Object.freeze({ registerDecorator: (decorator: MessageDecorator) => own(app.decorators.registerDecorator(decorator, extension.name)) } satisfies Messages),
     commands: Object.freeze({ register: (command: Command) => own(app.commands.register(command, extension.name)) } satisfies Commands),
+    launcher: Object.freeze({ items: (provide: LauncherItems) => own(app.launcher.set(extension.name, provide)) } satisfies Launcher),
     projects: Object.freeze({
       list: () => projects.list(),
       onDidChange: (listener: Parameters<Projects["onDidChange"]>[0]) => own(projects.onDidChange(listener)),

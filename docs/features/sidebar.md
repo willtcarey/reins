@@ -1,6 +1,6 @@
 # Sidebar
 
-The sidebar is on the left of the workspace (on a phone, the first page). Its header has **Search sessions** (Cmd+K), **Settings** and, on a desktop, **Hide sidebar**. A hidden sidebar is a narrow rail with the same buttons and a dot on its expand button: green while any session runs, amber while any session has something you have not opened yet. Reins computes the dot from every session, whatever sections are shown.
+The sidebar is on the left of the workspace (on a phone, the first page). Its header has the **[Launcher](launcher.md)** (Cmd+K), **Settings** and, on a desktop, **Hide sidebar**. A hidden sidebar is a narrow rail with the same buttons and a dot on its expand button: green while any session runs, amber while any session has something you have not opened yet. Reins computes the dot from every session, whatever sections are shown.
 
 Below the header is a stack of **sections**. Reins has two, and extensions can add more:
 

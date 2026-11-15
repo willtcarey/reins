@@ -7,7 +7,7 @@ import { BUILT_IN_EXTENSION_INFO, BUILT_IN_EXTENSIONS } from "../extensions/buil
 import { api } from "../models/api.js";
 import { AppStore } from "../models/stores/app-store.js";
 import { FileBrowserStore } from "../models/stores/file-browser-store.js";
-import { QuickOpenStore } from "../models/stores/quick-open-store.js";
+import { LauncherStore } from "../models/stores/launcher-store.js";
 import { createReinsSdk, type SdkHost } from "../sdk-host/create-sdk.js";
 import { SdkSessions } from "../sdk-host/sessions.js";
 import { SdkUi } from "../sdk-host/ui.js";
@@ -17,20 +17,21 @@ import { AppClient } from "../models/ws-client.js";
 import { mainViewOf, navigate, openSettings, renderRoutePage, settingsExtensionHash } from "../routing/app-router.js";
 import { RoutedMainArea } from "../routing/main-area.js";
 import type { Route } from "../routing/router.js";
-import type { View } from "@reins/sdk";
+import type { Subject, View } from "@reins/sdk";
 import type { SourceDetail, OpenImageViewerDetail, OpenInBrowserDetail } from "./events.js";
 import type { AppWorkspace } from "./app-workspace.js";
 import type { ImageLightbox } from "./image-lightbox.js";
 import { registerNewSessionPage } from "./new-session-page.js";
-import { registerDiffFileTree } from "./changes/diff-file-tree.js";
+import { registerChangesCommand, registerDiffFileTree } from "./changes/diff-file-tree.js";
 import { openFilesOfShownSession } from "../models/open-file-requests.js";
 import { closeTabsOnSourceChange } from "../models/inspector.js";
 import { registerSessionViews } from "./session-views.js";
-import type { QuickOpen } from "./quick-open.js";
+import type { Launcher } from "./launcher.js";
+import { commandIcon, paneIcon } from "../ui/icons.js";
 import "./file-browser/file-browser.js";
 import "./file-browser/file-search.js";
 import "./image-lightbox.js";
-import "./quick-open.js";
+import "./launcher.js";
 
 @customElement("app-shell")
 export class AppShell extends LitElement {
@@ -72,7 +73,16 @@ export class AppShell extends LitElement {
   /** Counts report requests, so a late answer to an older one is dropped. */
   private extensionsRequest = 0;
   private fileBrowserStore: FileBrowserStore | null = null;
-  private quickOpenStore = new QuickOpenStore(this.appStore.sessionCache);
+  private launcherStore = new LauncherStore({
+    sources: this.appStore.launcher,
+    commands: this.appStore.commands,
+    commandIcon: paneIcon(commandIcon),
+    context: async () => {
+      const current = this.mainArea.current();
+      const shown = current?.subject.find((subject): subject is Subject & { type: "session" } => subject.type === "session");
+      return { current, session: shown ? await this.sdkSessions.get(shown.id).catch(() => null) : null };
+    },
+  });
   private unsubscribeStore: (() => void) | null = null;
   private routes = new AppRouteController(this, {
     onRouteChange: (route) => { this.currentRoute = route; },
@@ -80,7 +90,7 @@ export class AppShell extends LitElement {
 
   @state() private currentRoute: Route = { name: "empty", params: {} };
   @state() private storeVersion = 0;
-  @query("quick-open") private quickOpen!: QuickOpen;
+  @query("app-launcher") private launcher!: Launcher;
   /** The workspace routes' page: the main area's view, when it shows one. */
   @query("app-workspace") private workspace!: AppWorkspace | null;
   @query("image-lightbox") private imageLightbox!: ImageLightbox;
@@ -105,10 +115,13 @@ export class AppShell extends LitElement {
       registerSessionViews(this.appStore.views, this.appStore),
       registerNewSessionPage(this.appStore.views, this.appStore),
       registerDiffFileTree(this.appStore.views, workspace, this.appStore.diffs),
+      registerChangesCommand(this.appStore.commands, workspace),
       openFilesOfShownSession(this.appStore.client, workspace, (source, file) => this.fileBrowserStore?.open(source, file)),
       // Before any extension listens: a view an extension opens for the new session in the same change is not closed.
       closeTabsOnSourceChange(workspace, sessions, this.appStore.inspector),
-      this.quickOpenStore.followWorkspace(workspace),
+      this.launcherStore.followWorkspace(workspace),
+      // Before the extensions load: their first items are then gathered before the Launcher first opens.
+      this.launcherStore.followSources(),
       // A page registered or gone changes the title of the page shown.
       this.appStore.views.subscribe(() => this.updateDocumentTitle()),
       // Extensions load as the server's report says, at each connect (a server may have changed them while the
@@ -135,7 +148,7 @@ export class AppShell extends LitElement {
     this.unsubscribeStore?.();
     document.removeEventListener("open-in-browser", this.handleOpenInBrowser);
     this.appStore.disconnect();
-    this.quickOpenStore.dispose();
+    this.launcherStore.dispose();
     this.fileBrowserStore?.dispose();
     this.fileBrowserStore = null;
     for (const dispose of this.disposeSdk) dispose();
@@ -181,7 +194,7 @@ export class AppShell extends LitElement {
     return html`
       <div
         class="h-dvh w-full flex flex-col bg-zinc-900 text-zinc-100 overflow-hidden"
-        @open-quick-open=${() => this.quickOpen?.open()}
+        @open-launcher=${() => this.launcher?.open()}
         @open-file-search=${(event: CustomEvent<SourceDetail>) => this.fileBrowserStore?.openSearch(event.detail.source)}
         @open-file-browser=${(event: CustomEvent<SourceDetail>) => this.fileBrowserStore?.open(event.detail.source)}
         @open-image-viewer=${this.handleOpenImageViewer}
@@ -197,7 +210,7 @@ export class AppShell extends LitElement {
 
         <div class="flex-1 min-h-0 min-w-0 overflow-hidden">${mainContent}</div>
 
-        <quick-open .store=${this.quickOpenStore}></quick-open>
+        <app-launcher .store=${this.launcherStore}></app-launcher>
         <file-search .store=${this.fileBrowserStore}></file-search>
         <file-browser .store=${this.fileBrowserStore}></file-browser>
         <image-lightbox></image-lightbox>

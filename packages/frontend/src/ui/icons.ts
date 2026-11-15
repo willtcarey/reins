@@ -44,6 +44,16 @@ export function plusIcon(className = "", size: IconSize = 14) {
   return html`<svg class=${className} width=${size} height=${size} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14"/><path d="M5 12h14"/></svg>`;
 }
 
+/** A command (a slash in a box): the Launcher's icon for a command without its own. */
+export function commandIcon(className = "", size: IconSize = 14) {
+  return html`<svg class=${className} width=${size} height=${size} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 15l6-6"/></svg>`;
+}
+
+/** Arrows pressing in from both sides: compacting a conversation. */
+export function compactIcon(className = "", size: IconSize = 14) {
+  return html`<svg class=${className} width=${size} height=${size} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v6"/><path d="m15 6-3 3-3-3"/><path d="M12 21v-6"/><path d="m15 18-3-3-3 3"/><path d="M4 12h16"/></svg>`;
+}
+
 export function conversationIcon(className = "", size: IconSize = 14) {
   return html`<svg class=${className} width=${size} height=${size} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>`;
 }

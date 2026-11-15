@@ -6,6 +6,7 @@ import type { BuiltInExtensionName } from "./built-in-names.js";
 import { mcp } from "./mcp/index.js";
 import { automations } from "./automations/index.js";
 import { recentSessionsExtension } from "./recent-sessions/index.js";
+import { launcherSessionsExtension } from "./launcher-sessions/index.js";
 import { openaiImages } from "./openai-images/index.js";
 import { secrets } from "./secrets/index.js";
 
@@ -13,6 +14,7 @@ export const BUILT_IN_EXTENSIONS: readonly (BuiltInBackendPart & { name: BuiltIn
   { name: "mcp", ...mcp },
   { name: "automations", ...automations },
   { name: "recent-sessions", ...recentSessionsExtension },
+  { name: "launcher-sessions", ...launcherSessionsExtension },
   { name: "openai-images", ...openaiImages },
   { name: "secrets", ...secrets },
 ];

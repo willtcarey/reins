@@ -34,6 +34,17 @@ describe("/compact", () => {
     expect([...nowhere.sessionCalls, ...draft.sessionCalls]).toEqual([]);
   });
 
+  test("is the Launcher's Compact, which applies only where a session is shown", () => {
+    const { reins, commands, showMain } = testSdk({ current: shownSession("s1") });
+    registerCompactCommand(reins);
+    const [compact] = commands.list();
+
+    expect(compact?.title).toBe("Compact");
+    expect(compact?.available?.()).toBe(true);
+    showMain(shownNewSession(7));
+    expect(compact?.available?.()).toBe(false);
+  });
+
   test("unregisters with its disposer", () => {
     const { reins, commands } = testSdk();
 

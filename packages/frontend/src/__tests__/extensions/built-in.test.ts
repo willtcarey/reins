@@ -6,6 +6,7 @@ import { BUILT_IN_EXTENSION_INFO } from "../../extensions/built-in.js";
 const EVERY_BUILT_IN = {
   "mcp": true, "automations": true, "recent-sessions": true, "openai-images": true, "sidebar-projects": true,
   "file-viewer": true, "file-references": true, "compact-command": true, "new-session-command": true, "secrets": true,
+  "launcher-sessions": true,
 } satisfies Record<BuiltInExtensionName, true>;
 
 describe("built-in extensions", () => {

@@ -8,6 +8,7 @@ export const BUILT_IN_EXTENSION_NAMES = [
   "mcp",
   "automations",
   "recent-sessions",
+  "launcher-sessions",
   "openai-images",
   "secrets",
   "sidebar-projects",

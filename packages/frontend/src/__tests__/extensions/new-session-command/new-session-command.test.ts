@@ -85,6 +85,14 @@ describe("/new", () => {
     expect([...failing.shownViews, ...gone.sessionCalls, ...gone.shownViews, ...unchosen.sessionCalls, ...unchosen.shownViews]).toEqual([]);
   });
 
+  test("is the Launcher's New session, which applies everywhere", () => {
+    const { commands } = newCommandIn({}, null);
+    const [command] = commands.list();
+
+    expect(command?.title).toBe("New session");
+    expect(command?.available?.() ?? true).toBe(true);
+  });
+
   test("unregisters with its disposer", () => {
     const { reins, commands } = testSdk();
 
