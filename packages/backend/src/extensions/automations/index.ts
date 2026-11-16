@@ -27,7 +27,7 @@ export function startAutomations(reins: ServerSdk, { now = () => new Date(), pol
   const removals = [
     reins.sessions.onSettled(settlement => automations.settled(settlement)),
     reins.scripting.register(automationsScripting(automations, reins.sessions)),
-    reins.prompt.register(automationsPromptSection),
+    reins.sessions.registerSystemPromptSection(automationsPromptSection),
     registerAutomationsRoutes(reins.http, automations),
     reins.services.register({
       name: "scheduler",

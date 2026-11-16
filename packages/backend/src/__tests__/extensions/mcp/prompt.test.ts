@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { PromptContext } from "@reins/sdk/server";
+import type { SystemPromptContext } from "@reins/sdk/server";
 import { SessionModel } from "../../../models/session.js";
 import { createSession } from "../../../sessions/create-session.js";
 import { getSource } from "../../../node-store.js";
@@ -10,7 +10,7 @@ import { testMcp } from "../../helpers/mcp-extension.js";
 import { useTestDb } from "../../helpers/test-db.js";
 import { useTestRepo } from "../../helpers/test-repo.js";
 
-const context = (tools: readonly string[] | null): PromptContext => ({ session: { id: "s", projectId: 1, taskId: null }, task: null, tools });
+const context = (tools: readonly string[] | null): SystemPromptContext => ({ session: { id: "s", projectId: 1, taskId: null, kind: "agent" }, task: null, tools });
 
 /** An app with the MCP extension, and its servers. */
 function mcpState() {
@@ -29,7 +29,7 @@ describe("the MCP extension's prompt section", () => {
     await servers.create({ name: "vercel", url: "https://vercel.example.com/mcp", authKind: "none" });
     await servers.create({ name: "slack", url: "https://slack.example.com/mcp", authKind: "none", enabled: false });
 
-    expect(await state.extensions.host.promptSections(context(null))).toEqual([`MCP servers (through execute): find their tools with reins.tools.search(query), or reins.tools.search(query, { filters: { server } }) for one server's; call one with reins.tools.call(id, args). A tool's ID is mcp__<server>__<tool>. search does not list them.
+    expect(await state.extensions.host.systemPromptSections(context(null))).toEqual([`MCP servers (through execute): find their tools with reins.tools.search(query), or reins.tools.search(query, { filters: { server } }) for one server's; call one with reins.tools.call(id, args). A tool's ID is mcp__<server>__<tool>. search does not list them.
 - executor: Integrations: github_com, sentry_io.
   Find their tools with search_<integration>.
 - vercel
@@ -39,16 +39,16 @@ Disabled (you can ask the user to turn these on with /mcp):
 
   test("no server, or no execute, means no section; only servers that are off are named alone", async () => {
     const { state, servers } = mcpState();
-    expect(await state.extensions.host.promptSections(context(null))).toEqual([]);
+    expect(await state.extensions.host.systemPromptSections(context(null))).toEqual([]);
 
     await servers.create({ name: "slack", url: "https://slack.example.com/mcp", authKind: "none", enabled: false });
-    expect(await state.extensions.host.promptSections(context(null))).toEqual([
+    expect(await state.extensions.host.systemPromptSections(context(null))).toEqual([
       "MCP servers: none is enabled.\nDisabled (you can ask the user to turn these on with /mcp):\n- slack",
     ]);
 
     await servers.create({ name: "vercel", url: "https://vercel.example.com/mcp", authKind: "none" });
-    expect(await state.extensions.host.promptSections(context(["bash"]))).toEqual([]);
-    expect(await state.extensions.host.promptSections(context(["execute"]))).toHaveLength(1);
+    expect(await state.extensions.host.systemPromptSections(context(["bash"]))).toEqual([]);
+    expect(await state.extensions.host.systemPromptSections(context(["execute"]))).toHaveLength(1);
   });
 
   test("reaches an agent session's prompt when its runtime opens", async () => {
@@ -58,7 +58,7 @@ Disabled (you can ask the user to turn these on with /mcp):
     const created = createSession(state, { projectId: project.id, model: { provider: "anthropic", modelId: "claude-haiku-4-5" } });
     const row = getSession(created.id)!;
 
-    const { systemPrompt } = (await new SessionModel(row, state.nodes).context(getSource(row.source_id)!, ctx => state.extensions.host.promptSections(ctx))).runtime;
+    const { systemPrompt } = (await new SessionModel(row, state.nodes).context(getSource(row.source_id)!, { systemPromptSections: ctx => state.extensions.host.systemPromptSections(ctx) })).runtime;
 
     expect(systemPrompt).toContain("- vercel: vercel tools");
   });

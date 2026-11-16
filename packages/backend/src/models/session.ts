@@ -2,13 +2,12 @@
  * One session (`SessionModel`, from `Sessions.get`, or the runtime opener's): where it works (its source on
  * its node, the base branch its diffs compare with) and what its runtime is opened with (`SessionContext`).
  */
-import type { PromptContext } from "@reins/sdk/server";
 import type { SessionRow } from "../session-store.js";
 import { getNode, type Source } from "../node-store.js";
 import type { NodeHub } from "../state.js";
 import { getProject } from "../project-store.js";
 import { getTask, updateTask, type TaskRow } from "../task-store.js";
-import { sessionKind, type SessionKindConfig } from "../sessions/session-kinds.js";
+import { resolveSessionKind, type SessionKindConfig, type SessionKindSource } from "../sessions/session-kinds.js";
 import { piModelSetting } from "./model-settings.js";
 import { resolveSource, SourceModel } from "./sources.js";
 import type { Workspace } from "./workspace.js";
@@ -94,19 +93,21 @@ export class SessionModel {
   }
 
   /** The session's context (`SessionContext`) in `source`, built from the rows now, so task and prompt edits (an
-   * extension's included) reach the runtime the next time it opens; `promptSections` gives the app's extensions' sections
-   * (`App.promptSections`; none by default). Throws when the lane seed cannot be built (an unusable
-   * `default_model`) or the session's kind is unknown. */
-  async context(source: Source, promptSections: (context: PromptContext) => Promise<string[]> = async () => []): Promise<SessionContext> {
+   * extension's included) reach the runtime the next time it opens; `kinds` gives the app's extensions' sections
+   * and kinds (the current `App`; without it, no sections and no extension kind). Throws when the lane seed
+   * cannot be built (an unusable `default_model`), and `SessionKindMissingError` when the session's kind is
+   * not registered now. */
+  async context(source: Source, kinds?: SessionKindSource): Promise<SessionContext> {
     const { row } = this;
     const task = row.task_id === null ? null : getTask(row.task_id);
-    const { branch = null, ...runtime } = await sessionKind(row.kind)({
+    const kind = await resolveSessionKind(row.kind, kinds);
+    const { branch = null, ...runtime } = await kind({
       session: row, task,
-      promptSections: tools => promptSections({
-        session: { id: row.id, projectId: row.project_id, taskId: row.task_id },
+      systemPromptSections: async tools => kinds ? kinds.systemPromptSections({
+        session: { id: row.id, projectId: row.project_id, taskId: row.task_id, kind: row.kind },
         task: task && { id: task.id, title: task.title, description: task.description },
         tools,
-      }),
+      }) : [],
     });
     const project = branch && task && row.project_id !== null ? getProject(row.project_id) : null;
     const taskBranch: TaskBranch | null = branch && task && project

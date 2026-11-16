@@ -47,7 +47,7 @@ import type { AppState, NodeHub, ServerProcess, SessionRuntime } from "../state.
 import { SessionModel } from "./session.js";
 import { NodeNotFoundError, Nodes } from "./nodes.js";
 import { CheckoutNotFoundError, ensureSource } from "./sources.js";
-import { assertPlace, createSession, inheritedSource, SessionCreationRefused, type SessionRequest } from "../sessions/create-session.js";
+import { assertPlace, createSession, inheritedSource, SessionCreationRefused, resolveKindModel, type SessionRequest } from "../sessions/create-session.js";
 import { sessionActivity } from "./session-activity.js";
 import { latestSettlement, sessionRuns, type SessionWaitResult } from "../sessions/session-runs.js";
 import { requestSessionMove, sessionMoveTargets, type SessionMoveTarget } from "../sessions/session-ownership.js";
@@ -320,7 +320,7 @@ export class Sessions {
   /**
    * Creates a session as a client asks for one (an HTTP request, a script's `sessions.start`, an extension's
    * `reins.sessions.start`): everything is checked before anything is kept, cheap checks first (a blank
-   * title, the project and the task, a model the catalog does not have), then the location, made a source
+   * title, the project and the task, a model (given, or its kind's) the catalog does not have), then the location, made a source
    * if it is new (so a refused request leaves no source either), then the row (`createSession`). Throws
    * `SessionCreationRefused` for what the caller asked wrong (the router's 400); a node that cannot answer about a new
    * location fails as it is (the router's 503). It takes no prompt: a refused first prompt leaves the
@@ -329,8 +329,9 @@ export class Sessions {
   async create({ source, model, ...options }: SessionRequest): Promise<{ id: string }> {
     if (options.title !== undefined && !options.title.trim()) throw new SessionCreationRefused("A session's title must not be blank");
     assertPlace(options.projectId ?? null, options.taskId, source !== undefined || options.parentSessionId !== undefined);
-    if (model && !await findPiModel(createDbCredentialStore(this.state.process), model.provider, model.modelId)) {
-      throw new SessionCreationRefused(`Model '${model.modelId}' not found for provider '${model.provider}'`);
+    const checked = model ?? (options.kind === undefined ? undefined : resolveKindModel(this.state, options.kind));
+    if (checked && !await findPiModel(createDbCredentialStore(this.state.process), checked.provider, checked.modelId)) {
+      throw new SessionCreationRefused(`Model '${checked.modelId}' not found for provider '${checked.provider}'`);
     }
     const sourceId = source === undefined ? undefined : await this.requestedSource(source);
     return createSession(this.state, {

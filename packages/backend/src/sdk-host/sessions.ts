@@ -22,6 +22,7 @@ import { readNewestRunResult, readPendingPiOperation } from "../pi/run-state.js"
 import { firstMessage, getSession, listSessions, type SessionRow } from "../session-store.js";
 import { assertPlace, inheritedSource } from "../sessions/create-session.js";
 import { latestSettlement } from "../sessions/session-runs.js";
+import { extensionKindName } from "../sessions/session-kinds.js";
 import { LocationSchema } from "./nodes.js";
 import { notForScripts, sdkMethod, signalOf, type CallContext } from "./declaration.js";
 
@@ -75,6 +76,7 @@ export const SessionSchema = Type.Object({
   pinned: Type.Boolean({ description: "Pinned above the unpinned sessions." }),
   archived: Type.Boolean({ description: "Archived: left out of the session lists." }),
   startedBy: Type.Union([Type.String(), Type.Null()], { description: "The backend extension that started it, or null." }),
+  kind: Type.String({ description: "How it runs, fixed when it was created: \"agent\" (Reins' agent, the sessions scripts start), a kind of Reins' own, or an extension's, \"<extension>/<name>\"." }),
   lastRunStartedAt: Type.Union([Type.String(), Type.Null()], { description: "When its latest run started; null before its first." }),
   lastRunId: Type.Union([Type.String(), Type.Null()], { description: "Its latest ended run, an opaque ID to compare; null before its first ends." }),
   createdAt: Type.String(),
@@ -189,6 +191,7 @@ const StartOptionsSchema = Type.Object({
   title: Type.Optional(Type.String({ minLength: 1, description: "Its name; left out, it is named as any session is." })),
   background: Type.Optional(notForScripts(Type.Boolean())),
   metadata: Type.Optional(MetadataSchema),
+  kind: Type.Optional(notForScripts(Type.String({ minLength: 1 }))),
 });
 
 // ---------------------------------------------------------------------------
@@ -196,30 +199,30 @@ const StartOptionsSchema = Type.Object({
 // ---------------------------------------------------------------------------
 
 /** The calling session; an extension, which has none, is refused. */
-function callingSession(context: CallContext, what = "\"current\""): SessionModel {
+function requireCallingSession(context: CallContext, what = "\"current\""): SessionModel {
   if (context.caller.kind !== "session") throw new Error(`${what} names the calling session, and an extension has none`);
   return context.caller.session;
 }
 
 /** Where the JSON in `value` is not plain (a class instance, a function, …), or null. */
-function notPlainJson(value: unknown, path: string): string | null {
+function findNotPlainJson(value: unknown, path: string): string | null {
   if (value === null || ["string", "number", "boolean"].includes(typeof value)) return typeof value === "number" && !Number.isFinite(value) ? `a non-finite number at ${path}` : null;
   if (Array.isArray(value)) {
-    for (const [index, item] of value.entries()) { const found = notPlainJson(item, `${path}[${index}]`); if (found) return found; }
+    for (const [index, item] of value.entries()) { const found = findNotPlainJson(item, `${path}[${index}]`); if (found) return found; }
     return null;
   }
   if (typeof value === "object" && Object.getPrototypeOf(value) === Object.prototype) {
-    for (const [key, item] of Object.entries(value)) { const found = notPlainJson(item, path ? `${path}.${key}` : key); if (found) return found; }
+    for (const [key, item] of Object.entries(value)) { const found = findNotPlainJson(item, path ? `${path}.${key}` : key); if (found) return found; }
     return null;
   }
   const kind = typeof value === "object" && value !== null ? value.constructor?.name ?? "object" : typeof value;
   return `a ${kind} at ${path}`;
 }
 
-function checkedMetadata(metadata: MessageMetadata | undefined): { metadata?: Record<string, unknown> } {
+function checkMetadata(metadata: MessageMetadata | undefined): { metadata?: Record<string, unknown> } {
   if (metadata === undefined) return {};
   if (typeof metadata !== "object" || metadata === null || Array.isArray(metadata)) throw new Error("Metadata must be a plain object");
-  const notPlain = notPlainJson(metadata, "");
+  const notPlain = findNotPlainJson(metadata, "");
   if (notPlain) throw new Error(`Metadata must be plain JSON: ${notPlain}`);
   if (new TextEncoder().encode(JSON.stringify(metadata)).length > MAX_METADATA_BYTES) throw new Error(`Metadata must be at most ${MAX_METADATA_BYTES} bytes of JSON`);
   const reserved = Object.keys(metadata).find(key => REINS_KEYS.includes(key));
@@ -229,7 +232,7 @@ function checkedMetadata(metadata: MessageMetadata | undefined): { metadata?: Re
 
 interface CheckedImage { data: Buffer; mimeType: string; filename?: string; width?: number; height?: number }
 type CheckedBlock = { type: "text"; text: string } | { type: "image"; image: CheckedImage };
-/** A message as checked, its images not stored yet (`storedContent`), and where its hidden blocks begin. */
+/** A message as checked, its images not stored yet (`storeImages`), and where its hidden blocks begin. */
 interface CheckedContent { blocks: CheckedBlock[]; details?: { start: number; label: string | null } }
 
 const BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
@@ -239,7 +242,7 @@ const IMAGE_TYPES = [...ALLOWED_IMAGE_MIME_TYPES].join(", ").replace(/, ([^,]*)$
 const isImageBlock = (block: unknown): block is { image: unknown } => typeof block === "object" && block !== null && "image" in block;
 
 /** The image's bytes and type, as the store and the provider take them; it throws why it cannot be sent. */
-function checkedImage(image: unknown): CheckedImage {
+function checkImage(image: unknown): CheckedImage {
   const [data, mimeType, filename] = ["data", "mimeType", "filename"].map(key => typeof image === "object" && image !== null ? Reflect.get(image, key) : undefined);
   if (filename !== undefined && typeof filename !== "string") throw new Error("An image's filename must be a string");
   if (typeof mimeType !== "string" || !ALLOWED_IMAGE_MIME_TYPES.has(mimeType)) throw new Error(`Unsupported image type: ${typeof mimeType === "string" && mimeType ? mimeType : "unknown"} (give ${IMAGE_TYPES})`);
@@ -254,7 +257,7 @@ function checkedImage(image: unknown): CheckedImage {
 }
 
 /** As the provider will get it, as the browser's uploads are: an image the provider refuses would fail every later turn. */
-async function fitted(image: CheckedImage): Promise<CheckedImage> {
+async function fitToProvider(image: CheckedImage): Promise<CheckedImage> {
   if (fitsProvider(image.data.byteLength)) return image;
   const fit = await fitImage(image.data, image.mimeType).catch(() => null);
   if (!fit) throw new Error(`An image is ${formatMiB(image.data.byteLength)}, over the model provider's image size limit, and could not be resized`);
@@ -262,7 +265,7 @@ async function fitted(image: CheckedImage): Promise<CheckedImage> {
 }
 
 /** A message's blocks, checked whole before any image is stored, and where its hidden ones begin (with their label). */
-async function checkedContent(message: MessageContent, blank: string): Promise<CheckedContent> {
+async function checkContent(message: MessageContent, blank: string): Promise<CheckedContent> {
   if (typeof message === "string") {
     if (!message.trim()) throw new Error(blank);
     return { blocks: [{ type: "text", text: message }] };
@@ -277,11 +280,11 @@ async function checkedContent(message: MessageContent, blank: string): Promise<C
   if (start === 0 || blocks.length === 0) throw new Error(blank);
   if (blocks.some(block => !("image" in block) && (typeof block.text !== "string" || !block.text.trim()))) throw new Error("A message's blocks must not be blank");
   if (blocks.some((block, index) => block.label !== undefined && index !== start)) throw new Error("Only a message's first hidden block has a label");
-  const checked = blocks.map((block): CheckedBlock => "image" in block ? { type: "image", image: checkedImage(block.image) } : { type: "text", text: String(block.text) });
+  const checked = blocks.map((block): CheckedBlock => "image" in block ? { type: "image", image: checkImage(block.image) } : { type: "text", text: String(block.text) });
   const total = checked.reduce((sum, block) => sum + (block.type === "image" ? block.image.data.byteLength : 0), 0);
   if (total > MAX_PROMPT_ATTACHMENT_BYTES) throw new Error(`A message's images must be at most ${MAX_PROMPT_ATTACHMENT_BYTES / MIB} MiB in all`);
   // One at a time, as Bun has crashed when many resizer workers were cut off at once.
-  for (const block of checked) if (block.type === "image") block.image = await fitted(block.image);
+  for (const block of checked) if (block.type === "image") block.image = await fitToProvider(block.image);
   if (start < 0) return { blocks: checked };
   const label = blocks[start]!.label === undefined ? null : String(blocks[start]!.label).trim();
   if (label !== null && (label.length === 0 || label.length > MAX_LABEL)) throw new Error(`A hidden block's label is 1 to ${MAX_LABEL} characters`);
@@ -289,7 +292,7 @@ async function checkedContent(message: MessageContent, blank: string): Promise<C
 }
 
 /** The submission's content: each image stored as an attachment of the session, and referred to in its place. */
-function storedContent(sessionId: string, { blocks, details }: CheckedContent): Pick<SessionSubmission, "content" | "details"> {
+function storeImages(sessionId: string, { blocks, details }: CheckedContent): Pick<SessionSubmission, "content" | "details"> {
   const content = blocks.map((block): ClientPromptBlock => {
     if (block.type === "text") return block;
     const stored = storeSessionAttachment(sessionId, block.image);
@@ -337,6 +340,7 @@ function sessionInfo(context: CallContext, row: SessionRow): SessionInfo {
     pinned: row.pinned_at !== null,
     archived: row.archived_at !== null,
     startedBy: row.source_extension,
+    kind: row.kind,
     lastRunStartedAt: lastRunStartedAt(row.id),
     lastRunId: latestSettlement(row.id)?.operationId ?? null,
     createdAt: row.created_at,
@@ -345,11 +349,11 @@ function sessionInfo(context: CallContext, row: SessionRow): SessionInfo {
 }
 
 /** The session's row; "Session not found: <id>" when there is none. */
-function sessionRow(context: CallContext, sessionId: string): SessionRow {
+function readSessionRow(context: CallContext, sessionId: string): SessionRow {
   return context.models.sessions.get(sessionId).row;
 }
 
-const sessionOf = (context: CallContext, sessionId: string) => sessionInfo(context, sessionRow(context, sessionId));
+const readSession = (context: CallContext, sessionId: string) => sessionInfo(context, readSessionRow(context, sessionId));
 
 function assertChildDepth(caller: SessionRow): void {
   let ancestor: SessionRow | null = caller;
@@ -360,15 +364,19 @@ function assertChildDepth(caller: SessionRow): void {
   }
 }
 
-/** Where and how a session the caller starts is made, from what it gives and its own defaults. */
-function placement(context: CallContext, options: SessionStartOptions) {
-  const { parentSessionId, projectId, taskId, source, model, title, background } = options;
+/** The request `Sessions.create` gets for a session the caller starts, from what it gives and its own defaults. */
+function buildSessionRequest(context: CallContext, options: SessionStartOptions) {
+  const { parentSessionId, projectId, taskId, source, model, title, background, kind } = options;
   const named = { ...(title === undefined ? {} : { title }), ...(model ? { model } : {}) };
   if (context.caller.kind === "extension") {
     for (const [key, value] of Object.entries({ parentSessionId, projectId, taskId })) {
       if (value === "current") throw new Error(`options.${key} "current" names the calling session, and an extension has none`);
     }
+    // Only its own: another extension's kind is that extension's to start, and Reins' own are its features'.
+    const stored = kind === undefined ? undefined : extensionKindName(context.caller.name, kind);
+    if (stored !== undefined && !context.models.extensions.sessionKind(stored)) throw new Error(`The ${context.caller.name} extension registers no session kind ${kind}`);
     return {
+      ...(stored === undefined ? {} : { kind: stored }),
       ...(typeof projectId === "number" ? { projectId } : {}),
       ...(typeof taskId === "number" ? { taskId } : {}),
       ...(source == null ? {} : { source }),
@@ -426,14 +434,14 @@ const start = sdkMethod({
   returns: SessionHandleSchema,
   tags: ["sessions", "start", "create", "delegate", "async", "parent", "title", "task"],
   async run(context, prompt, options = {}) {
-    const content = await checkedContent(prompt, "A session's prompt must not be blank");
-    const metadata = checkedMetadata(options.metadata);
-    const request = placement(context, options);
+    const content = await checkContent(prompt, "A session's prompt must not be blank");
+    const metadata = checkMetadata(options.metadata);
+    const request = buildSessionRequest(context, options);
     if (signalOf(context).aborted) throw new DOMException("Aborted", "AbortError");
     const sessions = context.models.sessions;
     // A refused first prompt leaves the session: it is sent to again, or moved.
     const { id } = await sessions.create(request);
-    await sessions.submit(id, { op: "prompt", clientId: crypto.randomUUID(), ...storedContent(id, content), ...metadata, ...(context.caller.kind === "extension" ? { sourceExtension: context.caller.name } : {}) });
+    await sessions.submit(id, { op: "prompt", clientId: crypto.randomUUID(), ...storeImages(id, content), ...metadata, ...(context.caller.kind === "extension" ? { sourceExtension: context.caller.name } : {}) });
     return { sessionId: id };
   },
 });
@@ -450,11 +458,11 @@ const send = sdkMethod({
   returns: Type.Void(),
   tags: ["sessions", "send", "message", "steer", "resume", "async"],
   async run(context, sessionId, message, options = {}) {
-    sessionRow(context, sessionId);
-    const content = await checkedContent(message, "A message must not be blank");
-    const metadata = checkedMetadata(options.metadata);
+    readSessionRow(context, sessionId);
+    const content = await checkContent(message, "A message must not be blank");
+    const metadata = checkMetadata(options.metadata);
     if (signalOf(context).aborted) throw new DOMException("Aborted", "AbortError");
-    await context.models.sessions.submit(sessionId, { op: "steer", clientId: crypto.randomUUID(), ...storedContent(sessionId, content), ...metadata, ...origin(context) });
+    await context.models.sessions.submit(sessionId, { op: "steer", clientId: crypto.randomUUID(), ...storeImages(sessionId, content), ...metadata, ...origin(context) });
   },
 });
 
@@ -469,7 +477,7 @@ const wait = sdkMethod({
   returns: SessionWaitResultSchema,
   tags: ["sessions", "wait", "settled", "result", "async", "timeout"],
   async run(context, sessionId, timeoutMs = DEFAULT_WAIT_MS) {
-    sessionRow(context, sessionId);
+    readSessionRow(context, sessionId);
     // It would always time out: the caller is running while it waits.
     if (context.caller.kind === "session" && sessionId === context.caller.session.id) throw new Error("A session cannot wait for itself");
     if (!Number.isInteger(timeoutMs) || timeoutMs < 0 || timeoutMs > MAX_WAIT_MS) throw new Error(`timeoutMs must be an integer between 0 and ${MAX_WAIT_MS}`);
@@ -492,13 +500,13 @@ const list = sdkMethod({
     if (limit !== undefined && (!Number.isInteger(limit) || limit < 1 || limit > MAX_LIST_LIMIT)) throw new Error(`limit must be an integer from 1 to ${MAX_LIST_LIMIT}`);
     if (offset !== undefined && (!Number.isInteger(offset) || offset < 0)) throw new Error("offset must be a non-negative integer");
     const filters = { since, search, minMessages, background, offset };
-    const task = taskId === "current" ? callingSession(context).taskId : taskId;
+    const task = taskId === "current" ? requireCallingSession(context).taskId : taskId;
     if (projectId === undefined && context.caller.kind === "extension") {
       const rows = listSessions({ projectId: "any", taskId: task, includeTaskSessions: task === undefined, ...filters, limit: limit ?? DEFAULT_PAGE, orderBy: "latest" });
       return rows.map(row => sessionInfo(context, row));
     }
-    const caller = projectId === undefined || projectId === "current" ? callingSession(context) : null;
-    const project = projectId === undefined || projectId === "current" ? callingSession(context).projectId : projectId;
+    const caller = projectId === undefined || projectId === "current" ? requireCallingSession(context) : null;
+    const project = projectId === undefined || projectId === "current" ? requireCallingSession(context).projectId : projectId;
     const rows = listSessions({
       projectId: project,
       // Without a project, the default list is the sessions of no project on the caller's source.
@@ -517,7 +525,7 @@ const current = sdkMethod({
   params: [],
   returns: SessionSchema,
   tags: ["sessions", "current", "read", "self", "context"],
-  run: async context => sessionOf(context, callingSession(context, "sessions.current").id),
+  run: async context => readSession(context, requireCallingSession(context, "sessions.current").id),
 });
 
 const get = sdkMethod({
@@ -525,7 +533,7 @@ const get = sdkMethod({
   params: [sessionIdParam],
   returns: SessionSchema,
   tags: ["sessions", "get", "read", "lookup"],
-  run: async (context, sessionId) => sessionOf(context, sessionId),
+  run: async (context, sessionId) => readSession(context, sessionId),
 });
 
 const entries = sdkMethod({
@@ -536,7 +544,7 @@ const entries = sdkMethod({
   returns: Type.Array(SessionEntrySchema),
   tags: ["sessions", "entries", "messages", "read", "history", "conversation", "filter", "search", "prompts", "tools", "tool", "calls", "results", "trace", "errors"],
   async run(context, sessionId, options) {
-    sessionRow(context, sessionId);
+    readSessionRow(context, sessionId);
     return listSessionEntries(sessionId, options ?? {});
   },
 });
@@ -554,7 +562,7 @@ const setModel = sdkMethod({
   returns: SessionSchema,
   tags: ["sessions", "model", "set", "write", "switch", "provider"],
   async run(context, sessionId, provider, modelId, thinkingLevel) {
-    sessionRow(context, sessionId);
+    readSessionRow(context, sessionId);
     return sessionInfo(context, await context.models.sessions.setModel({ sessionId, provider, modelId, ...(thinkingLevel === undefined ? {} : { thinkingLevel }) }));
   },
 });
@@ -568,7 +576,7 @@ const compact = sdkMethod({
   returns: Type.Void(),
   tags: ["sessions", "compact", "compaction", "summary", "context", "write"],
   async run(context, sessionId, options = {}) {
-    sessionRow(context, sessionId);
+    readSessionRow(context, sessionId);
     await context.models.sessions.compact(sessionId, options.instructions ? { instructions: options.instructions } : {});
   },
 });
@@ -579,17 +587,17 @@ const contextUsage = sdkMethod({
   returns: Type.Union([ContextUsageSchema, Type.Null()]),
   tags: ["sessions", "context", "tokens", "usage", "window", "read"],
   async run(context, sessionId) {
-    sessionRow(context, sessionId);
+    readSessionRow(context, sessionId);
     const snapshot = await context.models.sessions.getContext(sessionId);
     return snapshot && { usedTokens: snapshot.usedTokens, contextWindow: snapshot.contextWindow, measurement: snapshot.measurement };
   },
 });
 
 /** Changes the session's name, pin or archive state; its view after. */
-function updated(context: CallContext, sessionId: string, updates: Parameters<CallContext["models"]["sessions"]["updateMetadata"]>[1]): SessionInfo {
-  sessionRow(context, sessionId);
+function updateSession(context: CallContext, sessionId: string, updates: Parameters<CallContext["models"]["sessions"]["updateMetadata"]>[1]): SessionInfo {
+  readSessionRow(context, sessionId);
   context.models.sessions.updateMetadata(sessionId, updates);
-  return sessionOf(context, sessionId);
+  return readSession(context, sessionId);
 }
 
 const setName = sdkMethod({
@@ -608,7 +616,7 @@ const setName = sdkMethod({
   tags: ["sessions", "session", "name", "rename", "title", "set", "write", "metadata"],
   async run(context, sessionId, name) {
     if (name !== null && (typeof name !== "string" || !name.trim())) throw new Error("Invalid session name; expected a non-empty string or null");
-    return updated(context, sessionId, { name: name === null ? null : name.trim() });
+    return updateSession(context, sessionId, { name: name === null ? null : name.trim() });
   },
 });
 
@@ -617,7 +625,7 @@ const setPinned = sdkMethod({
   params: [sessionIdParam, { name: "pinned", schema: Type.Boolean() }],
   returns: SessionSchema,
   tags: ["sessions", "session", "pin", "pinned", "unpin", "set", "write", "organize"],
-  run: async (context, sessionId, pinned) => updated(context, sessionId, { pinned }),
+  run: async (context, sessionId, pinned) => updateSession(context, sessionId, { pinned }),
 });
 
 const setArchived = sdkMethod({
@@ -625,7 +633,7 @@ const setArchived = sdkMethod({
   params: [sessionIdParam, { name: "archived", schema: Type.Boolean() }],
   returns: SessionSchema,
   tags: ["sessions", "session", "archive", "archived", "unarchive", "set", "write", "organize"],
-  run: async (context, sessionId, archived) => updated(context, sessionId, { archived }),
+  run: async (context, sessionId, archived) => updateSession(context, sessionId, { archived }),
 });
 
 export const SESSIONS = {

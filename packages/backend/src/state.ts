@@ -34,7 +34,7 @@ import { createBroadcast } from "./models/broadcast.js";
 import { BUILT_IN_EXTENSIONS } from "./extensions/built-in.js";
 import { BUILT_IN_EXTENSION_NAMES } from "./extensions/built-in-names.js";
 import { API_FUNCTIONS, fnNamespace } from "./sdk-host/scripts.js";
-import type { PromptContext } from "@reins/sdk/server";
+import type { SystemPromptContext, SessionKind as ExtensionSessionKind } from "@reins/sdk/server";
 import { logger } from "./logger.js";
 
 /** Minimal interface for WebSocket objects — matches Bun's ServerWebSocket. */
@@ -174,7 +174,10 @@ export interface App {
   searchScript(sessionId: string, query: string, signal?: AbortSignal): Promise<ScriptSearchResult>;
   createTask(sessionId: string, input: CreateTaskInput, signal?: AbortSignal): Promise<CreateTaskResult>;
   /** The system prompt sections this app's extensions give a session whose runtime opens. */
-  promptSections(context: PromptContext): Promise<string[]>;
+  systemPromptSections(context: SystemPromptContext): Promise<string[]>;
+  /** The extension's session kind stored as `name` (`<extension>/<name>`), or why it has none now (its
+   * extension turned off, gone, or not registering it). Optional, as `sessionSettled`. */
+  findSessionKind?(name: string): Promise<{ kind: ExtensionSessionKind } | { missing: string }>;
   /** A run of a session an extension started ended, its end recorded: tells that extension's settlement
    * listeners (`reins.sessions.onSettled`). Optional: a runtime on newer code may call an app on older code. */
   sessionSettled?(notice: SessionSettledNotice): void;

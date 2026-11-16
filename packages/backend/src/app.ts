@@ -48,7 +48,8 @@ export function createApp(state: AppState): App & { stop(): void } {
     },
     searchScript: (sessionId, query, signal) => toolCalls(sessionId).searchScript(query, signal),
     createTask: (sessionId, input, signal) => toolCalls(sessionId).createTask(input, signal),
-    promptSections: context => state.extensions.host.promptSections(context),
+    systemPromptSections: context => state.extensions.host.systemPromptSections(context),
+    findSessionKind: name => state.extensions.findSessionKind(name),
     sessionSettled: notice => state.extensions.host.sessionSettled(notice),
     stop() {
       stopped = true;

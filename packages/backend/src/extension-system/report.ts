@@ -36,8 +36,10 @@ export interface ExtensionView {
   registrations: {
     /** Its tool provider. No count of tools: that would ask the provider, which may go to the network. */
     tools: { title: string } | null;
-    promptSections: number;
+    systemPromptSections: number;
     settlementListeners: number;
+    /** Its session kinds' names, as it registered them (its sessions record `<extension>/<name>`). */
+    sessionKinds: string[];
     scriptFunctions: string[];
     httpMethods: string[];
     pages: string[];

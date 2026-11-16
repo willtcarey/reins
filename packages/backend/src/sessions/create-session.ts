@@ -9,7 +9,7 @@ import { createBroadcast, type Broadcast } from "../models/broadcast.js";
 import { getDb } from "../app-globals.js";
 import { getSource, type Source } from "../node-store.js";
 import { parseThinkingLevel, piModelSetting, ThinkingLevelSchema } from "../models/model-settings.js";
-import { DEFAULT_SESSION_KIND, sessionKind } from "./session-kinds.js";
+import { DEFAULT_SESSION_KIND, isBuiltInKind } from "./session-kinds.js";
 import { Nodes } from "../models/nodes.js";
 
 export interface SessionCreationOptions {
@@ -24,8 +24,9 @@ export interface SessionCreationOptions {
   sourceId?: number;
   /** A session the browser never shows: not listed, counted or badged (for Reins features, not scripts). */
   background?: boolean;
-  /** How the session runs (`sessions/session-kinds.ts`; for Reins features, not scripts): a registered
-   * kind, "agent" by default. */
+  /** How the session runs (`sessions/session-kinds.ts`; for Reins features and extensions, not scripts): one
+   * of Reins' kinds, "agent" by default, or an extension's registered now (`<extension>/<name>`). Fixed: no
+   * later operation changes it. */
   kind?: string;
   /** The backend extension starting it (`reins.sessions.start`). */
   sourceExtension?: string;
@@ -80,21 +81,25 @@ export function assertPlace(projectId: number | null, taskId: number | undefined
  * Placement is server policy, not a live connectivity check: a session whose node is not connected is
  * created, and its runs wait for the node to prepare the checkout and run tools. Nothing here opens a
  * runtime: Pi's lane is created when the session's runtime first opens (`session-runtime/live.ts`).
- * Without a model of its own the session gets the `default_model` setting's (throws when that setting is
- * of another runtime). An unknown kind throws.
+ * Without a model of its own the session gets its kind's (an extension kind's `model`), else the
+ * `default_model` setting's (throws when that setting is of another runtime). A kind not registered now is
+ * refused (`SessionCreationRefused`).
  */
 export function createSession(state: AppState, opts: SessionCreationOptions, broadcast: Broadcast = createBroadcast(state.process)): { id: string } {
   const projectId = opts.projectId ?? null;
   assertPlace(projectId, opts.taskId, opts.sourceId !== undefined || opts.parentSessionId !== undefined);
   const kind = opts.kind ?? DEFAULT_SESSION_KIND;
-  sessionKind(kind);
+  const kindModel = resolveKindModel(state, kind);
 
-  const source = placement(projectId, opts);
+  const source = chooseSource(projectId, opts);
   const sessionId = crypto.randomUUID();
 
-  const defaultModel = opts.model && opts.thinkingLevel ? undefined : piModelSetting("default_model");
-  const model = opts.model ?? (defaultModel && { provider: defaultModel.provider, modelId: defaultModel.modelId });
-  const thinkingLevel = opts.thinkingLevel ? parseThinkingLevel(opts.thinkingLevel) : defaultModel?.thinkingLevel ?? null;
+  const chosen = opts.model
+    ? { model: opts.model, thinkingLevel: opts.thinkingLevel }
+    : kindModel && { model: { provider: kindModel.provider, modelId: kindModel.modelId }, thinkingLevel: opts.thinkingLevel ?? kindModel.thinkingLevel };
+  const defaultModel = chosen?.model && chosen.thinkingLevel ? undefined : piModelSetting("default_model");
+  const model = chosen?.model ?? (defaultModel && { provider: defaultModel.provider, modelId: defaultModel.modelId });
+  const thinkingLevel = chosen?.thinkingLevel ? parseThinkingLevel(chosen.thinkingLevel) : defaultModel?.thinkingLevel ?? null;
 
   // Frozen here: the row carries the resolved model/thinking level, from which Pi's main lane is seeded
   // when the session's runtime first opens; a later default_model edit does not reach existing sessions.
@@ -135,9 +140,18 @@ export function createSession(state: AppState, opts: SessionCreationOptions, bro
   return { id: sessionId };
 }
 
+/** The default model of the session kind `kind` (an extension kind's, else none); `SessionCreationRefused` for
+ * a kind that is not registered now. */
+export function resolveKindModel(state: AppState, kind: string): { provider: string; modelId: string; thinkingLevel?: string } | undefined {
+  if (isBuiltInKind(kind)) return undefined;
+  const registered = state.extensions.host.sessionKind(kind);
+  if (!registered) throw new SessionCreationRefused(`Unknown session kind: ${kind}`);
+  return registered.model;
+}
+
 /** Where a new session works: the source it names (`SessionCreationRefused` when there is none), else its
  * parent's, else `inheritedSource` (`SourceNotFoundError` when the project has no default source). */
-function placement(projectId: number | null, opts: SessionCreationOptions): Source {
+function chooseSource(projectId: number | null, opts: SessionCreationOptions): Source {
   if (opts.sourceId !== undefined) {
     const source = getSource(opts.sourceId);
     if (!source) throw new SessionCreationRefused(`Source not found: ${opts.sourceId}`);

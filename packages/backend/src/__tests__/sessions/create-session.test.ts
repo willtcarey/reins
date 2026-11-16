@@ -12,7 +12,7 @@ import { useTestDb } from "../helpers/test-db.js";
 import { createAppState, type TestAppState } from "../helpers/app-state.js";
 import { useTestRepo } from "../helpers/test-repo.js";
 import { createSession as createNewSession } from "../../sessions/create-session.js";
-import { registerSessionKind } from "../../sessions/session-kinds.js";
+import { TASK_GENERATOR_KIND } from "../../sessions/session-kinds.js";
 import { openSessionRuntime } from "../../session-runtime/live.js";
 import { AgentHarnessPiRuntime } from "../../session-runtime/pi-runtime.js";
 
@@ -139,18 +139,17 @@ describe("createSession", () => {
   });
 
   test("a session is of the agent kind unless created as another registered kind; an unknown kind creates nothing", () => {
-    const state = createAppState();
+    const state = createAppState(undefined, { extensions: [{ name: "sorting", register: reins => reins.sessions.registerKind("sorter", { systemPrompt: () => "Sort these.", tools: [], environment: false }) }] });
     const project = createProject("Reins", repo.dir);
     const model = { provider: "anthropic", modelId: "claude-sonnet-4-5" };
-    const unregister = registerSessionKind("test-sorter", () => ({ systemPrompt: "Sort these.", tools: [], environment: false }));
-    try {
-      const agent = createNewSession(state, { projectId: project.id, model, thinkingLevel: "high" });
-      const sorter = createNewSession(state, { projectId: project.id, model, thinkingLevel: "high", kind: "test-sorter", background: true });
-      expect(getSession(agent.id)).toMatchObject({ kind: "agent" });
-      expect(getSession(sorter.id)).toMatchObject({ kind: "test-sorter", background: 1 });
+    const agent = createNewSession(state, { projectId: project.id, model, thinkingLevel: "high" });
+    const generator = createNewSession(state, { projectId: project.id, model, thinkingLevel: "high", kind: TASK_GENERATOR_KIND, background: true });
+    const sorter = createNewSession(state, { projectId: project.id, model, thinkingLevel: "high", kind: "sorting/sorter", background: true });
+    expect([agent, generator, sorter].map(({ id }) => getSession(id)?.kind)).toEqual(["agent", "task-generator", "sorting/sorter"]);
 
-      expect(() => createNewSession(state, { projectId: project.id, model, thinkingLevel: "high", kind: "nonexistent" })).toThrow("Unknown session kind: nonexistent");
-      expect(getDb().query("SELECT id FROM sessions ORDER BY created_at").all()).toEqual([{ id: agent.id }, { id: sorter.id }]);
-    } finally { unregister(); }
+    for (const kind of ["nonexistent", "sorting/other", "missing/sorter"]) {
+      expect(() => createNewSession(state, { projectId: project.id, model, thinkingLevel: "high", kind })).toThrow(`Unknown session kind: ${kind}`);
+    }
+    expect(getDb().query("SELECT id FROM sessions ORDER BY created_at").all()).toEqual([{ id: agent.id }, { id: generator.id }, { id: sorter.id }]);
   });
 });

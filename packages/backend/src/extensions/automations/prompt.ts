@@ -1,10 +1,10 @@
 /**
- * The automations extension's system prompt section (`reins.prompt`): so that an agent asked to watch for
+ * The automations extension's system prompt section (`reins.sessions.registerSystemPromptSection`): so that an agent asked to watch for
  * something makes an automation, rather than waiting or polling in its turn. Only for agents that can script:
  * automations are made through `execute`.
  */
 
-import type { PromptContribution } from "@reins/sdk/server";
+import type { SystemPromptSection } from "@reins/sdk/server";
 
 const SECTION = `## Automations
 
@@ -16,5 +16,5 @@ When the user asks you to watch for something or to tell them later ("tell me wh
 
 If you can do the work yourself with a command that ends within a few minutes (a build, a deploy script), run it instead. Cancel an automation with \`reins.automations.cancel(id)\` when it is no longer needed.`;
 
-export const automationsPromptSection: PromptContribution = ({ tools }) =>
+export const automationsPromptSection: SystemPromptSection = ({ tools }) =>
   tools === null || tools.includes("execute") ? SECTION : null;

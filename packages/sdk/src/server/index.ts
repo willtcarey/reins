@@ -55,7 +55,6 @@ export interface ServerSdk {
   readonly tools: Tools;
   /** Image models: list and use them, and register a provider of them. */
   readonly images: Images;
-  readonly prompt: Prompt;
   readonly scripting: Scripting;
   readonly http: Http;
   readonly services: Services;
@@ -220,6 +219,9 @@ export interface SessionInfo {
   readonly archived: boolean;
   /** The extension that started it, or null. */
   readonly startedBy: string | null;
+  /** How it runs, fixed when it was created: `agent` (Reins' agent), a kind of Reins' own (`task-generator`), or
+   * an extension's, `<extension>/<name>` (`Sessions.registerKind`). */
+  readonly kind: string;
   /** When its latest run started: the one running now, else the latest that ended; null before its first. A
    * message sent to a running session joins that run, so it does not change this. */
   readonly lastRunStartedAt: string | null;
@@ -304,6 +306,9 @@ export interface SessionStartOptions {
   readonly background?: boolean;
   /** The prompt's metadata (`MessageMetadata`). Extensions only. */
   readonly metadata?: MessageMetadata;
+  /** One of the extension's own session kinds, by the name it registered (`Sessions.registerKind`); left out:
+   * Reins' agent. Fixed for the session's life. Extensions only. */
+  readonly kind?: string;
 }
 
 /** How much of a session's context window its context takes now. */
@@ -456,6 +461,54 @@ export interface Sessions {
    * read what a listener missed with `get`. A throw or rejection is the extension's error, logged. Extensions only.
    */
   onSettled(listener: (settlement: SessionSettlement) => void | Promise<void>): Disposer;
+  /**
+   * Registers a session kind: how the sessions an extension starts with `start(prompt, { kind: name })` run.
+   * `name` is lowercase letters, digits and hyphens, unique among this extension's kinds (another extension's
+   * of the same name is another kind); a session records it as `<extension>/<name>`. The kind is read each
+   * time one of its sessions' runtime opens, so a change reaches existing sessions the next time they open.
+   * Removed by its disposer, and when the extension is reloaded or turned off: its sessions then refuse to
+   * run, saying why, until a kind of that name is registered again; an idle one already open is closed.
+   * Throws for a name that is not one or already registered, and a kind that is not one. Extensions only.
+   */
+  registerKind(name: string, kind: SessionKind): Disposer;
+  /** Adds a section to the system prompt of every session it is given to (`SystemPromptSection`). Extensions only. */
+  registerSystemPromptSection(section: SystemPromptSection): Disposer;
+}
+
+/**
+ * A kind of session an extension defines (`Sessions.registerKind`): its system prompt, which replaces Reins'
+ * own, the tools its model is offered, whether the environment follows the prompt, and its default model.
+ */
+export interface SessionKind {
+  /**
+   * The session's system prompt, built each time its runtime opens. It replaces Reins' prompt, which
+   * `context.reinsSystemPrompt()` gives to build on. Every extension's system prompt sections (`Sessions.registerSystemPromptSection`)
+   * follow it, then the environment when `environment` is not false. A throw or rejection fails the
+   * opening, and so the run or message that opened it.
+   */
+  systemPrompt(context: SessionKindContext): string | Promise<string>;
+  /** The tools the model is offered, by name (`execute`, `search`, `read`, `bash`, `edit`, `write`, …);
+   * left out, every tool. A name Reins does not have fails the session's opening. A session of a task that
+   * is offered tools works on its task's branch, checked out before each run; one offered none has no
+   * checkout. */
+  readonly tools?: readonly string[];
+  /** Whether the environment follows the prompt: the working directory, the tools' list, Reins' docs and
+   * the checkout's context files (`AGENTS.md`) and skills; `/skill` commands expand only with it. True when
+   * left out. */
+  readonly environment?: boolean;
+  /** The model of a session `start` gives none: checked when the session is created, which then keeps it. */
+  readonly model?: ModelChoice;
+}
+
+/** What a kind builds a session's prompt from: the session, its task and Reins' own prompt. */
+export interface SessionKindContext {
+  /** `kind` is the session's, `<extension>/<name>`. `projectId` is null for a session of no project. */
+  readonly session: { readonly id: string; readonly projectId: number | null; readonly taskId: number | null; readonly kind: string };
+  readonly task: { readonly id: number; readonly title: string; readonly description: string | null } | null;
+  /** Reins' agent prompt for this session and the kind's tools: who the agent is and its guidelines, how it
+   * orchestrates sessions (when it is offered `execute`) and its task or role as its project's assistant.
+   * Without the extensions' sections, which follow the kind's prompt anyway. */
+  reinsSystemPrompt(): string;
 }
 
 // ---------------------------------------------------------------------------
@@ -920,25 +973,23 @@ export interface Tools {
 // The system prompt
 // ---------------------------------------------------------------------------
 
-export interface PromptContext {
-  /** `projectId` is null for a session of no project (it then has no task). */
-  session: { id: string; projectId: number | null; taskId: number | null };
+export interface SystemPromptContext {
+  /** `projectId` is null for a session of no project (it then has no task). `kind` is how it runs: `agent`,
+   * or an extension's kind, `<extension>/<name>` (`SessionInfo.kind`). */
+  session: { id: string; projectId: number | null; taskId: number | null; kind: string };
   task: { id: number; title: string; description: string | null } | null;
   /** The tools the session's model is offered, by name (`execute`, `search`, `read`, …); null: every tool. */
   tools: readonly string[] | null;
 }
 
 /**
- * A section of an agent session's system prompt, or null for none. Called each time a session's runtime
- * opens, so a change reaches a session the next time it opens. The sections follow the Reins section, in
- * the order of registration. Only the Reins agent's sessions get them (not utility sessions, such as task
- * generation). A throw is logged, and the session opens without the section.
+ * A section of a session's system prompt, or null for none. Called each time a session's runtime opens, so
+ * a change reaches a session the next time it opens. The sections follow the Reins section of an agent
+ * session, or an extension kind's prompt (`SessionKind`), in the order of registration; every section is
+ * given to every such session, so tell kinds apart with `context.session.kind` when it matters. Reins' own
+ * utility sessions (task generation) get none. A throw is logged, and the session opens without the section.
  */
-export type PromptContribution = (context: PromptContext) => string | null | Promise<string | null>;
-
-export interface Prompt {
-  register(contribution: PromptContribution): Disposer;
-}
+export type SystemPromptSection = (context: SystemPromptContext) => string | null | Promise<string | null>;
 
 // ---------------------------------------------------------------------------
 // Scripting: an extension's own `reins.<namespace>` in `execute`

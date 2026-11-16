@@ -182,10 +182,10 @@ describe("the secrets extension", () => {
   });
 
   test("tells agents that can script to request secrets instead of asking for them in chat", async () => {
-    const context = { session: { id: "s", projectId: null, taskId: null }, task: null };
+    const context = { session: { id: "s", projectId: null, taskId: null, kind: "agent" }, task: null };
 
-    const sections = await state.extensions.host.promptSections({ ...context, tools: null });
-    const withoutExecute = await state.extensions.host.promptSections({ ...context, tools: ["read", "bash"] });
+    const sections = await state.extensions.host.systemPromptSections({ ...context, tools: null });
+    const withoutExecute = await state.extensions.host.systemPromptSections({ ...context, tools: ["read", "bash"] });
 
     expect(sections.join("\n")).toContain("reins.secrets.request");
     expect(sections.join("\n")).toContain("Never ask the user to paste one");

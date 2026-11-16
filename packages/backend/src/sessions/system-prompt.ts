@@ -8,7 +8,7 @@ interface ReinsSystemPromptOptions {
   project?: boolean;
   /** The tools the session is offered; absent: every tool. */
   tools?: readonly string[];
-  /** What the app's extensions add (`reins.prompt`), after the Reins section, in order. */
+  /** What the app's extensions add (`reins.sessions.registerSystemPromptSection`), after the Reins section, in order. */
   sections?: readonly string[];
 }
 
