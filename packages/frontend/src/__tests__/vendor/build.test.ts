@@ -1,8 +1,8 @@
 import { afterEach, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { buildVendor } from "../../vendor/build.js";
+import { buildVendor, watchKit } from "../../vendor/build.js";
 
 const FRONTEND = join(import.meta.dir, "../../..");
 const dirs: string[] = [];
@@ -40,4 +40,46 @@ test("every public Lit module, resolved through index.html's import map, is a mo
   });
   expect(missing).toEqual([]);
   expect(specifiers.length).toBeGreaterThan(30);
+});
+
+test("@reins/ui, resolved through index.html's import map, is a module the vendor build wrote, on the provided Lit", async () => {
+  const out = mkdtempSync(join(tmpdir(), "reins-vendor-"));
+  dirs.push(out);
+
+  await buildVendor(out);
+
+  const url = resolve(importMap(), "@reins/ui");
+  expect(url).toStartWith("/dist/vendor/reins-ui/");
+  const file = join(out, url!.slice("/dist/vendor/".length));
+  expect(existsSync(file)).toBe(true);
+  const source = readFileSync(file, "utf8");
+  expect(source).toMatch(/from\s*"lit"/);
+  expect(source).toContain("reins-sidebar-row");
+  expect(source).toContain("reins-badge");
+});
+
+test("watching the kit builds it again when a file of its package changes", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "reins-kit-"));
+  const out = mkdtempSync(join(tmpdir(), "reins-vendor-"));
+  dirs.push(dir, out);
+  mkdirSync(join(dir, "src"));
+  const entry = join(dir, "src/index.ts");
+  writeFileSync(entry, `export const look = "first";`);
+  const built = join(out, "reins-ui/index.js");
+  const until = async (word: string) => {
+    for (let tries = 0; tries < 100; tries += 1) {
+      if (existsSync(built) && readFileSync(built, "utf8").includes(word)) return true;
+      await Bun.sleep(20);
+    }
+    return false;
+  };
+
+  const stop = watchKit(out, { dir, entry }, () => {});
+  try {
+    await Bun.sleep(50);
+    writeFileSync(entry, `export const look = "second";`);
+    expect(await until("second")).toBe(true);
+  } finally {
+    stop();
+  }
 });

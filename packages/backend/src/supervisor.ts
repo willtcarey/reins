@@ -86,7 +86,7 @@ export function createServices(mode: SupervisorMode, repoRoot = process.cwd()): 
       cwd: frontendRoot,
       onExit: { restart: WATCHER_RESTART },
       env: { REINS_DEV: "1" },
-      // The libraries the app provides to extensions first (dist/vendor, index.html's import map): once, they do not change.
+      // The libraries the app provides to extensions first (dist/vendor, index.html's import map); `frontend:kit` builds the kit again.
       command: ["sh", "-c", 'bun_bin="$1"; shift; "$bun_bin" src/vendor/build.ts && exec "$bun_bin" "$@"', "sh", bun,
         "build", ...FRONTEND_ENTRYPOINTS, "--outdir", FRONTEND_DIST_DIR, "--splitting", "--define", "REINS_DEV=true", "--watch"],
     },
@@ -95,6 +95,13 @@ export function createServices(mode: SupervisorMode, repoRoot = process.cwd()): 
       cwd: frontendRoot,
       onExit: { restart: WATCHER_RESTART },
       command: [bun, "node_modules/.bin/tailwindcss", "-i", FRONTEND_CSS_INPUT, "-o", FRONTEND_CSS_OUTPUT, "--watch=always"],
+    },
+    {
+      // The kit (@reins/ui) is Reins' code, unlike Lit: built again into dist/vendor when packages/ui changes.
+      name: "frontend:kit",
+      cwd: frontendRoot,
+      onExit: { restart: WATCHER_RESTART },
+      command: [bun, "src/vendor/build.ts", "--watch-kit"],
     },
     ...core,
   ];

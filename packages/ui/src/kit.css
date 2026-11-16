@@ -1,0 +1,32 @@
+/*
+ * The kit's rules (@reins/ui) for its elements themselves and their attribute states, in the theme's token classes.
+ * Their inner parts are styled by classes in their templates. The kit never sets classes on its elements: their
+ * `class` belongs to whoever writes them (Svelte's and Lit's `class=` replace it). Written for the app's Tailwind
+ * build, which imports this file in its `components` layer, so the app's utilities and an extension's own rules win.
+ */
+
+reins-badge {
+  @apply box-border inline-flex h-4 min-w-5 items-center justify-center gap-0.5 rounded-full px-1 align-middle text-2xs leading-none font-semibold whitespace-nowrap bg-tone-neutral-surface text-tone-neutral;
+}
+/* Hidden by attribute, so an empty badge takes no gap in its parent's flex row either. */
+reins-badge:not([value]),
+reins-badge[value=""],
+reins-badge[value="0"] {
+  @apply hidden;
+}
+reins-badge[tone="attention"] {
+  @apply bg-tone-attention-surface text-tone-attention;
+}
+reins-badge[tone="info"] {
+  @apply bg-tone-info-surface text-tone-info;
+}
+
+reins-sidebar-row {
+  @apply mx-2 mb-1 flex cursor-pointer items-center gap-1 rounded-md px-2 py-1.5 text-sm text-secondary transition-colors hover:bg-surface-hover;
+}
+reins-sidebar-row[current] {
+  @apply bg-surface-raised text-fg;
+}
+reins-sidebar-row:has(> .reins-sidebar-row-button:focus-visible) {
+  @apply outline -outline-offset-1 outline-focus-ring;
+}

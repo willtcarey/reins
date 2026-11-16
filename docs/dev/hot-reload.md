@@ -9,6 +9,7 @@ Under `bun run dev`, the server's **app** hot reloads: its HTTP/browser handlers
 | App source (`packages/backend/src`, not process-owned; `@reins/telemetry`), or `kill -USR2 <server pid>` | **App reload** (*What reloads*) | Go on, never paused | Keeps running; its link drops and it redials the new app; a running command goes on and is picked up; an extension's keyed process runs on for the next app, a keyless one is stopped |
 | Process-owned source (`process-owned.json`, or the list itself), or `kill -HUP <server pid>` | **Server restart**, once the new code builds (*Restarting the server*) | Paused, suspended, resumed by the next process | Keeps running; its link drops and it redials; a running command goes on and is picked up; as for a reload, an extension's keyed process runs on |
 | Node source (`packages/node`): `bun run node:reload`, `reins.nodes.reload()` | **Node reload** (*Reloading the node*) | Go on; tool calls wait for the node | Restarted once no command runs |
+| The extension kit (`packages/ui`, `@reins/ui`) | Built again into `dist/vendor/reins-ui/` by the supervisor's `frontend:kit` watcher ([extension-loading.md](extension-loading.md) *Provided libraries*); reload the page | Go on | Not affected |
 | `supervisor.ts`, `@reins/node-protocol` | Nothing but a warning for the protocol: **restart `bun run dev`** (*What requires restart*) | Suspended and resumed | Stopped and started again: commands are cut off |
 
 ## Ownership

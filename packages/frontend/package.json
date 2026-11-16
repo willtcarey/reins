@@ -12,6 +12,7 @@
   "dependencies": {
     "@reins/client": "workspace:*",
     "@reins/telemetry": "workspace:*",
+    "@reins/ui": "workspace:*",
     "@pierre/diffs": "^1.4.1",
     "@shikijs/themes": "4.3.0",
     "lit": "^3.3.1",

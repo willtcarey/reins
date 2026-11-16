@@ -27,7 +27,9 @@ function scopedRegistry(): CustomElementRegistry | null {
   }
 }
 
-const registry = scopedRegistry();
+/** The bundle's registry; null in a browser without scoped registries, where its elements are global. A kit
+ * element in its templates needs `define(registry)` from `@reins/ui`. */
+export const registry = scopedRegistry();
 const scopedDocument = (): ScopedDocument => Object.assign(document);
 const creationScope = registry
   ? { importNode: (node: Node, deep?: boolean) => scopedDocument().importNode(node, { customElementRegistry: registry, selfOnly: !deep }) }
