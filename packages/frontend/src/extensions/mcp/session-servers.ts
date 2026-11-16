@@ -61,8 +61,7 @@ export function registerMcpSessionServers(reins: McpSdk): Disposer {
           own.store = store;
           own.setAttribute("class", "block");
           const body = target.ownerDocument.createElement("div");
-          // The Inspector gives the pane a column of its height: the pane scrolls its own content.
-          body.setAttribute("class", "min-h-0 flex-1 overflow-y-auto overscroll-contain p-3 space-y-5");
+          body.setAttribute("class", "p-3 space-y-5");
           body.append(list, own);
           target.append(body);
           // A failure is the section's to show.

@@ -259,7 +259,7 @@ export class AppWorkspace extends LitElement {
         </div>
       `;
     }
-    return html`<reins-view-mount ?data-main-shown=${shown} class="block h-full min-h-0 min-w-0" .presentation=${pane} .view=${view} .context=${this.contexts.main} .visible=${visible}></reins-view-mount>`;
+    return html`<reins-view-mount ?data-main-shown=${shown} class="block h-full min-h-0 min-w-0 overflow-y-auto overscroll-contain" .presentation=${pane} .view=${view} .context=${this.contexts.main} .visible=${visible}></reins-view-mount>`;
   }
 
   /**

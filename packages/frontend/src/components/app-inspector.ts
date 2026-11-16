@@ -102,7 +102,8 @@ export class AppInspector extends LitElement {
   private renderContent(view: View) {
     const pane = this.views?.rendererFor(view)?.pane;
     if (!pane) return html`<p class="p-4 text-sm text-zinc-500">This view is not available.</p>`;
-    return html`<reins-view-mount class="flex h-full min-h-0 flex-col" .presentation=${pane} .view=${view} .context=${this.context}></reins-view-mount>`;
+    // The tab scrolls its view: a view that scrolls itself fills the tab, so there is nothing for the tab to scroll.
+    return html`<reins-view-mount class="flex h-full min-h-0 flex-col overflow-y-auto overscroll-contain" .presentation=${pane} .view=${view} .context=${this.context}></reins-view-mount>`;
   }
 
   private renderTab(tab: InspectorTab) {
