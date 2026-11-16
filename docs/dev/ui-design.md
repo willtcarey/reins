@@ -4,11 +4,13 @@ CSS architecture, visual conventions, and design tokens for the frontend. For co
 
 ## Tailwind CSS v4
 
-The frontend uses Tailwind CSS v4 with the `@import "tailwindcss"` directive. All custom CSS lives in `components/app.css`, which is the single global stylesheet. Components use Tailwind utility classes inline via template literals — there are no component-scoped stylesheets or shadow DOM.
+The frontend uses Tailwind CSS v4 with the `@import "tailwindcss"` directive. `components/app.css` is the single global stylesheet: it imports `tokens.css` (the design tokens), `theme.css` (Tailwind's names for them) and the extension kit's `@reins/ui/kit.css` (in its `components` layer), and builds the classes of `packages/ui/src` too (`@source`). Components use Tailwind utility classes inline via template literals — there are no component-scoped stylesheets or shadow DOM.
 
 ## CSS custom properties
 
-Global design tokens are defined as CSS custom properties on `:root` in `app.css`.
+**Design tokens** (`--reins-…`, `components/tokens.css`) are the one place a value of Reins' look is set: named for their role, read by the app, the extension kit (`@reins/ui`) and extensions, so a theme changes them alone ([the plan](../plans/extension-design-tokens-and-ui-kit.md)). `components/theme.css` gives them Tailwind names with `@theme inline`, so a class compiles to the token (`text-muted` is `color: var(--reins-text-muted)`): `text-fg`, `text-secondary`, `text-muted`, `bg-surface-raised`, `bg-surface-hover`, `outline-focus-ring`, `text-tone-{attention,info,neutral}` and `bg-tone-…-surface`, `text-2xs`; and Tailwind's own `text-sm`, `rounded-md` and the default transition read their tokens, with the same values. Prefer these names in new code; the app's components still use the `zinc-*` palette below and move onto the tokens in slice 2. Add a token to `tokens.css` and its name to `theme.css`.
+
+Other custom properties (layers, safe area) are on `:root` in `app.css`.
 
 ### Z-index layers
 

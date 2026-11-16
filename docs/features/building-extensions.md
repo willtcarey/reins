@@ -27,6 +27,7 @@ You write and build the extension; Reins builds nothing. It copies the files you
 <!-- /versions -->
 
 - `@reins/sdk` gives the types of both SDKs and `@reins/sdk/lit`. It is not published yet: depend on it as `file:<Reins checkout>/packages/sdk`.
+- `@reins/ui` (only if you use Reins' components, *Looking like Reins*) gives their types: depend on it as `file:<Reins checkout>/packages/ui`, as a dev dependency.
 
 **The backend file** (`reins.backend`)
 
@@ -36,7 +37,7 @@ You write and build the extension; Reins builds nothing. It copies the files you
 **The frontend file** (`reins.frontend`)
 
 - One ES module for browsers, in a directory of its own (`dist/web/`). Reins copies that whole directory, and browsers can read each file in it: put no secrets there. Build the backend file into another directory (`dist/server/`), so its source map and anything else your backend build writes stay out of what browsers can read.
-- Leave out `lit` and `lit/*` (`--external lit --external 'lit/*'`): the page gives them through an import map, so all extensions share one Lit. Bundle every other library, `@reins/sdk` and Svelte too.
+- Leave out `lit` and `lit/*` (`--external lit --external 'lit/*'`), and `@reins/ui` if you import it (`--external @reins/ui`): the page gives them through an import map, so all extensions share one Lit and draw with Reins' current components. Bundle every other library, `@reins/sdk` and Svelte too.
 - Import the module with your HTTP API's schemas with `import type`, so TypeBox stays out of the bundle.
 - Its default export is a function `register(reins)` that returns a disposer.
 
@@ -68,7 +69,7 @@ You write and build the extension; Reins builds nothing. It copies the files you
    ```sh
    tailwindcss -i src/styles.css -o dist/web/styles.css --minify
    bun build src/server.ts --target bun --outfile dist/server/index.js
-   bun build src/frontend.ts --target browser --outfile dist/web/index.js --external lit --external 'lit/*'
+   bun build src/frontend.ts --target browser --outfile dist/web/index.js --external lit --external 'lit/*' --external @reins/ui
    ```
 
 3. Write the backend part, the frontend part, and a test of the backend part through a fake of the SDK (*Testing*). Write a README that says how to build and reload it.
@@ -147,9 +148,9 @@ The frontend entry's default export is a register function, which gets the Reins
 
 Everything an extension draws is a **mount function**: `mount(target)` draws into an element Reins made and returns `{ dispose }` (views also `update`). Any framework works: Lit, Svelte's `mount`, React's `createRoot`, plain DOM. Reins puts that element in your extension's scope (`SCOPE_ATTRIBUTE`), where your stylesheet applies.
 
-**Styles** (*Requirements* above). Something you draw outside your views (a dialog appended to `document.body`) gets your styles when you put `SCOPE_ATTRIBUTE` (from `@reins/sdk`) on it, with your extension's name as its value. Do not add styles to the document's `<head>` yourself. Reins' design tokens and a UI kit for extensions are planned ([plan](../plans/extension-design-tokens-and-ui-kit.md)).
+**Styles** (*Requirements* above). Something you draw outside your views (a dialog appended to `document.body`) gets your styles when you put `SCOPE_ATTRIBUTE` (from `@reins/sdk`) on it, with your extension's name as its value. Do not add styles to the document's `<head>` yourself. Reins' design tokens are planned ([plan](../plans/extension-design-tokens-and-ui-kit.md)).
 
-**Provided libraries.** The page provides only **Lit 3** (*Requirements*); bundle everything else, Svelte included (its compiled code must match its own runtime's version). A new major version of a provided library is a new SDK version.
+**Provided libraries.** The page provides **Lit 3** and **`@reins/ui`** (*Requirements*, *Looking like Reins*); bundle everything else, Svelte included (its compiled code must match its own runtime's version). A new major version of a provided library is a new SDK version.
 
 What `reins` gives (in depth in [reins-sdk.md](../dev/reins-sdk.md)):
 
@@ -162,6 +163,31 @@ What `reins` gives (in depth in [reins-sdk.md](../dev/reins-sdk.md)):
 - **`launcher.items(context => items)`**: other Launcher items, read each time the Launcher opens (*Launcher items* below).
 - **`sessions`**, **`projects`**, **`tasks`**: live lists with change events, and their actions; **`workspace.current()`** and **`onDidChange`**: what the main area shows.
 - External links: plain `<a href target="_blank" rel="noopener noreferrer">`.
+
+### Looking like Reins
+
+Use Reins' components, `@reins/ui`, for what Reins has one of, so your extension looks like Reins and keeps looking like it: the page provides them, so a change to Reins' look reaches your extension with no rebuild. Today there are two; more will come (sections, list rows, empty states, buttons, inputs).
+
+- **`<reins-sidebar-row>`**: a sidebar section's row that opens something. Attributes: `label`, `icon` (an SVG's markup, drawn at 14px in `currentColor`), `current` (what it opens is shown now: `aria-current="page"`), `accessible-label` (what a screen reader reads instead of the label: give the counts in words). Its children are its badges. It draws a button (the icon and label); its badges follow. Listen for `click` on the row.
+- **`<reins-badge>`**: a count or short text in a pill, in the sidebar or anywhere. Attributes: `value`, `tone` (`attention` amber: the user is needed; `info` blue; `neutral` grey, the default), `icon` (an SVG's markup, at 10px), `title` (its tooltip). It is not shown while its value is empty or 0, so a count needs no condition.
+
+They work in any framework, and need no Lit in your code: import the module once, mark it external, and write the elements. In Svelte:
+
+```svelte
+<script lang="ts">
+  import "@reins/ui";
+</script>
+
+<!-- The row draws its own button, which Svelte's checks cannot see. -->
+<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+<reins-sidebar-row label="Spoke" icon={GITHUB_SVG} current={shown} accessible-label={`Spoke: ${count} to read`} onclick={open}>
+  <reins-badge tone="info" value={count} title="Pull request reviews"></reins-badge>
+</reins-sidebar-row>
+```
+
+From plain DOM: `document.createElement("reins-badge")`, then `setAttribute("value", "3")` (or `badge.value = 3`). In a Lit frontend that uses `@reins/sdk/lit`'s registry, also call `define(registry)` once (`import { define } from "@reins/ui"` and `import { registry } from "@reins/sdk/lit"`): that registry does not see the page's, where the import defines them.
+
+The components draw in the light DOM with Reins' rules, which are low in the cascade: your own CSS wins. To change one on purpose, put a class on it (`<reins-badge class="ml-2">`) or write a rule for it or its parts (`reins-sidebar-row`, `.reins-sidebar-row-label`, `.reins-sidebar-row-icon`, `reins-badge`, `.reins-badge-icon`). Their colors and sizes are Reins' design tokens, so a change you leave out follows Reins. A row draws its button before its children; give it only badges as children.
 
 ### Launcher items
 
@@ -227,4 +253,4 @@ Test the backend part with `bun test` in the extension's directory, through what
 
 ## Not yet
 
-Loading from a git URL or GitHub repository, or a distributed package; parts that run on nodes; libraries other than Lit provided (React); adding an extension from the browser; reloading on file changes; a published SDK package and a compatibility promise (the SDK changes with Reins: its `sdk` range is checked, nothing more).
+Loading from a git URL or GitHub repository, or a distributed package; parts that run on nodes; libraries other than Lit and `@reins/ui` provided (React); adding an extension from the browser; reloading on file changes; a published SDK package and a compatibility promise (the SDK changes with Reins: its `sdk` range is checked, nothing more).

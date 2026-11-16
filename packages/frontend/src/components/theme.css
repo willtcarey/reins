@@ -1,0 +1,30 @@
+/*
+ * Tailwind's names for the design tokens (tokens.css): `inline`, so a class compiles to the token itself
+ * (`text-muted` is `color: var(--reins-text-muted)`) and follows a theme with no rebuild. The app and the kit
+ * (@reins/ui) use these classes; extensions will get the same file through the SDK (docs/plans/
+ * extension-design-tokens-and-ui-kit.md, slice 2). Where a name is Tailwind's own (`rounded-md`, `text-sm`,
+ * `transition-colors`), its value is the token's, unchanged.
+ */
+@theme inline {
+  --color-fg: var(--reins-text);
+  --color-secondary: var(--reins-text-secondary);
+  --color-muted: var(--reins-text-muted);
+  --color-surface-raised: var(--reins-surface-raised);
+  --color-surface-hover: var(--reins-surface-hover);
+  --color-focus-ring: var(--reins-focus-ring);
+  --color-tone-attention: var(--reins-tone-attention);
+  --color-tone-attention-surface: var(--reins-tone-attention-surface);
+  --color-tone-info: var(--reins-tone-info);
+  --color-tone-info-surface: var(--reins-tone-info-surface);
+  --color-tone-neutral: var(--reins-tone-neutral);
+  --color-tone-neutral-surface: var(--reins-tone-neutral-surface);
+
+  --text-2xs: var(--reins-text-2xs);
+  --text-sm: var(--reins-text-sm);
+  --text-sm--line-height: var(--reins-text-sm-line-height);
+
+  --radius-md: var(--reins-radius-md);
+
+  --default-transition-duration: var(--reins-duration-fast);
+  --default-transition-timing-function: var(--reins-ease);
+}

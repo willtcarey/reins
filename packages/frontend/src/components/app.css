@@ -1,4 +1,10 @@
 @import "tailwindcss";
+@import "./tokens.css";
+@import "./theme.css";
+/* The kit extensions get (@reins/ui) draws in the light DOM: its rules are the page's, under utilities and
+   extensions' own rules, and the classes its templates use are built here. */
+@import "@reins/ui/kit.css" layer(components);
+@source "../../../ui/src";
 
 /* Ensure full-height layout with no page-level overflow or rubber-banding. */
 html, body {

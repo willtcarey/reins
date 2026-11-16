@@ -24,6 +24,16 @@ test("start and dev both run a server that stops everything unless it exits to b
   expect(createServices("start", "/repo").map(service => service.name)).toEqual(["server", "node"]);
 });
 
+test("dev also watches the app's bundle, its CSS and the kit the page provides to extensions (@reins/ui), each restarted when it exits", () => {
+  const watchers = createServices("dev", "/repo").filter(service => service.name.startsWith("frontend:"));
+
+  expect(watchers.map(service => service.name)).toEqual(["frontend:bundle", "frontend:css", "frontend:kit"]);
+  const kit = watchers.find(service => service.name === "frontend:kit")!;
+  expect(kit.cwd).toBe("/repo/packages/frontend");
+  expect(kit.command).toEqual([process.execPath, "src/vendor/build.ts", "--watch-kit"]);
+  expect(kit.onExit).toMatchObject({ restart: expect.any(Object) });
+});
+
 /** A service running `script` with Bun, which appends a line to `log` each time it starts. */
 function scriptedService(name: string, log: string, script: string, rest: Pick<Service, "onExit" | "restartAtOnceOn">): Service {
   const started = `require("node:fs").appendFileSync(${JSON.stringify(log)}, process.pid + "\\n");`;
