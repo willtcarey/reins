@@ -44,6 +44,23 @@ describe("reins.sessions: live lists", () => {
     expect(heard).toEqual([{ sessionIds: ["work"], projectIds: [1, 2] }]);
   });
 
+  test("tells a hidden session's activity changing, though lists leave it out", async () => {
+    const { reins, sessions } = testSdk();
+    sessions.setMany([{ ...makeSessionListItem("hidden", { projectId: null, activityState: "finished" }), background: true }]);
+    await settle();
+    const heard: SessionsChange[] = [];
+    reins.sessions.onDidChange((change) => heard.push(change));
+
+    sessions.set("hidden", { activityState: null });
+    await settle();
+    sessions.set("hidden", { activityState: "running" });
+    await settle();
+
+    expect(heard).toEqual([{ sessionIds: ["hidden"], projectIds: [null] }, { sessionIds: ["hidden"], projectIds: [null] }]);
+    expect((await reins.sessions.get("hidden")).activity).toBe("running");
+    expect(reins.sessions.list().map(({ id }) => id)).toEqual([]);
+  });
+
   test("lists a project's or a task's sessions, pinned first then the latest, never archived ones unless asked", () => {
     const { reins, sessions } = testSdk();
     mockFetch(() => json([]));

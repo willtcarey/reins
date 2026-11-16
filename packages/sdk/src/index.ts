@@ -554,7 +554,9 @@ export interface Sessions {
   list(query?: SessionQuery): readonly SessionSummary[];
   /**
    * Tells which sessions appeared, went or changed as `list()` gives them (name, activity, time, …), and the
-   * projects they were or are in (null: no project), so a list of one project can ignore the others.
+   * projects they were or are in (null: no project), so a list of one project can ignore the others. Hidden
+   * (background) sessions, which `list()` leaves out, are told too when their name, activity or archiving
+   * changes, so an extension that shows its own reads `get(id)` again at once.
    */
   onDidChange(listener: (change: SessionsChange) => void): Disposer;
   /** Marks an idle session read or unread; lists show it at once. A running session cannot be marked unread. */

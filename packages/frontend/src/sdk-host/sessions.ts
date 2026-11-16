@@ -51,11 +51,16 @@ export class SdkSessions implements Sessions {
     return () => this.listeners.delete(listener);
   }
 
-  /** A cache entry changed: listeners hear of it only when its summary, as lists give it, did. */
+  /** A cache entry changed: listeners hear of it only when its summary, as lists give it, did; for a hidden
+   * session, which lists leave out, when what `get` gives of it did. Extensions that show their own hidden
+   * sessions (a coordinator's sidebar row) need its activity at once. */
   private cacheChanged(sessionId: string): void {
     const entry = this.app.sessionCache.get(sessionId);
-    const listed = entry && !entry.background && isSessionListItem(entry) ? this.summary(entry) : null;
-    const summary = JSON.stringify(listed);
+    const shown = !entry ? null
+      : !entry.background && isSessionListItem(entry) ? this.summary(entry)
+      : entry.background ? { hidden: true, name: entry.name, activity: sdkActivity(entry.activityState), archived: entry.archivedAt !== null }
+      : null;
+    const summary = JSON.stringify(shown);
     const before = this.heard.get(sessionId);
     if (before?.summary === summary) return;
     const projectId = entry?.projectId ?? null;
