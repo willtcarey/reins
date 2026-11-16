@@ -326,8 +326,7 @@ export class ActiveSessionStore {
   async setUnread(unread: boolean): Promise<{ ok: true } | { error: string }> {
     if (this._disposed) return { error: "No active session" };
     const sessionId = this.sessionId;
-    const projectId = this.projectId;
-    if (projectId == null) return { error: "No active session" };
+    const projectId = this.sessionData.projectId;
     if (this.sessionData.activityState === "running") {
       return unread ? { error: "Running sessions cannot be marked unread" } : { ok: true };
     }

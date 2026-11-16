@@ -41,14 +41,14 @@ function callPrivate(obj: object, key: string, ...args: unknown[]) {
 
 function makeSessionData(overrides: {
   messageCount?: number;
-  projectId?: number;
+  projectId?: number | null;
   runtimeType?: string;
   activityState?: "running" | "finished" | null;
 } = {}) {
   const messageCount = overrides.messageCount ?? 0;
   return {
     id: "sess-1",
-    projectId: overrides.projectId ?? 42,
+    projectId: overrides.projectId === undefined ? 42 : overrides.projectId,
     taskId: null,
     parentSessionId: null,
     name: null,
@@ -903,6 +903,26 @@ describe("ActiveSessionStore session loading contract", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(sessionCache.get("sess-1")?.activityState).toBeNull();
     expect(calls).toContainEqual({ url: "/api/sessions/sess-1/activity", method: "PATCH" });
+  });
+
+  test("observing a session of no project marks it read", async () => {
+    const sessionCache = new SessionCache();
+    sessionCache.set("sess-1", makeSessionData({ projectId: null, activityState: "finished" }));
+    const store = new ActiveSessionStore("sess-1", null, sessionCache);
+    const bodies: unknown[] = [];
+    mockFetch((url, init) => {
+      if (url === "/api/sessions/sess-1/activity" && init?.method === "PATCH") {
+        bodies.push(JSON.parse(String(init.body)));
+        return jsonResponse({ ok: true });
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    store.setObserved(true);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(sessionCache.get("sess-1")?.activityState).toBeNull();
+    expect(bodies).toEqual([{ unread: false }]);
   });
 
   test("setUnread marks the observed active session unread without an automatic read reversal", async () => {
