@@ -138,9 +138,9 @@ describe("a child's report to its parent", () => {
     expect(latestSettlement("child")).toMatchObject({ operationId: "run-1", status: "failed" });
     expect(getSession("child")?.activity_state).toBeNull();
 
-    // The parent's runtime runs the report: Pi frames it as coming from the child.
+    // The parent's runtime runs the report: labelled as from the child.
     const turn = await model.nextTurn("parent");
-    expect(JSON.stringify(turn.context.messages)).toContain("Reins session update from session child");
+    expect(JSON.stringify(turn.context.messages)).toContain("From session child:");
     turn.finish();
 
     persistCanonicalMessages("child", [reply("Second answer")]);

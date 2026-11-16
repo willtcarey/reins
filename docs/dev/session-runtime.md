@@ -285,7 +285,7 @@ On SIGTERM or SIGINT, and before exiting to be restarted alone (`exitProcess`), 
 
 `RuntimeMessage` (`events.ts`) is Reins-normalized:
 
-- `reinsInput` (canonical storage only) carries block content, a stable `reinsId` and application `metadata`. Projections show it as `role: "user"` (with `metadata` when present). Provider projection strips both fields and, when `metadata.sourceSessionId` is set, frames the content as a Reins session update that is not new user authorization. `metadata.sourceExtension` (input a backend extension submitted, `reins.sessions`) only names its origin for the chat: the content reaches the provider as it is.
+- `reinsInput` (canonical storage only) carries block content, a stable `reinsId` and application `metadata`. Projections show it as `role: "user"` (with `metadata` when present). Provider projection strips both fields and, when `metadata.sourceSessionId` is set, puts a label naming the sender before the content (`From session <id>:`; only who sent it, no words about authority, so a parent can lift a limit it set; the ID, not the name, so a rename does not change it). `metadata.sourceExtension` (input a backend extension submitted, `reins.sessions`) only names its origin for the chat: the content reaches the provider as it is.
 - User content is blocks: `{type: "text"}` and image attachment references; bytes are hydrated only at the provider boundary.
 - Assistant content: `text`, `thinking` (with optional `thinkingSignature`) and `toolCall` blocks; `stopReason`; a `timestamp` stable across the message's lifecycle.
 - Tool results: `toolCallId`, `toolName`, `content`, `isError`, `timestamp`.
