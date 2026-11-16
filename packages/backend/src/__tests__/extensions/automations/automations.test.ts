@@ -83,10 +83,10 @@ describe("the automations extension", () => {
   });
 
   test("tells agents that can script when to make an automation, and when to run the command instead", async () => {
-    const context = { session: { id: "s", projectId: null, taskId: null }, task: null };
+    const context = { session: { id: "s", projectId: null, taskId: null, kind: "agent" }, task: null };
 
-    const sections = await state.extensions.host.promptSections({ ...context, tools: null });
-    const withoutExecute = await state.extensions.host.promptSections({ ...context, tools: ["read", "bash"] });
+    const sections = await state.extensions.host.systemPromptSections({ ...context, tools: null });
+    const withoutExecute = await state.extensions.host.systemPromptSections({ ...context, tools: ["read", "bash"] });
 
     expect(sections.join("\n")).toContain("reins.automations.create");
     expect(sections.join("\n")).toContain("tell me when");

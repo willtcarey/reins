@@ -46,10 +46,10 @@ describe("the agent kind", () => {
     const row = getSession(created.id)!;
     const asked: unknown[] = [];
 
-    const { systemPrompt } = (await new SessionModel(row, createAppState().nodes).context(getSource(row.source_id)!, async context => { asked.push(context); return ["From an extension"]; })).runtime;
+    const { systemPrompt } = (await new SessionModel(row, createAppState().nodes).context(getSource(row.source_id)!, { systemPromptSections: async context => { asked.push(context); return ["From an extension"]; } })).runtime;
 
     expect(systemPrompt).toEndWith("\n\nFrom an extension");
-    expect(asked).toEqual([{ session: { id: row.id, projectId: project.id, taskId: null }, task: null, tools: null }]);
+    expect(asked).toEqual([{ session: { id: row.id, projectId: project.id, taskId: null, kind: "agent" }, task: null, tools: null }]);
   });
 
   test("a session of no project gets no project section: neither a task nor the project assistant's role", async () => {

@@ -1,7 +1,7 @@
 # ADR-019: The Server Generates the System Prompt; Sessions Have Kinds
 
 - **Status:** Accepted
-- **Amended by:** [ADR-029](029-sessions-on-the-server-nodes-host-tools.md) (the server builds the whole prompt, with the environment it discovers through the node: the node's `~/.agents` plus the checkout's)
+- **Amended by:** [ADR-029](029-sessions-on-the-server-nodes-host-tools.md) (the server builds the whole prompt, with the environment it discovers through the node: the node's `~/.agents` plus the checkout's); [ADR-041](041-extension-session-kinds.md) (extensions register kinds, named `<extension>/<name>`; scripts read a session's kind but still cannot choose one)
 - **Date:** 2026-10-04
 
 ## Context

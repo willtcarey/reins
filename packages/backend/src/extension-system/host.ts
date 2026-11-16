@@ -7,8 +7,8 @@ import { KindGuard, type TSchema } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 import { firstSchemaError } from "../schema-errors.js";
 import type {
-  Disposer, HttpApi, HttpCall, ImagesProvider, Logger, PageHandler, PromptContext, PromptContribution, ScriptContext, ScriptNamespace,
-  ServerSdk, Service, SessionSettlement, ToolFilters, ToolProvider, ToolResult, ToolSearchGroup,
+  Disposer, HttpApi, HttpCall, ImagesProvider, Logger, PageHandler, SystemPromptContext, SystemPromptSection, ScriptContext, ScriptNamespace,
+  ServerSdk, Service, SessionKind, SessionSettlement, ToolFilters, ToolProvider, ToolResult, ToolSearchGroup,
 } from "@reins/sdk/server";
 import type { ExtensionStorage } from "../database.js";
 import { scriptFunctions, scriptTypes, type ApiContext, type ScriptFunction } from "../sdk-host/projection.js";
@@ -16,6 +16,8 @@ import type { NamedType } from "../sdk-host/scripts.js";
 import type { AppState, SessionSettledNotice } from "../state.js";
 import { requestOrigin } from "../nodes/node-link.js";
 import { logger } from "../logger.js";
+import { getSession } from "../session-store.js";
+import { extensionKindName } from "../sessions/session-kinds.js";
 import { ServiceRunner, type ServiceView } from "./services.js";
 import { createExtensionSdk, extensionContext } from "./extension-sdk.js";
 import { extensionProcesses } from "./extension-processes.js";
@@ -54,6 +56,7 @@ interface Method {
 interface Script { extension: string; namespace: string; functions: ScriptFunction[]; types: NamedType[] }
 interface RegisteredService { extension: string; runner: ServiceRunner }
 interface SettlementListener { extension: string; listener: (settlement: SessionSettlement) => void | Promise<void> }
+interface RegisteredKind { extension: string; name: string; kind: SessionKind }
 
 export interface ExtensionConnection {
   readonly sdk: ServerSdk;
@@ -66,12 +69,13 @@ export interface ExtensionConnection {
 export class ExtensionHost {
   private readonly providers: { extension: string; provider: ToolProvider }[] = [];
   readonly imageProviders = new Map<string, ImagesProvider>();
-  private readonly prompts: { extension: string; contribution: PromptContribution }[] = [];
+  private readonly sections: { extension: string; section: SystemPromptSection }[] = [];
   private readonly scripts: Script[] = [];
   private readonly pages: Page[] = [];
   private readonly methods: Method[] = [];
   private readonly services: RegisteredService[] = [];
   private readonly settlementListeners: SettlementListener[] = [];
+  private readonly kinds: RegisteredKind[] = [];
 
   /** `report`: an extension's error after it loaded (a tool ID left out, a prompt section that threw, a
    * service's crash), which must not reach the core's caller. */
@@ -126,8 +130,8 @@ export class ExtensionHost {
     return async () => { if (this.imageProviders.get(extension) === provider) this.imageProviders.delete(extension); };
   }
 
-  addPromptContribution(extension: string, contribution: PromptContribution): Removal {
-    return add(this.prompts, { extension, contribution });
+  addSystemPromptSection(extension: string, section: SystemPromptSection): Removal {
+    return add(this.sections, { extension, section });
   }
 
   addScriptNamespace(extension: string, namespace: ScriptNamespace): Removal {
@@ -176,6 +180,27 @@ export class ExtensionHost {
     return add(this.settlementListeners, { extension, listener });
   }
 
+  /** Its removal retires the open runtimes of its sessions, so an idle one opens again on what is registered
+   * then (refusing when nothing is), not on the removed kind; one running keeps it until its run ends. */
+  addSessionKind(extension: string, name: string, kind: SessionKind): Removal {
+    if (typeof name !== "string" || !EXTENSION_NAME.test(name) || name.length > MAX_KIND_NAME_LENGTH) throw new Error(`Not a session kind name: ${String(name)}`);
+    checkSessionKind(name, kind);
+    if (this.kinds.some(entry => entry.extension === extension && entry.name === name)) {
+      throw new Error(`The ${extension} extension already registers the session kind ${name}`);
+    }
+    const stored = extensionKindName(extension, name);
+    return add(this.kinds, { extension, name, kind }, async () => {
+      for (const [sessionId, entry] of this.app().process.sessions.live) {
+        if (getSession(sessionId)?.kind === stored) entry.retired = true;
+      }
+    });
+  }
+
+  /** The extension kind stored as `name` (`<extension>/<name>`), if one is registered now. */
+  sessionKind(name: string): SessionKind | undefined {
+    return this.kinds.find(entry => extensionKindName(entry.extension, entry.name) === name)?.kind;
+  }
+
   /** All at once: each is bounded by its own timeout, so one slow service does not hold up the others. */
   async stopServices(extension?: string): Promise<void> {
     await Promise.all(this.services.filter(service => extension === undefined || service.extension === extension).map(({ runner }) => runner.stop()));
@@ -186,8 +211,9 @@ export class ExtensionHost {
     const provider = this.providers.find(own)?.provider;
     return {
       tools: provider ? { title: provider.title } : null,
-      promptSections: this.prompts.filter(own).length,
+      systemPromptSections: this.sections.filter(own).length,
       settlementListeners: this.settlementListeners.filter(own).length,
+      sessionKinds: this.kinds.filter(own).map(entry => entry.name).toSorted(),
       scriptFunctions: this.scripts.filter(own).flatMap(script => script.functions.map(fn => fn.name)).toSorted(),
       httpMethods: this.methods.filter(own).map(method => method.name).toSorted(),
       pages: this.pages.filter(own).map(page => page.path).toSorted(),
@@ -238,10 +264,10 @@ export class ExtensionHost {
   }
 
   /** A section that throws is left out: one extension must not break every session's prompt. */
-  async promptSections(context: PromptContext): Promise<string[]> {
-    const sections = await Promise.all([...this.prompts].map(async ({ extension, contribution }) => {
+  async systemPromptSections(context: SystemPromptContext): Promise<string[]> {
+    const sections = await Promise.all([...this.sections].map(async ({ extension, section }) => {
       try {
-        return await contribution(context);
+        return await section(context);
       } catch (error) {
         this.report(extension, error);
         return null;
@@ -303,6 +329,19 @@ export class ExtensionHost {
       throw error;
     }
   }
+}
+
+const MAX_KIND_NAME_LENGTH = 64;
+
+/** A kind's fields as the SDK declares them, checked at registration rather than at each session's opening. */
+function checkSessionKind(name: string, kind: SessionKind): void {
+  const refuse = (problem: string) => { throw new Error(`Session kind ${name}: ${problem}`); };
+  if (typeof kind !== "object" || kind === null) refuse("not an object");
+  if (typeof kind.systemPrompt !== "function") refuse("systemPrompt is a function");
+  if (kind.tools !== undefined && (!Array.isArray(kind.tools) || kind.tools.some(tool => typeof tool !== "string" || !tool))) refuse("tools is a list of tool names");
+  if (kind.environment !== undefined && typeof kind.environment !== "boolean") refuse("environment is a boolean");
+  const { model } = kind;
+  if (model !== undefined && (typeof model?.provider !== "string" || !model.provider || typeof model.modelId !== "string" || !model.modelId)) refuse("model is { provider, modelId, thinkingLevel? }");
 }
 
 export function pagePath(extension: string, path: string): string {

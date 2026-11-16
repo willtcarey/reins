@@ -1,0 +1,32 @@
+# ADR-041: Extensions register session kinds
+
+- **Status:** Accepted
+- **Date:** 2026-11-16
+- **Author:** Will (with Claude)
+- **Amends:** [ADR-019](019-server-generated-system-prompt-and-session-kinds.md) (kinds come from extensions too; scripts read a session's kind)
+
+## Context
+
+ADR-019 gave every session a kind, a server-side resolver of its prompt, tools, environment and branch, and said extensions would later add kinds as registry entries. The registry was a module-global map in `sessions/session-kinds.ts` with `registerSessionKind`. The first extension use is a coordinator session: one that delegates work to other sessions and puts decisions in the user's Inbox, with a prompt of its own, not the coding agent's.
+
+A module-global map does not fit what an extension registers. An extension is registered again on every app (each dev hot reload builds a new bundle with a fresh copy of the module) and when it is reloaded or turned on, and what it registered must go when it is unloaded. A runtime opened by older code reads the current app through `ServerProcess.app`, never its own module's state. And two extensions must not collide on a name.
+
+## Decision
+
+- **An extension registers kinds through the SDK:** `reins.sessions.registerKind(name, kind)` returns a `Disposer`. `kind` is `{ systemPrompt(context), tools?, environment?, model? }`: the system prompt is built when a session opens; the tools, environment and model are fields. They are not results of a function as the internal resolver's are. The model must be known when a session is created, before anything opens. `reinsSystemPrompt()` in the context must know the kind's tools (orchestration is described only when `execute` is offered), and so must the extensions' sections.
+- **The host keeps them** (`ExtensionHost.addSessionKind`, the app's), like every other registration: the connection owns the removal, so a reload, turning the extension off or its disposer removes it. Reins' own kinds (`agent`, `task-generator`) stay a fixed table in code: each bundle has its own, which is right for code. `registerSessionKind` goes; tests register through an extension or the host.
+- **Names are scoped to the extension.** A name is `[a-z][a-z0-9-]*`, unique among the extension's kinds. A session stores `<extension>/<name>` in `sessions.kind`: extension names have no `/`, so the first `/` splits it, and Reins' own kinds have none. Existing rows (`agent`, `task-generator`) are unchanged. There is no new column and no migration, since kinds are still validated in code.
+- **The kind's prompt replaces Reins' base prompt.** Its context gives the session (`id`, `projectId`, `taskId`, `kind`), its task and `reinsSystemPrompt()`: `reinsSystemPrompt` for the session's task, project and the kind's tools, without the sections. **Every extension's prompt sections are appended** after the kind's prompt, as after an agent's Reins section, asked for the kind's tools. Sections are not filtered per kind: `PromptContext.session.kind` lets a section tell kinds apart. The environment follows unless `environment: false`.
+- **Resolution at open.** The kind is read from the current app each time the session's runtime opens (`App.findSessionKind`, optional on `App` as `sessionSettled` is), so a changed kind reaches its existing sessions the next time they open. Removing a kind retires the open runtimes of its sessions: an idle one opens again on what is registered then, and a running one keeps its run until it is idle.
+- **A missing kind refuses to run.** A session whose kind is not registered (its extension turned off, not installed, failed to load, or no longer registering it) throws `SessionKindMissingError` on open: "This session's kind, inbox/coordinator, is not registered: the inbox extension is turned off". It does not fall back to `agent`, which would run a session with tools and a prompt nobody chose for it. `sessions.send` rejects with the message. The chat's prompt and steer routes answer 409 with it, which the composer shows as the failed send. An extension that is loading (at startup or a reload) is waited for first.
+- **System prompt sections move to `sessions`.** `reins.prompt.register(contribution)` becomes `reins.sessions.registerSystemPromptSection(section)` (`SystemPromptSection`, `SystemPromptContext`; the report's `registrations.systemPromptSections`), beside `registerKind`: both decide how sessions run, and "system prompt" says which prompt, as a session also has its user's prompts. The `reins.prompt` namespace goes, with no alias: the SDK has no compatibility promise yet, and the one added extension that used it (Inbox) changed with it.
+- **Fixed at creation.** `sessions.start(prompt, { kind })` from an extension names one of its own kinds. Another extension's kinds, and Reins' own, are refused ("The inbox extension registers no session kind …"). No API changes a session's kind. A start without a model uses the kind's `model` (checked against the catalog, as a given one is), else `default_model`'s.
+- **Branches.** A task session of an extension kind that is offered tools (every tool, or a non-empty list) checks out its task's branch, as an agent's does: those tools work in the checkout, and a task's work belongs on its branch. A kind offered no tools has no checkout, so opening it changes nothing on the node (ADR-019's utility kind). A kind that wants tools but no branch starts its sessions without a task.
+- **Scripts cannot start a kind's session.** `kind` is an extension-only option (`notForScripts`): a script is refused it, and its sessions are agents. Kinds are named within their extension, which a script is not, and an extension that wants agents to start its kind gives them a script method of its own, which keeps the decision with the kind's owner. Scripts can **read** a session's kind (`Session.kind`), as they read `startedBy`: `SessionInfo` is one shape for both callers.
+
+## Consequences
+
+- The report gives each extension's `registrations.sessionKinds`, and Settings → Extensions shows them.
+- A hot reload disposes every extension, so it retires every open runtime of an extension kind; the new app's code would retire them anyway (`APP_CODE`).
+- Turning an extension off leaves its sessions as they are: readable, and refusing to run until it is on again.
+- Not in this decision: turn hooks (`beforeTurn`, `beforeCall`), per-kind section filtering, kinds from definition files, and UI to pick a kind. An extension starts its kind from a command or Launcher item of its own.

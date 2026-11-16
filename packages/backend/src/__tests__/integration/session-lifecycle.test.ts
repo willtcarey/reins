@@ -15,7 +15,6 @@ import { closeSessions, useLoopbackState } from "../helpers/app-state.js";
 import { useTestRepo } from "../helpers/test-repo.js";
 import { until } from "../helpers/session-host.js";
 import { createSession as createNewSession } from "../../sessions/create-session.js";
-import { registerSessionKind } from "../../sessions/session-kinds.js";
 import { latestSettlement } from "../../sessions/session-runs.js";
 import { storedInput } from "../../pi-session-store.js";
 import { Sessions } from "../../models/sessions.js";
@@ -76,20 +75,20 @@ describe("a session on the server", () => {
     }]);
     registerPiProvider(provider.provider);
     setApiKeyCredential(provider.provider.id, "test-key");
-    const unregister = registerSessionKind("test-sorter", () => ({ systemPrompt: "Sort the words you are given.", tools: [], environment: false }));
     const { state } = loopback;
+    const unregister = state.extensions.host.addSessionKind("test", "sorter", { systemPrompt: () => "Sort the words you are given.", tools: [], environment: false });
     await stopLoopbackNode(state);
     const project = createProject("Utility", repo.dir);
     try {
-      const created = createNewSession(state, { projectId: project.id, model: { provider: provider.provider.id, modelId: "fake" }, kind: "test-sorter", background: true });
+      const created = createNewSession(state, { projectId: project.id, model: { provider: provider.provider.id, modelId: "fake" }, kind: "test/sorter", background: true });
       // A slash command is not expanded for a kind without the environment.
       await new Sessions(state, () => {}).submit(created.id, { op: "prompt", content: [{ type: "text", text: "/pears apples" }], clientId: "sort" });
       expect(await new Models(state).sessions.waitForSettlement(created.id, 10_000))
         .toEqual({ sessionId: created.id, status: "completed", result: "apples, pears", error: null });
       expect(seen).toEqual([{ systemPrompt: "Sort the words you are given.", tools: [] }]);
-      expect(getSession(created.id)).toMatchObject({ kind: "test-sorter", background: 1, activity_state: "finished" });
+      expect(getSession(created.id)).toMatchObject({ kind: "test/sorter", background: 1, activity_state: "finished" });
     } finally {
-      unregister();
+      await unregister();
       unregisterPiProvider(provider.provider.id);
     }
   }, 15_000);

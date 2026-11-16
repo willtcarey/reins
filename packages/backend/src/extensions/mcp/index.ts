@@ -65,7 +65,7 @@ export function startMcp(reins: ServerSdk, options: McpOptions = {}): Mcp {
     registerMcpRoutes(reins.http, servers, toggle),
     reins.scripting.register(mcpScripting(servers, context.callbackPath)),
     reins.tools.register(mcpToolProvider(servers, reins.tools, reins.name)),
-    reins.prompt.register(mcpPromptSection(servers, reins.name, reins.logger)),
+    reins.sessions.registerSystemPromptSection(mcpPromptSection(servers, reins.name, reins.logger)),
   ];
   return {
     servers,

@@ -5,7 +5,7 @@
 
 import { isAbsolute, resolve } from "node:path";
 import { stat } from "node:fs/promises";
-import type { Migration, ServerExtension } from "@reins/sdk/server";
+import type { Migration, ServerExtension, SessionKind } from "@reins/sdk/server";
 import type { ExtensionStorage } from "../database.js";
 import { logger } from "../logger.js";
 import type { Broadcast } from "../models/broadcast.js";
@@ -20,6 +20,7 @@ import { installPackage, openInstalled, openPackage, PackageFailure, removeBuild
 import { ManifestError, readManifest, type Manifest } from "./manifest.js";
 import { describe, type ExtensionOrigin, type ExtensionView } from "./report.js";
 import { stopProcessesOfStoppedExtensions } from "./extension-processes.js";
+import { kindExtension } from "../sessions/session-kinds.js";
 
 export interface BuiltInBackendPart extends ServerExtension { name: string }
 
@@ -215,6 +216,24 @@ export class Extensions {
 
   list(): ExtensionView[] {
     return [...this.records.values()].map(record => describe(record, this.host));
+  }
+
+  /** The extension kind stored as `name` (`<extension>/<name>`), or why there is none, naming its extension.
+   * An extension being loaded, at the start or by a reload, is waited for: its kinds are not registered yet. */
+  async findSessionKind(name: string): Promise<{ kind: SessionKind } | { missing: string }> {
+    const extension = kindExtension(name);
+    if (extension === null) return { missing: "Reins has no kind of that name" };
+    await this.loaded;
+    await this.chains.get(extension)?.catch(() => undefined);
+    const kind = this.host.sessionKind(name);
+    if (kind) return { kind };
+    const state = this.records.get(extension)?.state;
+    const reason = !state ? "is not installed"
+      : state.kind === "disabled" ? "is turned off"
+      : state.kind === "failed" ? `failed to load (${state.message})`
+      : state.kind === "loading" ? "is still loading"
+      : "does not register it";
+    return { missing: `the ${extension} extension ${reason}` };
   }
 
   /** Only the current build's files: an old build ID must not serve files that have changed since. */

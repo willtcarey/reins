@@ -13,6 +13,7 @@ import { badRequest, conflict, HttpError } from "../errors.js";
 import { SessionMoveConflict } from "../sessions/session-ownership.js";
 import { PromptTooLargeError, SessionNotFoundError, type Sessions } from "../models/sessions.js";
 import { SessionNodeRemovedError } from "../models/session.js";
+import { SessionKindMissingError } from "../sessions/session-kinds.js";
 import { NodeNotFoundError } from "../models/nodes.js";
 import { CheckoutNotFoundError } from "../models/sources.js";
 import { parseDisplayCursor, type ClientPromptContent } from "../messages-store.js";
@@ -112,7 +113,7 @@ export function registerSessionRoutes(router: RouterGroup<RouteContext>) {
       await sessions.setModel({ sessionId, ...body });
     } catch (err: unknown) {
       if (err instanceof SessionNotFoundError) throw err;
-      if (err instanceof SessionNodeRemovedError) conflict(err.message);
+      if (err instanceof SessionNodeRemovedError || err instanceof SessionKindMissingError) conflict(err.message);
       const message = err instanceof Error ? err.message : "Failed to update session model";
       badRequest(message);
     }
@@ -170,7 +171,7 @@ export function registerSessionRoutes(router: RouterGroup<RouteContext>) {
       ({ started } = await sessions.resume(sessionId));
     } catch (err: unknown) {
       if (err instanceof HttpError || err instanceof SessionNotFoundError) throw err;
-      if (err instanceof SessionNodeRemovedError) conflict(err.message);
+      if (err instanceof SessionNodeRemovedError || err instanceof SessionKindMissingError) conflict(err.message);
       badRequest(err instanceof Error ? err.message : "Failed to resume pending operation");
     }
     if (!started) conflict("The session has no interrupted operation to resume");
@@ -189,7 +190,7 @@ export function registerSessionRoutes(router: RouterGroup<RouteContext>) {
       } catch (err: unknown) {
         if (err instanceof SessionNotFoundError) throw err;
         if (err instanceof PromptTooLargeError) throw new HttpError(413, err.message);
-        if (err instanceof SessionNodeRemovedError) conflict(err.message);
+        if (err instanceof SessionNodeRemovedError || err instanceof SessionKindMissingError) conflict(err.message);
         // The admission's own failure (an unknown model, a missing attachment), as the sender sees it. Not
         // a 503, which the browser would retry.
         badRequest(err instanceof Error ? err.message : `Failed to ${op}`);
@@ -208,7 +209,7 @@ export function registerSessionRoutes(router: RouterGroup<RouteContext>) {
     try {
       await ctx.models.sessions.compact(ctx.params.sessionId, body);
     } catch (err: unknown) {
-      if (err instanceof Error && (err.name === "CompactionRefusedError" || err instanceof SessionNodeRemovedError)) conflict(err.message);
+      if (err instanceof Error && (err.name === "CompactionRefusedError" || err instanceof SessionNodeRemovedError || err instanceof SessionKindMissingError)) conflict(err.message);
       throw err;
     }
     return Response.json({ ok: true });

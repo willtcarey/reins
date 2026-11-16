@@ -398,16 +398,16 @@ describe("the server SDK's host", () => {
       const contexts: unknown[] = [];
       const state = createAppState(undefined, {
         extensions: [
-          { name: "a", register: reins => reins.prompt.register(context => { contexts.push(context); return "Section A"; }) },
-          { name: "b", register: reins => reins.prompt.register(() => null) },
-          { name: "c", register: reins => reins.prompt.register(() => { throw new Error("no"); }) },
-          { name: "d", register: reins => reins.prompt.register(async () => "Section D") },
+          { name: "a", register: reins => reins.sessions.registerSystemPromptSection(context => { contexts.push(context); return "Section A"; }) },
+          { name: "b", register: reins => reins.sessions.registerSystemPromptSection(() => null) },
+          { name: "c", register: reins => reins.sessions.registerSystemPromptSection(() => { throw new Error("no"); }) },
+          { name: "d", register: reins => reins.sessions.registerSystemPromptSection(async () => "Section D") },
         ],
         onExtensionError: () => {},
       });
-      const context = { session: { id: "s1", projectId: 1, taskId: 2 }, task: { id: 2, title: "T", description: null }, tools: null };
+      const context = { session: { id: "s1", projectId: 1, taskId: 2, kind: "agent" }, task: { id: 2, title: "T", description: null }, tools: null };
 
-      expect(await state.extensions.host.promptSections(context)).toEqual(["Section A", "Section D"]);
+      expect(await state.extensions.host.systemPromptSections(context)).toEqual(["Section A", "Section D"]);
       expect(contexts).toEqual([context]);
     });
   });
@@ -475,11 +475,11 @@ describe("the server SDK's host", () => {
             ],
             register: reins => {
               registered = true;
-              reins.prompt.register(() => "Broken");
+              reins.sessions.registerSystemPromptSection(() => "Broken");
               return () => {};
             },
           },
-          { name: "working", register: reins => reins.prompt.register(() => "Working") },
+          { name: "working", register: reins => reins.sessions.registerSystemPromptSection(() => "Working") },
         ],
         onExtensionError: (name, error) => errors.push(`${name}: ${error instanceof Error ? error.message : String(error)}`),
       });
@@ -495,7 +495,7 @@ describe("the server SDK's host", () => {
 
       expect(errors).toEqual(["broken: bad migration"]);
       expect(registered).toBe(false);
-      expect(await state.extensions.host.promptSections({ session: { id: "s", projectId: 1, taskId: null }, task: null, tools: null })).toEqual(["Working"]);
+      expect(await state.extensions.host.systemPromptSections({ session: { id: "s", projectId: 1, taskId: null, kind: "agent" }, task: null, tools: null })).toEqual(["Working"]);
       expect(tables).toEqual([{ name: "kept" }]);
     });
 
@@ -562,8 +562,8 @@ describe("the server SDK's host", () => {
       const notes = testExtension({
         title: "Notes tools",
         setup: reins => {
-          reins.prompt.register(() => "Notes");
-          reins.prompt.register(() => null);
+          reins.sessions.registerSystemPromptSection(() => "Notes");
+          reins.sessions.registerSystemPromptSection(() => null);
           reins.scripting.register({ namespace: "notes", methods: { list: namespace("x").methods.one!, add: namespace("x").methods.one! } });
           reins.http.handle({ list: {}, add: {} }, { list: () => {}, add: () => {} });
           reins.http.page("/callback", () => new Response("ok"));
@@ -592,8 +592,9 @@ describe("the server SDK's host", () => {
         errors: [],
         registrations: {
           tools: { title: "Notes tools" },
-          promptSections: 2,
+          systemPromptSections: 2,
           settlementListeners: 0,
+          sessionKinds: [],
           scriptFunctions: ["notes.add", "notes.list"],
           httpMethods: ["add", "list"],
           pages: ["/extensions/notes/callback"],
@@ -610,7 +611,7 @@ describe("the server SDK's host", () => {
       expect(second).toMatchObject({
         name: "quiet",
         status: "loaded",
-        registrations: { tools: null, promptSections: 0, settlementListeners: 0, scriptFunctions: [], httpMethods: [], pages: [] },
+        registrations: { tools: null, systemPromptSections: 0, settlementListeners: 0, sessionKinds: [], scriptFunctions: [], httpMethods: [], pages: [] },
       });
     });
 
@@ -623,7 +624,7 @@ describe("the server SDK's host", () => {
             { id: "002_fails", up: () => { throw new Error("bad migration"); } },
             { id: "003_later", up: () => {} },
           ],
-          register: reins => reins.prompt.register(() => "Broken"),
+          register: reins => reins.sessions.registerSystemPromptSection(() => "Broken"),
         }],
         onExtensionError: () => {},
       });
@@ -632,7 +633,7 @@ describe("the server SDK's host", () => {
 
       expect(broken.status).toBe("failed");
       expect(broken.failure).toEqual({ stage: "migration", message: "bad migration" });
-      expect(broken.registrations.promptSections).toBe(0);
+      expect(broken.registrations.systemPromptSections).toBe(0);
       expect(broken.storage.migrations.applied.map((migration: { id: string }) => migration.id)).toEqual(["001_ok"]);
       expect(broken.storage.migrations.pending).toEqual(["002_fails", "003_later"]);
     });
@@ -642,7 +643,7 @@ describe("the server SDK's host", () => {
         extensions: [{
           name: "broken",
           register: reins => {
-            reins.prompt.register(() => "Half registered");
+            reins.sessions.registerSystemPromptSection(() => "Half registered");
             throw new Error("cannot start");
           },
         }],
@@ -651,7 +652,7 @@ describe("the server SDK's host", () => {
 
       const [broken] = await list(state);
 
-      expect(broken).toMatchObject({ status: "failed", failure: { stage: "register", message: "cannot start" }, registrations: { promptSections: 0 } });
+      expect(broken).toMatchObject({ status: "failed", failure: { stage: "register", message: "cannot start" }, registrations: { systemPromptSections: 0 } });
     });
 
     test("secrets are counted, neither their keys nor their values given", async () => {
@@ -675,8 +676,8 @@ describe("the server SDK's host", () => {
         extensions: [{
           name: "notes",
           register: reins => {
-            removeSection = reins.prompt.register(() => "Notes");
-            reins.prompt.register(() => { throw new Error("no section today"); });
+            removeSection = reins.sessions.registerSystemPromptSection(() => "Notes");
+            reins.sessions.registerSystemPromptSection(() => { throw new Error("no section today"); });
             return () => {};
           },
         }],
@@ -684,11 +685,11 @@ describe("the server SDK's host", () => {
       });
 
       await removeSection?.();
-      await state.extensions.host.promptSections({ session: { id: "s", projectId: 1, taskId: null }, task: null, tools: null });
+      await state.extensions.host.systemPromptSections({ session: { id: "s", projectId: 1, taskId: null, kind: "agent" }, task: null, tools: null });
       const [notes] = await list(state);
 
       expect(notes.status).toBe("loaded");
-      expect(notes.registrations.promptSections).toBe(1);
+      expect(notes.registrations.systemPromptSections).toBe(1);
       expect(notes.errors).toEqual([{ message: "no section today", at: expect.stringMatching(/^\d{4}-\d\d-\d\dT/) }]);
     });
   });
@@ -703,7 +704,7 @@ describe("the server SDK's host", () => {
           {
             name: "forgetful",
             register: reins => {
-              reins.prompt.register(() => "Forgotten");
+              reins.sessions.registerSystemPromptSection(() => "Forgotten");
               reins.http.handle({ x: {} }, { x: () => {} });
               return async () => { await Bun.sleep(1); disposed.push("forgetful"); };
             },
@@ -715,7 +716,7 @@ describe("the server SDK's host", () => {
 
       expect(kept.disposed).toBe(true);
       expect(disposed).toEqual(["forgetful"]);
-      expect(await state.extensions.host.promptSections({ session: { id: "s", projectId: 1, taskId: null }, task: null, tools: null })).toEqual([]);
+      expect(await state.extensions.host.systemPromptSections({ session: { id: "s", projectId: 1, taskId: null, kind: "agent" }, task: null, tools: null })).toEqual([]);
       expect((await router.handle(makeRequest("POST", "/api/extensions/forgetful/x"), state))!.status).toBe(404);
       expect(script(state)(`return await reins.tools.call("kept__a__one", {})`)).rejects.toThrow("Unknown tool");
     });
@@ -726,7 +727,7 @@ describe("the server SDK's host", () => {
         extensions: [{
           name: "broken",
           register: reins => {
-            reins.prompt.register(() => "Half registered");
+            reins.sessions.registerSystemPromptSection(() => "Half registered");
             throw new Error("cannot start");
           },
         }],
@@ -734,7 +735,7 @@ describe("the server SDK's host", () => {
       });
 
       expect(errors).toEqual(["broken: cannot start"]);
-      expect(await state.extensions.host.promptSections({ session: { id: "s", projectId: 1, taskId: null }, task: null, tools: null })).toEqual([]);
+      expect(await state.extensions.host.systemPromptSections({ session: { id: "s", projectId: 1, taskId: null, kind: "agent" }, task: null, tools: null })).toEqual([]);
     });
 
     test("a disposer removes only its own registration", async () => {
@@ -743,8 +744,8 @@ describe("the server SDK's host", () => {
         extensions: [{
           name: "two",
           register: reins => {
-            const first = reins.prompt.register(() => "First");
-            reins.prompt.register(() => "Second");
+            const first = reins.sessions.registerSystemPromptSection(() => "First");
+            reins.sessions.registerSystemPromptSection(() => "Second");
             remove = first;
             return () => {};
           },
@@ -753,7 +754,7 @@ describe("the server SDK's host", () => {
 
       await remove?.();
 
-      expect(await state.extensions.host.promptSections({ session: { id: "s", projectId: 1, taskId: null }, task: null, tools: null })).toEqual(["Second"]);
+      expect(await state.extensions.host.systemPromptSections({ session: { id: "s", projectId: 1, taskId: null, kind: "agent" }, task: null, tools: null })).toEqual(["Second"]);
     });
   });
 });

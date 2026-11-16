@@ -24,7 +24,7 @@ function fakeServer(respond: (request: Request) => Response | Promise<Response>)
 /** An extension as `GET /api/installed-extensions` reports it. */
 const view = (name: string, overrides: Record<string, unknown> = {}) => ({
   name, status: "loaded", failure: null, source: { kind: "built-in" }, manifest: null, build: null, backendPart: true, errors: [],
-  registrations: { tools: null, promptSections: 0, settlementListeners: 0, scriptFunctions: [], httpMethods: [], pages: [] }, services: [], storage: null,
+  registrations: { tools: null, systemPromptSections: 0, settlementListeners: 0, sessionKinds: [], scriptFunctions: [], httpMethods: [], pages: [] }, services: [], storage: null,
   ...overrides,
 });
 const spoke = (overrides: Record<string, unknown> = {}) => view("spoke", {

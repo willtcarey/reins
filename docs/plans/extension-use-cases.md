@@ -33,7 +33,7 @@ A GitHub inbox is mostly UI, polling, and storage. The Gardener is the reverse: 
 
 - scheduled, cancellable background services that run unattended: how their startup, retries, wakeups, idle behavior and shutdown are bounded
 - plugin-started background sessions that stay out of session lists, with a chosen model and provider
-- plugin-registered session kinds (ADR-019), such as a `gardener-scout` kind with read-only tools
+- plugin-registered session kinds (built: `reins.sessions.registerKind`, ADR-041), such as a `gardener-scout` kind with read-only tools
 - running check commands such as tests and lint on a node through process-run (ADR-018)
 - per-project plugin settings: enabled projects, schedule, check command, and attempt budget
 - promoting a finding to a task and starting its session
@@ -46,12 +46,12 @@ An optmem plugin should provide a session kind for project assistant sessions wh
 
 Unlike an inbox or the Gardener, this plugin changes how a session itself runs rather than adding an app beside sessions. It may need no page at all, or only a small one for inspecting and pruning memory. This use case should validate:
 
-- plugin-registered session kinds (ADR-019) that can stand in for the built-in assistant behavior, which today is derived from hierarchy inside the `agent` kind rather than being a kind of its own
+- plugin-registered session kinds (built: `reins.sessions.registerKind`, ADR-041) that can stand in for the built-in assistant behavior, which today is derived from hierarchy inside the `agent` kind rather than being a kind of its own
 - a seam for a kind to shape a session's context beyond its opening prompt and tools: what is retrieved into each turn, what is recorded after it, and how compaction interacts with plugin-managed memory
 - plugin-owned storage for memory, scoped per project, that persists across sessions and plugin reloads
 - choosing the kind when starting an assistant session, and possibly making it a project's default
 
-The storage layer and the context seam are the open design work. ADR-019 kinds resolve once when the runtime opens, so per-turn memory retrieval and recording would need a new host interface or an agent tool the kind provides.
+The storage layer and the context seam are the open design work. Session kinds (ADR-019, ADR-041) resolve once when the runtime opens, so per-turn memory retrieval and recording would need a new host interface or an agent tool the kind provides.
 
 ## Task artifacts
 

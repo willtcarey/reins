@@ -14,7 +14,7 @@ const router = buildRouter();
 /** A session as the SDK gives it, of task 5 of project 1 unless `taskId` says otherwise. */
 const session = (id: string, lastRunStartedAt: string | null, updatedAt: string, taskId: number | null = 5): SessionInfo => ({
   id, source: { id: 1, nodeId: "internal", path: "/tmp/api" }, projectId: 1, taskId, parentSessionId: null, name: id, firstMessage: null, messageCount: 0, model: null,
-  background: false, running: false, unread: false, pinned: false, archived: false, startedBy: null, lastRunStartedAt, lastRunId: null, createdAt: updatedAt, updatedAt,
+  background: false, running: false, unread: false, pinned: false, archived: false, startedBy: null, kind: "agent", lastRunStartedAt, lastRunId: null, createdAt: updatedAt, updatedAt,
 });
 const setUpdated = (id: string, at: string) => getDb().query("UPDATE sessions SET updated_at = ? WHERE id = ?").run(at, id);
 

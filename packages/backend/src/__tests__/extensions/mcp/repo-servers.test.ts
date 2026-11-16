@@ -2,7 +2,7 @@ import { afterEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { PromptContext, ServerSdk } from "@reins/sdk/server";
+import type { SystemPromptContext, ServerSdk } from "@reins/sdk/server";
 import { runScript } from "../../../tools/execute.js";
 import { scriptingApi } from "../../../sdk-host/scripts.js";
 import { upsertSource } from "../../../node-store.js";
@@ -62,8 +62,8 @@ async function app(model: { provider: string; modelId: string }) {
   const write = (checkout: string, mcpServers: unknown) => writeFileSync(join(checkout, ".mcp.json"), JSON.stringify({ mcpServers }));
   const open = async (sessionId: string): Promise<string> => {
     const session = new Models(state).sessions.get(sessionId).row;
-    const context: PromptContext = { session: { id: sessionId, projectId: session.project_id, taskId: null }, task: null, tools: null };
-    return (await state.extensions.host.promptSections(context)).join("\n");
+    const context: SystemPromptContext = { session: { id: sessionId, projectId: session.project_id, taskId: null, kind: "agent" }, task: null, tools: null };
+    return (await state.extensions.host.systemPromptSections(context)).join("\n");
   };
   const api = async (method: string, input?: unknown, { browser = true, headers = {} }: { browser?: boolean; headers?: Record<string, string> } = {}) => {
     const request = new Request(`http://localhost/api/extensions/mcp/${method}`, {

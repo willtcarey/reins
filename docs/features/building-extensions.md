@@ -137,10 +137,32 @@ What `reins` gives (each in depth in [server-sdk.md](../dev/server-sdk.md), in a
   });
   ```
 - **`broadcast(message)`**: a message to every browser, which only its frontend part hears (`reins.onMessage`).
-- **`sessions`**: `start(prompt, { projectId, title, background? })` (a session, recorded as started by the extension), `send`, `get`, `list`, `wait`, `onSettled` (the end of each run of a session it started).
+- **`sessions`**: `start(prompt, { projectId, title, background?, kind? })` (a session, recorded as started by the extension), `send`, `get`, `list`, `wait`, `onSettled` (the end of each run of a session it started), `registerKind` (*Session kinds* below), `registerSystemPromptSection`.
 - **`projects`**, **`tasks`**, **`nodes`** (`list`, `get` with each node's sources, `readFile`, `writeFile`, `run(node, command, { cwd, timeoutMs, env, signal })`), **`models`**, **`images`**: the same methods agents have in `execute`.
-- **`tools.register(provider)`**: tools agents find and call through `reins.tools` (their IDs are `<name>__<tool>`). **`scripting.register(namespace)`**: `reins.<namespace>` functions in agents' scripts. **`prompt.register(contribution)`**: a section of the system prompt.
+- **`tools.register(provider)`**: tools agents find and call through `reins.tools` (their IDs are `<name>__<tool>`). **`scripting.register(namespace)`**: `reins.<namespace>` functions in agents' scripts. **`sessions.registerSystemPromptSection(section)`**: a section of every session's system prompt.
 - **`logger`**: the server's log, under the extension's name.
+
+### Session kinds
+
+A session kind is a kind of session of your own: its system prompt, its tools and its model. A coordinator that delegates work and asks the user through the Inbox is one. Register it, then start sessions of it:
+
+```ts
+reins.sessions.registerKind("coordinator", {
+  systemPrompt: ({ reinsSystemPrompt, task }) => `${reinsSystemPrompt()}
+
+You coordinate${task ? ` the task "${task.title}"` : ""}: start other sessions for the work and put what needs the user in the Inbox. Do not edit files yourself.`,
+  tools: ["execute", "search", "read"],
+  model: { provider: "anthropic", modelId: "claude-opus-4-1" },
+});
+
+const { sessionId } = await reins.sessions.start("Plan this week's releases", { projectId, kind: "coordinator" });
+```
+
+- **The system prompt replaces Reins' own.** `reinsSystemPrompt()` gives Reins' system prompt for the session (its task, its project, your tools) if you want to build on it. Every extension's system prompt sections (`sessions.registerSystemPromptSection`, yours too) follow it, then the environment (working directory, tool list, `AGENTS.md`, skills) unless you give `environment: false`.
+- **`tools`**: the tools offered, by name; left out, every tool. A session of a task that is offered tools works on its task's branch; one with `tools: []` changes nothing in the checkout.
+- **`model`**: the model of a session you start without one.
+- **Names are yours.** A session records `<your extension>/<name>` (its `kind`). You start only your own kinds. Agents' scripts cannot start them: give them a script method that does (`scripting.register`) if they should.
+- **A session's kind never changes.** Reins reads the kind each time the session opens, so a changed prompt reaches its sessions the next time they open (a reload closes idle ones). While the kind is not registered (your extension turned off or removed), its sessions refuse to run: the chat and `send` say why. They run again once it is back.
 
 ## The frontend part
 

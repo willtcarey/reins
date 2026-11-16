@@ -1,10 +1,10 @@
 /**
- * The MCP extension's system prompt section (`reins.prompt`): the session's servers that are on, with the user's
+ * The MCP extension's system prompt section (`reins.sessions.registerSystemPromptSection`): the session's servers that are on, with the user's
  * instructions for each, and one line naming those that are off, for sessions offered `execute` (docs/dev/mcp-servers.md
  * *Exposing tools to agents*). A session's runtime opening is when its checkout's `.mcp.json` is read (*Repo servers*).
  */
 
-import type { Logger, PromptContribution } from "@reins/sdk/server";
+import type { Logger, SystemPromptSection } from "@reins/sdk/server";
 import type { McpServers } from "./servers.js";
 import type { McpServerModel } from "./server.js";
 
@@ -12,7 +12,7 @@ import type { McpServerModel } from "./server.js";
 // the agent looks up only those it needs. Those that are off are named too, whatever made them off, so that the
 // agent can tell the user what would help; only the user can turn one on.
 /** `extension`: the extension's name, the prefix of its tools' IDs. */
-export function mcpPromptSection(servers: McpServers, extension: string, logger: Logger): PromptContribution {
+export function mcpPromptSection(servers: McpServers, extension: string, logger: Logger): SystemPromptSection {
   return async ({ session, tools }) => {
     if (tools && !tools.includes("execute")) return null;
     if (session.projectId !== null) {

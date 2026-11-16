@@ -202,8 +202,8 @@ describe("reins.sessions orchestration", () => {
 
     expect(await reins.sessions.get(child.id)).toMatchObject({ background: true, parentSessionId: "parent" });
     expect(await reins.sessions.current()).toMatchObject({ background: false });
-    // Session kinds are the server's: scripts do not see them.
-    expect(await reins.sessions.get(child.id)).not.toHaveProperty("kind");
+    // Scripts read a session's kind, but never choose one.
+    expect(await reins.sessions.get(child.id)).toMatchObject({ kind: "agent" });
     const listed = async (options?: object) => Value.Decode(Type.Array(SessionSchema), await reins.sessions.list(options)).map((session) => session.id);
     expect(await listed()).toEqual(["parent"]);
     expect(await listed({ background: "only" })).toEqual([child.id]);

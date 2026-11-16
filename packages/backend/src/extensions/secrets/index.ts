@@ -42,7 +42,7 @@ export function startSecrets(reins: ServerSdk, { now = () => new Date(), sweepMs
   };
   const removals = [
     reins.scripting.register(secretsScripting(extension)),
-    reins.prompt.register(secretsPromptSection),
+    reins.sessions.registerSystemPromptSection(secretsPromptSection),
     reins.http.handle(secretsApi, handlers),
     reins.services.register({
       name: "expiry",

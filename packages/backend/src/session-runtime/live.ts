@@ -39,8 +39,8 @@ export interface OpenOptions {
  * leave those checks to it. One open under another binding (the session moved) or built by an earlier app
  * (`retired`; also one this code opens while another app's is current, `APP_CODE`) is closed and
  * reopened when idle; while it runs, the retired one is used as it is and the moved one refused
- * (`SessionRuntimeBusyError`). One a storage failure faulted is reopened whatever it does. Throws `SessionNotFoundError`, `SourceNotFoundError`, `SessionNodeRemovedError` and what
- * building throws (`ModelNotFoundError`, `UnknownToolsError`).
+ * (`SessionRuntimeBusyError`). One a storage failure faulted is reopened whatever it does. Throws `SessionNotFoundError`, `SourceNotFoundError`, `SessionNodeRemovedError`,
+ * `SessionKindMissingError` and what building throws (`ModelNotFoundError`, `UnknownToolsError`).
  */
 export async function openSessionRuntime(serverProcess: ServerProcess, sessionId: string, { model }: OpenOptions = {}): Promise<SessionRuntime> {
   // Synchronous up to `opening.set`, so concurrent opens find each other's.
@@ -73,7 +73,7 @@ export async function openSessionRuntime(serverProcess: ServerProcess, sessionId
     }
     let entry: OpenSession | undefined;
     const runtime = await buildSessionRuntime({
-      serverProcess, sessionId, projectId: row.project_id, nodeId: source.node_id, context: await session.context(source, context => serverProcess.app?.promptSections(context) ?? Promise.resolve([])), ...(model ? { model } : {}),
+      serverProcess, sessionId, projectId: row.project_id, nodeId: source.node_id, context: await session.context(source, serverProcess.app), ...(model ? { model } : {}),
       onActivity: () => { if (entry) entry.lastActivity = Date.now(); },
       onFault: () => { if (entry) entry.faulted = true; },
     });

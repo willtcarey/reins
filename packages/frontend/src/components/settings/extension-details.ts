@@ -120,10 +120,10 @@ export class SettingsExtensionDetails extends LitElement {
   /** What agents get from it: all from its backend part. */
   private _renderForAgents(extension: ExtensionSummary) {
     const r = extension.backend?.registrations;
-    if (!r || (!r.tools && r.promptSections === 0 && r.scriptFunctions.length === 0)) return nothing;
+    if (!r || (!r.tools && r.systemPromptSections === 0 && r.scriptFunctions.length === 0)) return nothing;
     return group("For agents", html`
       ${row("Tool providers", r.tools ? r.tools.title : null)}
-      ${row("System prompt", r.promptSections > 0 ? (r.promptSections === 1 ? "1 section" : `${r.promptSections} sections`) : null)}
+      ${row("System prompt", r.systemPromptSections > 0 ? (r.systemPromptSections === 1 ? "1 section" : `${r.systemPromptSections} sections`) : null)}
       ${row("API functions", names(r.scriptFunctions.map((name) => `api.${name}`)))}
     `);
   }
@@ -142,11 +142,15 @@ export class SettingsExtensionDetails extends LitElement {
     `);
   }
 
-  /** What its backend part hears of sessions: its listeners of the runs of the sessions it started. */
+  /** What its backend part does with sessions: the kinds it defines, and its listeners of the runs of the sessions it started. */
   private _renderSessions(extension: ExtensionSummary) {
     const listeners = extension.backend?.registrations.settlementListeners ?? 0;
-    if (listeners === 0) return nothing;
-    return group("Sessions", html`${row("Run ends heard", listeners === 1 ? "1 listener" : `${listeners} listeners`)}`);
+    const kinds = extension.backend?.registrations.sessionKinds ?? [];
+    if (listeners === 0 && kinds.length === 0) return nothing;
+    return group("Sessions", html`
+      ${row("Session kinds", names(kinds))}
+      ${row("Run ends heard", listeners === 0 ? null : listeners === 1 ? "1 listener" : `${listeners} listeners`)}
+    `);
   }
 
   /** Its backend part's HTTP methods and pages, by the paths a client calls. */
@@ -233,7 +237,7 @@ export class SettingsExtensionDetails extends LitElement {
         : nothing}
       ${this._renderForAgents(extension)}
       ${this._renderInTheApp(extension)}
-      ${extension.enabled && this._renderForAgents(extension) === nothing && this._renderInTheApp(extension) === nothing
+      ${extension.enabled && this._renderForAgents(extension) === nothing && this._renderInTheApp(extension) === nothing && !extension.backend?.registrations.sessionKinds.length
         ? html`<p class="mt-6 text-xs text-zinc-500">It gives agents and users nothing now.</p>`
         : nothing}
       ${this._renderServices(extension)}
