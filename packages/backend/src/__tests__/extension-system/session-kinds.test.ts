@@ -11,6 +11,7 @@ import { scriptContext } from "../helpers/script-context.js";
 import { createProject } from "../project-fixture.js";
 import { createTask } from "../../task-store.js";
 import { getSession } from "../../session-store.js";
+import { createSession } from "../session-fixture.js";
 import { getSource } from "../../node-store.js";
 import { SessionModel } from "../../models/session.js";
 import { buildRouter } from "../../routes/index.js";
@@ -234,5 +235,36 @@ describe("session kinds of extensions", () => {
     const { sessionId } = Value.Parse(SessionHandleSchema, await reins.sessions.start("Go", { parentSessionId: null, model: model.model }));
     expect(await reins.sessions.get(sessionId)).toMatchObject({ kind: "agent" });
     (await model.nextTurn(sessionId)).finish();
+  });
+
+  test("the browser's sessions give their kind and the views it declares: an agent's Changes, a kind's own, none for a kind that declares none or is not registered", async () => {
+    kinds.coord = { ...kinds.coord, pinnedViews: ["coordinator-work"], mainViews: ["session", "coordinator-plan"] };
+    await start();
+    const project = createProject("Project", repo.dir);
+    for (const [id, kind] of [["agent", "agent"], ["generator", "task-generator"], ["coordinator", "coord/coordinator"], ["other", "other/coordinator"], ["gone", "gone/coordinator"]] as const) {
+      createSession(id, project.id, { agentRuntimeType: "pi", kind });
+    }
+    const get = async (path: string) => (await buildRouter().handle(makeRequest("GET", path), state))!.json();
+
+    const listed: Array<{ id: string; kind: string; views: unknown }> = await get(`/api/projects/${project.id}/sessions`);
+    const detail = await get("/api/sessions/coordinator");
+
+    expect(Object.fromEntries(listed.map(session => [session.id, [session.kind, session.views]]))).toEqual({
+      agent: ["agent", { pinned: ["diff-file-tree"], main: ["session", "session-changes"] }],
+      generator: ["task-generator", { pinned: [], main: [] }],
+      coordinator: ["coord/coordinator", { pinned: ["coordinator-work"], main: ["session", "coordinator-plan"] }],
+      other: ["other/coordinator", { pinned: [], main: [] }],
+      gone: ["gone/coordinator", { pinned: [], main: [] }],
+    });
+    expect(detail).toMatchObject({ kind: "coord/coordinator", views: { pinned: ["coordinator-work"], main: ["session", "coordinator-plan"] } });
+  });
+
+  test("a kind's views are lists of view names", async () => {
+    await start();
+
+    const pins = { ...kinds.coord };
+    Reflect.set(pins, "pinnedViews", "coordinator-work");
+    expect(() => coord.sessions.registerKind("pins", pins)).toThrow("Session kind pins: pinnedViews is a list of view names");
+    expect(() => coord.sessions.registerKind("tabs", { ...kinds.coord, mainViews: [""] })).toThrow("Session kind tabs: mainViews is a list of view names");
   });
 });

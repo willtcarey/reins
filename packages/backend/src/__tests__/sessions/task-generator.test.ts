@@ -120,19 +120,26 @@ describe("the task-generator kind", () => {
   useTestDb();
   const repo = useTestRepo();
 
-  test("runs its fixed prompt with no tools, no node environment and no branch, even on a task session", async () => {
+  test("runs exactly its fixed prompt with no tools, no node environment and no branch, even on a task session, while the extensions add their sections to an agent's", async () => {
     const project = createProject("Reins", repo.dir);
     const task = createTask(project.id, "Task", "Do it", "task/do-it");
-    const created = createNewSession(createAppState(), {
-      projectId: project.id,
-      taskId: task.id, kind: TASK_GENERATOR_KIND, background: true,
-      model: { provider: "anthropic", modelId: "claude-haiku-4-5" }, thinkingLevel: "minimal",
-    });
-    const row = getSession(created.id)!;
-    const { branch, runtime } = await new SessionModel(row, createAppState().nodes).context(getSource(row.source_id)!);
+    const state = createAppState();
+    const contextOf = (kind: string) => {
+      const created = createNewSession(state, {
+        projectId: project.id,
+        taskId: task.id, kind, background: true,
+        model: { provider: "anthropic", modelId: "claude-haiku-4-5" }, thinkingLevel: "minimal",
+      });
+      const row = getSession(created.id)!;
+      return new SessionModel(row, state.nodes).context(getSource(row.source_id)!, state.process.app);
+    };
 
+    const { branch, runtime } = await contextOf(TASK_GENERATOR_KIND);
+    const agent = await contextOf("agent");
+
+    expect(agent.runtime.systemPrompt).toContain("## Automations");
     expect(branch).toBeNull();
-    expect(runtime).toEqual({ systemPrompt: expect.stringContaining("You parse user intent into a structured task definition."), tools: [], environment: false });
+    expect(runtime).toEqual({ systemPrompt: expect.stringMatching(/^You parse user intent into a structured task definition\.[\s\S]*no extra text\.$/), tools: [], environment: false });
     expect(runtime.systemPrompt).not.toContain("Do it");
   });
 });

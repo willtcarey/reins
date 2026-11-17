@@ -66,6 +66,8 @@ function blankSessionData(sessionId = ""): SessionData {
     pinnedAt: null,
     archivedAt: null,
     sourceExtension: null,
+    kind: "",
+    views: { pinned: [], main: [] },
     background: false,
     placement: { available: true, removed: false, nodeId: "", nodeName: "", path: "" },
     pendingOperation: null,

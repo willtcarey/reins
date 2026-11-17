@@ -31,6 +31,9 @@ export interface CachedSession {
   archivedAt: string | null;
   /** The backend extension that started it, or null. */
   sourceExtension: string | null;
+  /** How it runs, and the tabs its kind declares; null until the server gives them. */
+  kind: string | null;
+  views: SessionData["views"] | null;
   background: boolean;
   pendingOperation: SessionData["pendingOperation"];
   runtimeType: string | null;
@@ -58,6 +61,8 @@ function emptyCachedSession(sessionId: string): CachedSession {
     pinnedAt: null,
     archivedAt: null,
     sourceExtension: null,
+    kind: null,
+    views: null,
     background: false,
     pendingOperation: null,
     runtimeType: null,
@@ -80,6 +85,8 @@ function withoutUndefined(data: SessionPatch): SessionPatch {
   if (data.pinnedAt !== undefined) result.pinnedAt = data.pinnedAt;
   if (data.archivedAt !== undefined) result.archivedAt = data.archivedAt;
   if (data.sourceExtension !== undefined) result.sourceExtension = data.sourceExtension;
+  if (data.kind !== undefined) result.kind = data.kind;
+  if (data.views !== undefined) result.views = data.views;
   if (data.background !== undefined) result.background = data.background;
   if (data.pendingOperation !== undefined) result.pendingOperation = data.pendingOperation;
   if (data.runtimeType !== undefined) result.runtimeType = data.runtimeType;
@@ -90,6 +97,13 @@ function withoutUndefined(data: SessionPatch): SessionPatch {
 function placementEquals(a: CachedSession["placement"], b: CachedSession["placement"]): boolean {
   if (a === null || b === null) return a === b;
   return a.available === b.available && a.removed === b.removed && a.nodeId === b.nodeId && a.nodeName === b.nodeName && a.path === b.path;
+}
+
+const sameNames = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((name, index) => name === b[index]);
+
+function viewsEquals(a: CachedSession["views"], b: CachedSession["views"]): boolean {
+  if (a === null || b === null) return a === b;
+  return sameNames(a.pinned, b.pinned) && sameNames(a.main, b.main);
 }
 
 function sessionEquals(a: CachedSession, b: CachedSession): boolean {
@@ -106,6 +120,8 @@ function sessionEquals(a: CachedSession, b: CachedSession): boolean {
     a.pinnedAt === b.pinnedAt &&
     a.archivedAt === b.archivedAt &&
     a.sourceExtension === b.sourceExtension &&
+    a.kind === b.kind &&
+    viewsEquals(a.views, b.views) &&
     a.background === b.background &&
     a.pendingOperation?.kind === b.pendingOperation?.kind &&
     a.runtimeType === b.runtimeType &&
@@ -165,6 +181,7 @@ export class SessionCache {
     if (entry.messageCount == null) return null;
     if (entry.state == null) return null;
     if (entry.placement == null) return null;
+    if (entry.kind == null || entry.views == null) return null;
 
     return {
       id: entry.id,
@@ -180,6 +197,8 @@ export class SessionCache {
       pinnedAt: entry.pinnedAt,
       archivedAt: entry.archivedAt,
       sourceExtension: entry.sourceExtension,
+      kind: entry.kind,
+      views: entry.views,
       background: entry.background,
       pendingOperation: entry.pendingOperation,
       messageCount: entry.messageCount,

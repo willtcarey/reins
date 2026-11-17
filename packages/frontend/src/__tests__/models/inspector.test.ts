@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { Source, View } from "@reins/sdk";
-import { closeTabsOnSourceChange } from "../../models/inspector.js";
+import { closeTabsOnSourceChange, Inspector } from "../../models/inspector.js";
 import { testInspector, testSdk } from "../helpers/reins-sdk.js";
 
 const source: Source = { nodeId: "node", path: "/work" };
@@ -142,6 +142,19 @@ describe("Inspector", () => {
 
       expect(inspector.tabs.map((tab) => tab.view)).toEqual([changes, readme]);
       expect(inspector.activeTab?.view).toEqual(changes);
+    });
+
+    test("the same view of the next session, pinned in place of the last's, keeps its focus", () => {
+      const inspector = new Inspector({ keyOf: (view) => `${view.view}:${String(view.sessionId)}` });
+      const unpinOld = inspector.pin({ view: "work", sessionId: "s1" });
+      inspector.open(readme);
+      inspector.focus(inspector.tabs[0]!.key);
+
+      unpinOld();
+      inspector.pin({ view: "work", sessionId: "s2" });
+
+      expect(inspector.tabs.map((tab) => tab.view)).toEqual([{ view: "work", sessionId: "s2" }, readme]);
+      expect(inspector.activeTab?.view).toEqual({ view: "work", sessionId: "s2" });
     });
 
     test("pinned again after the user chose another tab leaves that tab focused", () => {

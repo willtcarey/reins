@@ -90,10 +90,11 @@ function installRenderableStore(el: AppWorkspace, options: { mainView?: View | n
   return store;
 }
 
-/** Gives the app session `sessionId`'s details: in the workspace's checkout, of `projectId` and `taskId`. */
+/** Gives the app agent session `sessionId`'s details: in the workspace's checkout, of `projectId` and `taskId`. */
 function placeSession(store: { app: { sessionCache: SessionCache } }, sessionId: string, projectId: number | null, taskId: number | null = null) {
   store.app.sessionCache.set(sessionId, {
     projectId, taskId, createdAt: "", updatedAt: "", messageCount: 0, state: { model: null, thinkingLevel: "off" },
+    kind: "agent", views: { pinned: ["diff-file-tree"], main: ["session", "session-changes"] },
     placement: { available: true, removed: false, nodeId: source.nodeId, nodeName: "Node", path: source.path },
   });
 }
@@ -302,6 +303,21 @@ describe("AppWorkspace layout selection", () => {
       { presentation: withToolbar.app.views.rendererFor(page)?.pane?.toolbar, view: page, context: expect.objectContaining({ container: "main" }), key: withToolbar.app.views.keyOf(page) },
     ]);
     expect(collectTemplateProperties(rendered(false).rendered, "viewToolbar")).toEqual([]);
+  });
+
+  test("shows a session's Chat alone until its kind arrives, then the tabs its kind declares", () => {
+    installWorkspaceGlobals({ mobile: false });
+    const el = new AppWorkspace();
+    const store = installRenderableStore(el, { mainView: { view: "session", sessionId: "s2" } });
+    let updates = 0;
+    Reflect.set(el, "requestUpdate", () => { updates += 1; });
+
+    const before = collectTemplateProperties(el.render(), "view");
+    placeSession(store, "s2", 42);
+
+    expect(before).toEqual([{ view: "session", sessionId: "s2" }]);
+    expect(updates).toBeGreaterThan(0);
+    expect(collectTemplateProperties(el.render(), "view")).toEqual([{ view: "session", sessionId: "s2" }, { view: "session-changes", sessionId: "s2" }]);
   });
 
   test("shows a page no renderer shows yet as unavailable, and mounts it once its renderer registers", () => {

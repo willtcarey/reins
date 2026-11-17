@@ -21,6 +21,8 @@ function sessionDetail(overrides: Partial<SessionData> = {}): SessionData {
     pinnedAt: null,
     archivedAt: null,
     sourceExtension: null,
+    kind: "agent",
+    views: { pinned: ["diff-file-tree"], main: ["session", "session-changes"] },
     background: false,
     placement: { available: true, removed: false, nodeId: "internal", nodeName: "Internal", path: "" },
     pendingOperation: null,
@@ -48,6 +50,8 @@ function listItem(overrides: Partial<SessionListItem> = {}): SessionListItem {
     pinnedAt: null,
     archivedAt: null,
     sourceExtension: null,
+    kind: "agent",
+    views: { pinned: ["diff-file-tree"], main: ["session", "session-changes"] },
     placement: { available: true, removed: false, nodeId: "internal", nodeName: "Internal", path: "" },
     ...overrides,
   };
@@ -145,6 +149,19 @@ describe("SessionCache", () => {
 
     expect(calls).toEqual(["sess-1", "sess-1", "sess-1"]);
     expect(store.getDetail("sess-1")?.placement).toEqual(placement(false, "Renamed", true));
+  });
+
+  test("keeps a session's kind and views, and notifies when they change, not for the same views again", () => {
+    const store = new SessionCache();
+    const calls: string[] = [];
+    store.set("sess-1", listItem());
+    store.subscribe("sess-1", () => calls.push("sess-1"));
+
+    store.set("sess-1", listItem());
+    store.set("sess-1", listItem({ kind: "coord/coordinator", views: { pinned: ["coordinator-work"], main: [] } }));
+
+    expect(calls).toEqual(["sess-1"]);
+    expect(store.get("sess-1")).toMatchObject({ kind: "coord/coordinator", views: { pinned: ["coordinator-work"], main: [] } });
   });
 
   test("removeMany removes cached sessions by id", () => {

@@ -14,7 +14,7 @@ function sessionDetail(id: string, projectId: number | null, taskId: number | nu
     updatedAt: "",
     activityState: null,
     messageCount: 0,
-    placement: { status: "server" as const, error: null, available: true, removed: false, nodeId: "internal", nodeName: "Internal", path },
+    kind: "agent", views: { pinned: ["diff-file-tree"], main: ["session", "session-changes"] }, placement: { status: "server" as const, error: null, available: true, removed: false, nodeId: "internal", nodeName: "Internal", path },
     state: { model: null, thinkingLevel: "off" },
   };
 }

@@ -34,7 +34,7 @@ function cacheSessionData(
     activityState,
     pendingOperation,
     messageCount: 0,
-    placement: { available: true, removed: false, nodeId: "internal", nodeName: "Internal", path: "" },
+    kind: "agent", views: { pinned: ["diff-file-tree"], main: ["session", "session-changes"] }, placement: { available: true, removed: false, nodeId: "internal", nodeName: "Internal", path: "" },
     state: { model: null, thinkingLevel: "off" },
   });
 }
@@ -231,6 +231,8 @@ describe("ChatPanel conversation orchestration", () => {
       pinnedAt: null,
       archivedAt: null,
       sourceExtension: null,
+      kind: "agent",
+      views: { pinned: ["diff-file-tree"], main: ["session", "session-changes"] },
       background: false,
       placement: null,
       pendingOperation: null,
@@ -270,6 +272,8 @@ describe("ChatPanel conversation orchestration", () => {
       pinnedAt: null,
       archivedAt: null,
       sourceExtension: null,
+      kind: "agent",
+      views: { pinned: ["diff-file-tree"], main: ["session", "session-changes"] },
       background: false,
       placement: null,
       pendingOperation: null,
@@ -307,6 +311,8 @@ describe("ChatPanel conversation orchestration", () => {
       pinnedAt: null,
       archivedAt: null,
       sourceExtension: null,
+      kind: "agent",
+      views: { pinned: ["diff-file-tree"], main: ["session", "session-changes"] },
       placement: { available: true, removed: false, nodeId: "internal", nodeName: "Internal", path: "" },
     };
     const sessionCache = new SessionCache();

@@ -9,7 +9,7 @@ import { createBroadcast, type Broadcast } from "../models/broadcast.js";
 import { getDb } from "../app-globals.js";
 import { getSource, type Source } from "../node-store.js";
 import { parseThinkingLevel, piModelSetting, ThinkingLevelSchema } from "../models/model-settings.js";
-import { DEFAULT_SESSION_KIND, isBuiltInKind } from "./session-kinds.js";
+import { DEFAULT_SESSION_KIND, findSessionKind } from "./session-kinds.js";
 import { Nodes } from "../models/nodes.js";
 
 export interface SessionCreationOptions {
@@ -140,11 +140,10 @@ export function createSession(state: AppState, opts: SessionCreationOptions, bro
   return { id: sessionId };
 }
 
-/** The default model of the session kind `kind` (an extension kind's, else none); `SessionCreationRefused` for
- * a kind that is not registered now. */
+/** The default model of the session kind `kind`, if it has one; `SessionCreationRefused` for a kind that is not
+ * registered now. */
 export function resolveKindModel(state: AppState, kind: string): { provider: string; modelId: string; thinkingLevel?: string } | undefined {
-  if (isBuiltInKind(kind)) return undefined;
-  const registered = state.extensions.host.sessionKind(kind);
+  const registered = findSessionKind(kind, name => state.extensions.host.sessionKind(name));
   if (!registered) throw new SessionCreationRefused(`Unknown session kind: ${kind}`);
   return registered.model;
 }

@@ -59,6 +59,8 @@ function makeSessionData(overrides: {
     pinnedAt: null,
     archivedAt: null,
     sourceExtension: null,
+    kind: "agent",
+    views: { pinned: ["diff-file-tree"], main: ["session", "session-changes"] },
     background: false,
     placement: { status: "server" as const, error: null, available: true, removed: false, nodeId: "internal", nodeName: "Internal", path: "" },
     pendingOperation: null,
@@ -556,6 +558,8 @@ describe("ActiveSessionStore session loading contract", () => {
       ...makeSessionData({ messageCount: 0, projectId: 0, runtimeType: undefined }),
       id: "sess-1",
       runtimeType: undefined,
+      kind: "",
+      views: { pinned: [], main: [] },
       placement: { available: true, removed: false, nodeId: "", nodeName: "", path: "" },
       state: { model: null, thinkingLevel: "high" },
     });
