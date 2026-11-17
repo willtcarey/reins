@@ -1,6 +1,10 @@
 import { describe, test, expect, beforeEach } from "bun:test";
-import { writeFileSync } from "fs";
+import { mkdtempSync, rmSync, writeFileSync } from "fs";
+import { tmpdir } from "os";
 import { join } from "path";
+import { upsertSource } from "../../node-store.js";
+import { createSession as insertSession } from "../../session-store.js";
+import { defaultSourceOf } from "../../models/sources.js";
 import { useTestDb } from "../helpers/test-db.js";
 import { makeRequest } from "../helpers/request.js";
 import { createAppState, useLoopbackState } from "../helpers/app-state.js";
@@ -13,6 +17,7 @@ describe("diff routes", () => {
   let state: ReturnType<typeof createAppState>;
   let router: ReturnType<typeof buildRouter>;
   let sessionId: string;
+  let projectId: number;
 
   useTestDb();
   const repo = useTestRepo();
@@ -22,6 +27,7 @@ describe("diff routes", () => {
     state = loopback.state;
     router = buildRouter();
     const p = createProject("Test Project", repo.dir);
+    projectId = p.id;
     sessionId = createSession("viewed", p.id, { agentRuntimeType: "pi" }).id;
   });
 
@@ -51,6 +57,21 @@ describe("diff routes", () => {
       const body = await res!.json();
       expect(body.files.length).toBeGreaterThan(0);
       expect(body.branch).toBe("feature/test");
+    });
+
+    test("gives no changes and no branch for a checkout that is not a git repository", async () => {
+      const plain = mkdtempSync(join(tmpdir(), "reins-test-plain-"));
+      try {
+        const source = upsertSource(defaultSourceOf(projectId).node_id, plain);
+        insertSession("plain", null, { agentRuntimeType: "pi", sourceId: source.id, kind: "coordinator/coordinator" });
+
+        const res = await router.handle(makeRequest("GET", "/api/sessions/plain/diff/files?mode=branch"), state);
+
+        expect(res!.status).toBe(200);
+        expect(await res!.json()).toMatchObject({ files: [], branch: null });
+      } finally {
+        rmSync(plain, { recursive: true, force: true });
+      }
     });
 
     test("returns uncommitted changes in uncommitted mode", async () => {

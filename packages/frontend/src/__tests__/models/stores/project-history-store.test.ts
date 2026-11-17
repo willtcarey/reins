@@ -16,6 +16,8 @@ const archivedSession = {
   pinnedAt: null,
   archivedAt: "2026-01-03T00:00:00Z",
   sourceExtension: null,
+  kind: "agent",
+  views: { pinned: ["diff-file-tree"], main: ["session", "session-changes"] },
   placement: { status: "server" as const, error: null, available: true, removed: false, nodeId: "internal", nodeName: "Internal", path: "" },
   taskTitle: "Router task",
 };
@@ -108,6 +110,8 @@ describe("ProjectHistoryStore", () => {
       id: "current",
       archivedAt: null,
       sourceExtension: null,
+      kind: "agent",
+      views: { pinned: ["diff-file-tree"], main: ["session", "session-changes"] },
       updatedAt: "2026-01-05T00:00:00Z",
     };
     mockFetch((url) => {

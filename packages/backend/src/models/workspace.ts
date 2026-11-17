@@ -38,6 +38,15 @@ export class Workspace {
     return timedSync("parse numstat", () => DiffParser.parseNumstat(raw));
   }
 
+  /** The checkout's current branch; null when git cannot tell (a directory that is not a repository). An
+   * unreachable node rejects. */
+  async currentBranch(): Promise<string | null> {
+    return this.git.getCurrentBranch().catch((error: unknown) => {
+      if (isNodeUnavailable(error)) throw error;
+      return null;
+    });
+  }
+
   /** Raw unified diff stream. */
   async *getDiffPatchStream(
     contextLines = 3,

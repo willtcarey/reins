@@ -340,6 +340,10 @@ function checkSessionKind(name: string, kind: SessionKind): void {
   if (typeof kind.systemPrompt !== "function") refuse("systemPrompt is a function");
   if (kind.tools !== undefined && (!Array.isArray(kind.tools) || kind.tools.some(tool => typeof tool !== "string" || !tool))) refuse("tools is a list of tool names");
   if (kind.environment !== undefined && typeof kind.environment !== "boolean") refuse("environment is a boolean");
+  for (const field of ["pinnedViews", "mainViews"] as const) {
+    const names = kind[field];
+    if (names !== undefined && (!Array.isArray(names) || names.some(view => typeof view !== "string" || !view))) refuse(`${field} is a list of view names`);
+  }
   const { model } = kind;
   if (model !== undefined && (typeof model?.provider !== "string" || !model.provider || typeof model.modelId !== "string" || !model.modelId)) refuse("model is { provider, modelId, thinkingLevel? }");
 }

@@ -7,7 +7,7 @@ import { getNode, type Source } from "../node-store.js";
 import type { NodeHub } from "../state.js";
 import { getProject } from "../project-store.js";
 import { getTask, updateTask, type TaskRow } from "../task-store.js";
-import { resolveSessionKind, type SessionKindConfig, type SessionKindSource } from "../sessions/session-kinds.js";
+import { resolveSessionKind, sessionKindConfig, type SessionKindConfig, type SessionKindSource } from "../sessions/session-kinds.js";
 import { piModelSetting } from "./model-settings.js";
 import { resolveSource, SourceModel } from "./sources.js";
 import type { Workspace } from "./workspace.js";
@@ -101,7 +101,7 @@ export class SessionModel {
     const { row } = this;
     const task = row.task_id === null ? null : getTask(row.task_id);
     const kind = await resolveSessionKind(row.kind, kinds);
-    const { branch = null, ...runtime } = await kind({
+    const { branch = null, ...runtime } = await sessionKindConfig(kind, {
       session: row, task,
       systemPromptSections: async tools => kinds ? kinds.systemPromptSections({
         session: { id: row.id, projectId: row.project_id, taskId: row.task_id, kind: row.kind },

@@ -38,6 +38,8 @@ export function makeSessionListItem(id: string, overrides: Partial<SessionListVi
     pinnedAt: null,
     archivedAt: null,
     sourceExtension: null,
+    kind: "agent",
+    views: { pinned: ["diff-file-tree"], main: ["session", "session-changes"] },
     messageCount: 1,
     firstMessage: `First message of ${id}`,
     ...overrides,

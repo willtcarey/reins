@@ -477,7 +477,8 @@ export interface Sessions {
 
 /**
  * A kind of session an extension defines (`Sessions.registerKind`): its system prompt, which replaces Reins'
- * own, the tools its model is offered, whether the environment follows the prompt, and its default model.
+ * own, the tools its model is offered, whether the environment follows the prompt, its default model, and
+ * the browser's tabs of its sessions.
  */
 export interface SessionKind {
   /**
@@ -498,6 +499,18 @@ export interface SessionKind {
   readonly environment?: boolean;
   /** The model of a session `start` gives none: checked when the session is created, which then keeps it. */
   readonly model?: ModelChoice;
+  /**
+   * The browser views pinned in the Inspector while one of its sessions is shown, by name; each is opened as
+   * `{ view: name, sessionId }`, so its renderer's `key` decides whether its tab is the session's own or one
+   * shared by every session. A view the browser has no renderer for is left out. None when left out.
+   */
+  readonly pinnedViews?: readonly string[];
+  /**
+   * The main area's tabs of its sessions, by view name, in order: views whose renderers are tabs of a session
+   * (`tabOf: { type: "session", parameter: "sessionId" }`). The Chat (`session`) is always the first. Left out,
+   * the Chat alone.
+   */
+  readonly mainViews?: readonly string[];
 }
 
 /** What a kind builds a session's prompt from: the session, its task and Reins' own prompt. */

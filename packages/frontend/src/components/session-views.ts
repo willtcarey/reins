@@ -1,16 +1,17 @@
 /**
  * A session in the main area: its Chat and its Changes, two views that are tabs of the session (workspace-inspector.md
- * slice 5), and their toolbar. App code, which app-shell registers for the app's lifetime: each view finds its session's
+ * slice 5) when its kind names them, and their toolbar. App code, which app-shell registers for the app's lifetime: each view finds its session's
  * state from its own view, Chat its session's store and Changes and the toolbar its session's diff (`app.diffs`).
  */
 
 import { LitElement, html, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
-import { sameSource, type Disposer, type PanePresentation, type Source, type Subject, type TabOf, type Views } from "@reins/sdk";
+import { sameSource, type Disposer, type PanePresentation, type Source, type Subject, type TabOf } from "@reins/sdk";
 import { StoreController } from "../controllers/store-controller.js";
 import type { SessionDiff } from "../models/stores/session-diffs.js";
 import { ActiveSessionStore } from "../models/stores/active-session-store.js";
 import type { AppStore } from "../models/stores/app-store.js";
+import type { ViewRegistry } from "../sdk-host/view-registry.js";
 import { conversationIcon, diffIcon, paneIcon } from "../ui/icons.js";
 import { openFileBrowserEvent } from "./events.js";
 import "./branch-indicator.js";
@@ -169,7 +170,7 @@ export class SessionChangesPane extends LitElement {
   }
 }
 
-/** A session's tools in the host's toolbar, beside its tabs: its files and its branch. */
+/** A session's tools in the host's toolbar, beside its tabs: its files, and its branch while it has a diff. */
 @customElement("session-toolbar")
 export class SessionToolbar extends LitElement {
   override createRenderRoot() {
@@ -177,6 +178,8 @@ export class SessionToolbar extends LitElement {
   }
 
   private stores = new StoreController<SessionDiff>(this);
+  /** The session's checkout, which its files button browses; null until the app knows it. */
+  @property({ attribute: false }) source: Source | null = null;
 
   set diff(diff: SessionDiff | null) { this.stores.store = diff; }
   get diff(): SessionDiff | null { return this.stores.store; }
@@ -186,36 +189,82 @@ export class SessionToolbar extends LitElement {
     return html`
       <nav-icon icon="folder" label="Browse files" .size=${18}
         @click=${() => {
-          const source = diff?.source;
-          if (source) this.dispatchEvent(openFileBrowserEvent(source));
+          if (this.source) this.dispatchEvent(openFileBrowserEvent(this.source));
         }}></nav-icon>
       <div class="min-w-0 flex-1 overflow-hidden flex justify-end">
-        <branch-indicator class="block min-w-0 max-w-full" .currentBranch=${diff?.files.branch ?? null}></branch-indicator>
+        ${diff ? html`<branch-indicator class="block min-w-0 max-w-full" .currentBranch=${diff.files.branch ?? null}></branch-indicator>` : nothing}
       </div>
     `;
   }
 }
 
-/** Pins the Inspector's Changes tab while a session's tab is mounted, so every view of a session has it, and a page not. */
-function pinChanges(app: AppStore): Disposer {
-  return app.inspector.pin({ view: "diff-file-tree" });
+/** The main area's tabs of session `sessionId`: its Chat, then those its kind names (the Chat alone until the app knows its kind). */
+function sessionTabs(app: AppStore, sessionId: string): string[] {
+  const main = app.sessionCache.get(sessionId)?.views?.main ?? [];
+  return ["session", ...main.filter((name) => name !== "session")];
 }
 
-/** Registers the session's Chat and Changes, each over its own session's state in the app. */
-export function registerSessionViews(views: Views, app: AppStore): Disposer {
+/**
+ * Pins in the Inspector the views the session's kind names, as `{ view, sessionId }`, until released: those with a
+ * renderer, followed as the session's kind arrives (a session not loaded yet) and as renderers come and go.
+ */
+function pinKindViews(app: AppStore, sessionId: string): Disposer {
+  const held = new Map<string, Disposer>();
+  const follow = () => {
+    const names = (app.sessionCache.get(sessionId)?.views?.pinned ?? []).filter((name) => app.views.rendererFor({ view: name }));
+    for (const [name, unpin] of held) {
+      if (names.includes(name)) continue;
+      unpin();
+      held.delete(name);
+    }
+    for (const name of names) if (!held.has(name)) held.set(name, app.inspector.pin({ view: name, sessionId }));
+  };
+  follow();
+  const unsubscribe = [app.sessionCache.subscribe(sessionId, follow), app.views.subscribe(follow)];
+  return () => {
+    for (const stop of unsubscribe) stop();
+    for (const unpin of held.values()) unpin();
+    held.clear();
+  };
+}
+
+/**
+ * Registers the session's Chat and Changes, each over its own session's state in the app, and a session's tabs: those
+ * its kind declares. While its Chat is mounted (it always is, a session's first tab), its kind's views are pinned.
+ */
+export function registerSessionViews(views: ViewRegistry, app: AppStore): Disposer {
   const diffs = app.diffs;
+  // The branch is the diff's, so it is shown, and the diff loaded, only where the session's Changes is a tab: a
+  // session whose kind has no Changes usually has nothing to diff (a coordinator in a directory that is no repository).
   const toolbar: PanePresentation<SessionView | SessionChangesView>["toolbar"] = {
     mount(target, view) {
       const tools = target.ownerDocument.createElement("session-toolbar");
       tools.setAttribute("class", "flex min-w-0 flex-1 items-center gap-1.5");
-      const { diff, release } = diffs.use(view.sessionId);
-      tools.diff = diff;
+      let used: { release: Disposer } | null = null;
+      const follow = () => {
+        const placement = app.sessionCache.get(view.sessionId)?.placement;
+        const source = placement?.path ? { nodeId: placement.nodeId, path: placement.path } : null;
+        if (!sameSource(tools.source, source)) tools.source = source;
+        const changes = views.tabsFor(view).some((tab) => tab.view === "session-changes");
+        if (changes && !used) {
+          const { diff, release } = diffs.use(view.sessionId);
+          used = { release };
+          tools.diff = diff;
+        } else if (!changes && used) {
+          used.release();
+          used = null;
+          tools.diff = null;
+        }
+      };
+      follow();
+      const unsubscribe = [app.sessionCache.subscribe(view.sessionId, follow), views.subscribe(follow)];
       target.append(tools);
       return {
         // The host mounts a view of another session anew, so an update is the same session's.
         update: () => {},
         dispose: () => {
-          release();
+          for (const stop of unsubscribe) stop();
+          used?.release();
           tools.remove();
         },
       };
@@ -223,6 +272,7 @@ export function registerSessionViews(views: Views, app: AppStore): Disposer {
   };
   const tabOf: TabOf = { type: "session", parameter: "sessionId" };
   const disposers = [
+    views.declareTabs("session", (sessionId) => sessionTabs(app, String(sessionId))),
     views.register("session", {
       key: (view) => view.sessionId,
       tabOf,
@@ -238,7 +288,7 @@ export function registerSessionViews(views: Views, app: AppStore): Disposer {
           const chat = new ChatSession(app, view.sessionId);
           pane.session = chat.store;
           target.append(pane);
-          const unpin = pinChanges(app);
+          const unpin = pinKindViews(app, view.sessionId);
           return {
             // A new open of the session shows its conversation as it is.
             update: () => {},
@@ -271,13 +321,11 @@ export function registerSessionViews(views: Views, app: AppStore): Disposer {
           const open = (shown: SessionChangesView) => { if (shown.file) pane.reveal = { path: shown.file }; };
           open(view);
           target.append(pane);
-          const unpin = pinChanges(app);
           return {
             update: open,
             setVisible: (visible) => { pane.visible = visible; },
             subject: () => changesSubject(app, diff, pane.activeFile),
             dispose: () => {
-              unpin();
               release();
               pane.remove();
             },

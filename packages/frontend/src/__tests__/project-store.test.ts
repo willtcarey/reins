@@ -34,6 +34,8 @@ function session(overrides: Partial<SessionListItem> = {}): SessionListItem {
     pinnedAt: null,
     archivedAt: null,
     sourceExtension: null,
+    kind: "agent",
+    views: { pinned: ["diff-file-tree"], main: ["session", "session-changes"] },
     placement: { available: true, removed: false, nodeId: "internal", nodeName: "Internal", path: "" },
     ...overrides,
   };

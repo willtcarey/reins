@@ -29,6 +29,22 @@ describe("ViewRegistry.tabsFor", () => {
     expect(views.tabsFor(changes)[1]).toBe(changes);
   });
 
+  test("gives a subject's declared tabs, in their order, when its subject declares them: those with renderers that are its tabs, and the view shown though it is none of them", () => {
+    const views = new ViewRegistry();
+    views.register("session", { tabOf: { type: "session", parameter: "sessionId" }, pane });
+    views.register("session-changes", { tabOf: { type: "session", parameter: "sessionId" }, pane });
+    views.register("test-timeline", { tabOf: { type: "session", parameter: "id" }, pane }, "timeline-extension");
+    views.register("test-board", { tabOf: { type: "project", parameter: "projectId" }, pane });
+    const declared: Record<string, string[]> = { s1: ["session", "test-timeline", "test-board", "unregistered"], s2: ["session"] };
+    views.declareTabs("session", (id) => declared[String(id)] ?? null);
+
+    const changes = { view: "session-changes", sessionId: "s2" };
+
+    expect(views.tabsFor({ view: "session", sessionId: "s1" })).toEqual([{ view: "session", sessionId: "s1" }, { view: "test-timeline", id: "s1" }]);
+    expect(views.tabsFor(changes)).toEqual([{ view: "session", sessionId: "s2" }, changes]);
+    expect(views.tabsFor({ view: "session", sessionId: "s3" })).toHaveLength(3);
+  });
+
   test("gives a view that is no tab, or has no renderer yet, alone", () => {
     const views = new ViewRegistry();
     views.register("test-alone", { pane });

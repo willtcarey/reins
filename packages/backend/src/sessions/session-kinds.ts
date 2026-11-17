@@ -1,4 +1,4 @@
-import type { SystemPromptContext, SessionKind as ExtensionSessionKind } from "@reins/sdk/server";
+import type { SystemPromptContext, SessionKind } from "@reins/sdk/server";
 import type { SessionRow } from "../session-store.js";
 import type { TaskRow } from "../task-store.js";
 import { reinsSystemPrompt } from "./system-prompt.js";
@@ -8,40 +8,35 @@ import { reinsSystemPrompt } from "./system-prompt.js";
  * active tools, the REINS docs, context files and skills). */
 export interface SessionKindConfig { systemPrompt: string; tools?: string[]; environment: boolean }
 
-/** What a kind resolves a session's runtime configuration from: its row, its task's (null: none) and the
- * system prompt sections of the app's extensions for the tools it offers
- * (null: every tool). */
-export interface SessionKindContext {
+/** What a session's runtime configuration is built from: its row, its task's (null: none) and the system prompt
+ * sections of the app's extensions for the tools it offers (null: every tool). */
+export interface SessionOpening {
   session: SessionRow;
   task: TaskRow | null;
   systemPromptSections(tools: readonly string[] | null): Promise<string[]>;
 }
-/**
- * A session kind: how its sessions run. Resolved every time a session's runtime opens (so prompt text and
- * task edits reach it the next time it opens), into the system prompt, the tools the model is offered
- * (absent: every tool), whether the environment (the tools, REINS docs, context files and skills) is
- * appended to the prompt, and the branch checked out on the session's node before a run (absent: none). A
- * utility kind has no side effects: no tools, no environment, no branch.
- */
-export type SessionKind = (context: SessionKindContext) => Promise<SessionKindConfig & { branch?: string }> | SessionKindConfig & { branch?: string };
 
 /** Where the app's extensions' kinds and sections are found (`App`): the current app's, read when a runtime opens. */
 export interface SessionKindSource {
   systemPromptSections(context: SystemPromptContext): Promise<string[]>;
   /** The extension kind stored as `name` (`<extension>/<name>`), or why there is none. */
-  findSessionKind?(name: string): Promise<{ kind: ExtensionSessionKind } | { missing: string }>;
+  findSessionKind?(name: string): Promise<{ kind: SessionKind } | { missing: string }>;
 }
 
 /** Every session is of this kind unless created as another; existing sessions are (migration 046). */
 export const DEFAULT_SESSION_KIND = "agent";
 
-/** The Reins agent: the server's Reins prompt for the session's task (or the project assistant's, for a
- * scratch session) with the extensions' sections, every tool, the environment, and its task's branch checked out. */
-const agent: SessionKind = async ({ session, task, systemPromptSections }) => ({
-  systemPrompt: reinsSystemPrompt({ task: task && { title: task.title, description: task.description }, project: session.project_id !== null, sections: await systemPromptSections(null) }),
-  environment: true,
-  ...(task ? { branch: task.branch_name } : {}),
-});
+/** The browser's tabs of a kind's sessions, by view name: those pinned in the Inspector and the main area's. */
+export interface SessionKindViews { pinned: string[]; main: string[] }
+
+/** The Reins agent: Reins' prompt for the session's task (or the project assistant's, for a scratch session)
+ * with the extensions' sections, every tool, the environment, and its task's branch checked out. The browser
+ * pins its Changes tree and gives it a Changes tab. */
+const agent: SessionKind = {
+  systemPrompt: context => context.reinsSystemPrompt(),
+  pinnedViews: ["diff-file-tree"],
+  mainViews: ["session", "session-changes"],
+};
 
 /** Task generation (`sessions/task-generator.ts`): parses freeform intent into a task as JSON. */
 export const TASK_GENERATOR_KIND = "task-generator";
@@ -54,8 +49,8 @@ const TASK_GENERATOR_PROMPT = `You parse user intent into a structured task defi
 
 Return ONLY valid JSON. No markdown fences, no explanation, no extra text.`;
 
-/** A utility kind: exactly its prompt, no tools, no environment, no branch. */
-const taskGenerator: SessionKind = () => ({ systemPrompt: TASK_GENERATOR_PROMPT, tools: [], environment: false });
+/** A utility kind: exactly its prompt (sections describe tools it is not offered), no tools, no environment, no branch. */
+const taskGenerator: SessionKind = { systemPrompt: () => TASK_GENERATOR_PROMPT, tools: [], environment: false };
 
 /** Reins' own kinds, fixed in code: each app bundle has its own copy, so a hot reload changes them with the
  * code. Extensions' kinds are their host's (`ExtensionHost.sessionKind`), named `<extension>/<name>`. */
@@ -72,7 +67,11 @@ export function kindExtension(name: string): string | null {
   return at > 0 ? name.slice(0, at) : null;
 }
 
-export const isBuiltInKind = (name: string) => BUILT_IN_KINDS.has(name);
+/** The kind stored as `name`: one of Reins' own, else the extension kind `extensionKind` finds; undefined for
+ * a kind not registered now. */
+export function findSessionKind(name: string, extensionKind: (name: string) => SessionKind | undefined): SessionKind | undefined {
+  return BUILT_IN_KINDS.get(name) ?? (kindExtension(name) === null ? undefined : extensionKind(name));
+}
 
 /** A session's kind is not registered now (its extension is off, gone, or no longer registers it): the
  * session refuses to run until it is. */
@@ -83,8 +82,14 @@ export class SessionKindMissingError extends Error {
   }
 }
 
-/** The kind stored as `name`: one of Reins' own, else the extension's from `source`. Throws
- * `SessionKindMissingError` when there is none now. */
+/** The views of the kind stored as `name` (`findSessionKind`); none for a kind not registered now. */
+export function sessionKindViews(name: string, extensionKind: (name: string) => SessionKind | undefined): SessionKindViews {
+  const kind = findSessionKind(name, extensionKind);
+  return { pinned: [...kind?.pinnedViews ?? []], main: [...kind?.mainViews ?? []] };
+}
+
+/** The kind stored as `name`: one of Reins' own, else the extension's from `source`, which waits for an extension
+ * still loading. Throws `SessionKindMissingError` when there is none now. */
 export async function resolveSessionKind(name: string, source: SessionKindSource | undefined): Promise<SessionKind> {
   const builtIn = BUILT_IN_KINDS.get(name);
   if (builtIn) return builtIn;
@@ -92,28 +97,28 @@ export async function resolveSessionKind(name: string, source: SessionKindSource
   // Between two apps (a reload) no extension is registered: the next app has them again.
   const found = await source?.findSessionKind?.(name) ?? { missing: "Reins is reloading; try again" };
   if ("missing" in found) throw new SessionKindMissingError(name, found.missing);
-  return adaptExtensionKind(found.kind);
+  return found.kind;
 }
 
 /**
- * An extension's kind as a resolver: its prompt in place of Reins' (which it may build on), every extension's
- * sections after it, its tools and environment. A task session offered tools works on its task's branch, as
- * an agent's does, since those tools work in the checkout; one offered none has no side effects on open.
+ * How a session of `kind` runs, built each time its runtime opens (so prompt text and task edits reach it the next
+ * time it opens): the kind's prompt (which may build on Reins' own), then the extensions' sections asked for its
+ * tools, its tools (absent: every tool), whether the environment is appended, and the branch checked out before a
+ * run. A task session offered tools works on its task's branch, since those tools work in the checkout; one offered
+ * none (a utility kind) has no side effects on open.
  */
-function adaptExtensionKind(kind: ExtensionSessionKind): SessionKind {
-  return async ({ session, task, systemPromptSections }) => {
-    const tools = kind.tools ? [...kind.tools] : undefined;
-    const prompt = await kind.systemPrompt({
-      session: { id: session.id, projectId: session.project_id, taskId: session.task_id, kind: session.kind },
-      task: task && { id: task.id, title: task.title, description: task.description },
-      reinsSystemPrompt: () => reinsSystemPrompt({ task: task && { title: task.title, description: task.description }, project: session.project_id !== null, ...(tools ? { tools } : {}) }),
-    });
-    const sections = await systemPromptSections(tools ?? null);
-    return {
-      systemPrompt: [prompt, ...sections].join("\n\n"),
-      ...(tools ? { tools } : {}),
-      environment: kind.environment !== false,
-      ...(task && (!tools || tools.length > 0) ? { branch: task.branch_name } : {}),
-    };
+export async function sessionKindConfig(kind: SessionKind, { session, task, systemPromptSections }: SessionOpening): Promise<SessionKindConfig & { branch?: string }> {
+  const tools = kind.tools ? [...kind.tools] : undefined;
+  const prompt = await kind.systemPrompt({
+    session: { id: session.id, projectId: session.project_id, taskId: session.task_id, kind: session.kind },
+    task: task && { id: task.id, title: task.title, description: task.description },
+    reinsSystemPrompt: () => reinsSystemPrompt({ task: task && { title: task.title, description: task.description }, project: session.project_id !== null, ...(tools ? { tools } : {}) }),
+  });
+  const sections = await systemPromptSections(tools ?? null);
+  return {
+    systemPrompt: [prompt, ...sections].join("\n\n"),
+    ...(tools ? { tools } : {}),
+    environment: kind.environment !== false,
+    ...(task && (!tools || tools.length > 0) ? { branch: task.branch_name } : {}),
   };
 }

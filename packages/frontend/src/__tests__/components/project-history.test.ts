@@ -20,6 +20,8 @@ function session(overrides: Partial<ArchivedSessionHistoryItem>): ArchivedSessio
     pinnedAt: null,
     archivedAt: "2026-01-03T00:00:00Z",
     sourceExtension: null,
+    kind: "agent",
+    views: { pinned: ["diff-file-tree"], main: ["session", "session-changes"] },
     placement: { available: true, removed: false, nodeId: "internal", nodeName: "Internal", path: "" },
     taskTitle: null,
     ...overrides,

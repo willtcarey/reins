@@ -30,3 +30,12 @@ A module-global map does not fit what an extension registers. An extension is re
 - A hot reload disposes every extension, so it retires every open runtime of an extension kind; the new app's code would retire them anyway (`APP_CODE`).
 - Turning an extension off leaves its sessions as they are: readable, and refusing to run until it is on again.
 - Not in this decision: turn hooks (`beforeTurn`, `beforeCall`), per-kind section filtering, kinds from definition files, and UI to pick a kind. An extension starts its kind from a command or Launcher item of its own.
+
+## Amendment (2026-11-17): a kind declares its browser tabs
+
+Every session pinned the Inspector's Changes tree and had the tabs Chat and Changes, because the session views pinned and registered them for all sessions. A coordinator session has no use for Changes: it wants its own Work view pinned instead.
+
+- **A kind declares its tabs, statically:** `SessionKind` gains `pinnedViews?` (views pinned in the Inspector while one of its sessions is shown) and `mainViews?` (its main-area tabs), lists of view names checked at registration. They are fields, not results of `systemPrompt` or a resolver, because the browser needs them when it shows a session, also one whose runtime is not open. Reins' own kinds are of the same shape as an extension's: `agent` pins `diff-file-tree` and has `session` and `session-changes`, so agent sessions do not change; `task-generator` declares none.
+- **The server sends them:** every session view (lists and detail) carries `kind` and `views: { pinned, main }`, read from the registry when the view is made. A kind not registered now (its extension off) has none: its sessions show the Chat alone, as they cannot run anyway.
+- **The browser follows the shown session's kind.** Each pinned view is opened as `{ view: name, sessionId }`; its renderer's key decides whether the tab is per session or shared (the Changes tree ignores the ID). The Chat is always the first tab; without `mainViews`, it is alone. A view with no renderer is left out until one registers. The user can still open Changes by hand on any session.
+- **Consequences:** an extension's view registered as a tab of a session no longer appears on every session, only on those whose kind names it. A kind registered or removed while the browser has a session cached does not reach it until the session is read again.

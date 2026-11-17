@@ -133,7 +133,7 @@ describe("the diff-file-tree view", () => {
     mockFetch(() => Response.json({ files: [], branch: null, baseBranch: null }));
     const sdk = testSdk();
     const app = new AppStore(new StubClient());
-    app.sessionCache.set("s1", { projectId: null, taskId: null, createdAt: "", updatedAt: "", messageCount: 0, state: { model: null, thinkingLevel: "off" }, placement: { available: true, removed: false, nodeId: checkout.nodeId, nodeName: "Internal", path: checkout.path } });
+    app.sessionCache.set("s1", { projectId: null, taskId: null, createdAt: "", updatedAt: "", messageCount: 0, state: { model: null, thinkingLevel: "off" }, kind: "agent", views: { pinned: ["diff-file-tree"], main: ["session", "session-changes"] }, placement: { available: true, removed: false, nodeId: checkout.nodeId, nodeName: "Internal", path: checkout.path } });
     registerDiffFileTree(sdk.reins.views, sdk.reins.workspace, app.diffs);
     const target = testElement();
     const mounted = sdk.views.rendererFor(changesView)?.pane?.mount(target, changesView, paneContext("inspector")) ?? undefined;

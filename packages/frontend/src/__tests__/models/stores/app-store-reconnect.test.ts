@@ -28,7 +28,7 @@ function sessionDetail(isRunning: boolean, taskId: number | null = null) {
     updatedAt: "2026-01-01T00:00:00.000Z",
     messageCount: isRunning ? 1 : 2,
     activityState: isRunning ? "running" as const : "finished" as const,
-    placement: { status: "server" as const, error: null, available: true, removed: false, nodeId: "internal", nodeName: "Internal", path: "" },
+    kind: "agent", views: { pinned: ["diff-file-tree"], main: ["session", "session-changes"] }, placement: { status: "server" as const, error: null, available: true, removed: false, nodeId: "internal", nodeName: "Internal", path: "" },
     state: {
       model: { provider: "anthropic", id: "claude-sonnet-4-20250514" },
       thinkingLevel: "high",

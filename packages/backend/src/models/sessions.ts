@@ -44,6 +44,7 @@ import { findPiModel } from "../pi/model-catalog.js";
 import { createDbCredentialStore } from "../pi/credential-store.js";
 import { getNode, getSource, listNodePathsForProject } from "../node-store.js";
 import type { AppState, NodeHub, ServerProcess, SessionRuntime } from "../state.js";
+import { sessionKindViews, type SessionKindViews } from "../sessions/session-kinds.js";
 import { SessionModel } from "./session.js";
 import { NodeNotFoundError, Nodes } from "./nodes.js";
 import { CheckoutNotFoundError, ensureSource } from "./sources.js";
@@ -123,6 +124,10 @@ export interface SessionView {
   archivedAt: string | null;
   /** The backend extension that started it, or null. */
   sourceExtension: string | null;
+  /** How it runs (`SessionInfo.kind`). */
+  kind: string;
+  /** The tabs its kind declares; none when its kind is not registered now. */
+  views: SessionKindViews;
 }
 
 /**
@@ -199,7 +204,10 @@ function isTextBlock(value: unknown): value is TextBlock {
   return "type" in value && value.type === "text" && "text" in value && typeof value.text === "string";
 }
 
-function toSessionView(row: SessionRow, nodes: Pick<NodeHub, "get">): SessionView {
+/** What session views read from the app: its nodes' connections and its extensions' kinds. */
+type ViewSource = Pick<AppState, "nodes" | "extensions">;
+
+function toSessionView(row: SessionRow, app: ViewSource): SessionView {
   return {
     id: row.id,
     projectId: row.project_id,
@@ -209,10 +217,12 @@ function toSessionView(row: SessionRow, nodes: Pick<NodeHub, "get">): SessionVie
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     activityState: row.activity_state,
-    placement: toPlacementView(row, nodes),
+    placement: toPlacementView(row, app.nodes),
     pinnedAt: row.pinned_at,
     archivedAt: row.archived_at,
     sourceExtension: row.source_extension,
+    kind: row.kind,
+    views: sessionKindViews(row.kind, name => app.extensions.host.sessionKind(name)),
   };
 }
 
@@ -221,9 +231,9 @@ function pendingOperationView(operation: PendingPiOperation | null): SessionDeta
   return operation && { kind: operation.kind };
 }
 
-function toSessionListView(row: SessionRow, nodes: Pick<NodeHub, "get">): SessionListView {
+function toSessionListView(row: SessionRow, app: ViewSource): SessionListView {
   return {
-    ...toSessionView(row, nodes),
+    ...toSessionView(row, app),
     messageCount: row.message_count ?? 0,
     firstMessage: row.first_message ?? null,
   };
@@ -315,7 +325,7 @@ export class Sessions {
 
   private get nodes(): Pick<NodeHub, "get"> { return this.state.nodes; }
 
-  private listView = (row: SessionRow) => toSessionListView(row, this.nodes);
+  private listView = (row: SessionRow) => toSessionListView(row, this.state);
 
   /**
    * Creates a session as a client asks for one (an HTTP request, a script's `sessions.start`, an extension's
@@ -427,7 +437,7 @@ export class Sessions {
     const messageCount = countMessages(sessionId);
 
     return {
-      ...toSessionView(row, this.nodes),
+      ...toSessionView(row, this.state),
       background: row.background === 1,
       messageCount,
       runtimeType: row.agent_runtime_type,
@@ -594,7 +604,7 @@ export class Sessions {
       sessionId,
       projectId: row.project_id,
     });
-    return toSessionView(updated, this.nodes);
+    return toSessionView(updated, this.state);
   }
 
   /** Set an idle session's unread state without disturbing active work. */

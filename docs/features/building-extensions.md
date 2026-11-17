@@ -144,7 +144,7 @@ What `reins` gives (each in depth in [server-sdk.md](../dev/server-sdk.md), in a
 
 ### Session kinds
 
-A session kind is a kind of session of your own: its system prompt, its tools and its model. A coordinator that delegates work and asks the user through the Inbox is one. Register it, then start sessions of it:
+A session kind is a kind of session of your own: its system prompt, its tools, its model and its tabs in the browser. A coordinator that delegates work and asks the user through the Inbox is one. Register it, then start sessions of it:
 
 ```ts
 reins.sessions.registerKind("coordinator", {
@@ -153,6 +153,8 @@ reins.sessions.registerKind("coordinator", {
 You coordinate${task ? ` the task "${task.title}"` : ""}: start other sessions for the work and put what needs the user in the Inbox. Do not edit files yourself.`,
   tools: ["execute", "search", "read"],
   model: { provider: "anthropic", modelId: "claude-opus-4-1" },
+  // Your frontend part's view, pinned in the Inspector beside each of its sessions.
+  pinnedViews: ["coordinator-work"],
 });
 
 const { sessionId } = await reins.sessions.start("Plan this week's releases", { projectId, kind: "coordinator" });
@@ -161,6 +163,8 @@ const { sessionId } = await reins.sessions.start("Plan this week's releases", { 
 - **The system prompt replaces Reins' own.** `reinsSystemPrompt()` gives Reins' system prompt for the session (its task, its project, your tools) if you want to build on it. Every extension's system prompt sections (`sessions.registerSystemPromptSection`, yours too) follow it, then the environment (working directory, tool list, `AGENTS.md`, skills) unless you give `environment: false`.
 - **`tools`**: the tools offered, by name; left out, every tool. A session of a task that is offered tools works on its task's branch; one with `tools: []` changes nothing in the checkout.
 - **`model`**: the model of a session you start without one.
+- **`pinnedViews`**: views pinned in the Inspector while one of its sessions is shown, by name. Each is opened as `{ view: name, sessionId }`; your renderer's `key` decides whether the tab is the session's own (`key: view => view.sessionId`) or one tab for every session (no `key`). A view your frontend part has not registered is left out until it does. Left out: nothing is pinned. Reins' agent sessions pin the Changes tree (`diff-file-tree`); your kind's sessions do not, though `/changes` still opens it as a tab the user closes.
+- **`mainViews`**: the session's tabs in the main area, by name, in order: views registered with `tabOf: { type: "session", parameter: "sessionId" }`. The Chat (`session`) is always the first. Left out: the Chat alone. Agent sessions have `["session", "session-changes"]` (Chat and Changes). On a phone, the swipe pages follow the tabs.
 - **Names are yours.** A session records `<your extension>/<name>` (its `kind`). You start only your own kinds. Agents' scripts cannot start them: give them a script method that does (`scripting.register`) if they should.
 - **A session's kind never changes.** Reins reads the kind each time the session opens, so a changed prompt reaches its sessions the next time they open (a reload closes idle ones). While the kind is not registered (your extension turned off or removed), its sessions refuse to run: the chat and `send` say why. They run again once it is back.
 
