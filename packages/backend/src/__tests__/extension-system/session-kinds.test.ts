@@ -110,6 +110,17 @@ describe("session kinds of extensions", () => {
     turn.finish();
   });
 
+  test("an agent session's model is offered Reins' tools alone: none of Pi's built-in extensions (codemode, tool_search, MCP) reach it", async () => {
+    await start();
+    const project = createProject("Project", repo.dir);
+    const { sessionId } = await coord.sessions.start("Go", { projectId: project.id, model: model.model });
+
+    const turn = await model.nextTurn(sessionId);
+    expect(toolsOf(turn)).toEqual(["read", "write", "edit", "bash", "create_task", "search", "execute"]);
+    expect(promptOf(turn)).not.toContain("mcp_servers");
+    turn.finish();
+  });
+
   test("a kind's task session checks out its task's branch when it is offered tools; one with no tools changes nothing on open", async () => {
     kinds.other = { systemPrompt: () => "Summarize.", tools: [], environment: false };
     await start();

@@ -30,7 +30,7 @@ function commandsUnder(env: CommandHost, call: CommandCall, observe: (result: Re
   });
 }
 
-/** Pi 0.85.1's text for a tool call an interruption cut off that it does not run again (not exported). */
+/** Pi's text for a tool call an interruption cut off that it does not run again (Pi does not export it). */
 const INTERRUPTED = "[Tool execution was interrupted. The preceding output is the latest durable progress snapshot; newer live output may be missing, and the external outcome is unknown.]";
 /** A bash call's memos: its command's ID, recorded before the command is sent, and its latest checkpointed output. */
 const execMemo = z.object({ execId: z.string() });
