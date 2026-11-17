@@ -2,7 +2,7 @@
  * Images sized for the provider. Anthropic rejects an image over 5 MB of base64, and an image stays in the
  * session's history, so one oversized image would fail every later request of the session.
  */
-import type { ReadImageProcessor } from "@earendil-works/pi-agent-core";
+import type { ReadImageProcessor } from "@taco-ai/pi-harness";
 import { formatDimensionNote, resizeImage } from "@earendil-works/pi-coding-agent";
 
 /** Anthropic's recommended long side: larger images are scaled down by the provider anyway. */

@@ -2,8 +2,8 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Context } from "@earendil-works/pi-agent-core";
-import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
+import type { Context } from "@taco-ai/pi-harness";
+import { NodeExecutionEnv } from "@taco-ai/pi-harness/node";
 import { checkoutResources, nodeResources } from "../../session-runtime/resources.js";
 
 let root: string;

@@ -56,10 +56,10 @@ function isTelemetryCall(node) {
 }
 
 /** Pi's modules the node may import at runtime (`reins/node-runs-no-pi`): its execution environment only. */
-const NODE_PI_RUNTIME = new Set(["@earendil-works/pi-agent-core/harness/env/nodejs", "@earendil-works/pi-agent-core/harness/context"]);
-const isPi = (specifier) => specifier.startsWith("@earendil-works/");
+const NODE_PI_RUNTIME = new Set(["@taco-ai/pi-harness/harness/env/nodejs", "@taco-ai/pi-harness/harness/context"]);
+const isPi = (specifier) => specifier.startsWith("@earendil-works/") || specifier === "@taco-ai/pi-harness" || specifier.startsWith("@taco-ai/pi-harness/");
 /** Pi's modules the node may import types from. */
-const isPiAgentCore = (specifier) => specifier === "@earendil-works/pi-agent-core" || specifier.startsWith("@earendil-works/pi-agent-core/");
+const isPiHarness = (specifier) => specifier === "@taco-ai/pi-harness" || specifier.startsWith("@taco-ai/pi-harness/");
 
 /** What @reins/client may import at runtime: its own modules (and bun:test in tests). */
 function isClientModule(specifier) {
@@ -169,14 +169,14 @@ module.exports = {
       meta: {
         type: "problem",
         docs: { description: "Nodes run no Pi (ADR-029): of Pi, the node takes only the execution environment its files and shell commands run on, through Pi's narrowest entry points, so the node bundle carries no model, provider or agent code." },
-        messages: { forbidden: "Node code may import Pi only from @earendil-works/pi-agent-core/harness/env/nodejs and /harness/context at runtime, and types from @earendil-works/pi-agent-core (see docs/dev/node-bundle.md)." },
+        messages: { forbidden: "Node code may import Pi only from @taco-ai/pi-harness/harness/env/nodejs and /harness/context at runtime, and types from @taco-ai/pi-harness (see docs/dev/node-bundle.md)." },
       },
       create(context) {
         return {
           ImportDeclaration(node) {
             const specifier = node.source?.value;
             if (typeof specifier !== "string" || !isPi(specifier) || NODE_PI_RUNTIME.has(specifier)) return;
-            if (node.importKind === "type" && isPiAgentCore(specifier)) return;
+            if (node.importKind === "type" && isPiHarness(specifier)) return;
             context.report({ node, messageId: "forbidden" });
           },
           ImportExpression(node) {

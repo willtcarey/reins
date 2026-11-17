@@ -77,7 +77,7 @@ The only required environment variable is an API key for your LLM provider (e.g.
 | Variable | Default | Description |
 |---|---|---|
 | `ANTHROPIC_API_KEY` | — | API key for Anthropic models (required if using Anthropic) |
-| `REINS_DATA_DIR` | `.reins/` (cwd) | Directory for the server SQLite database, which holds every session (under `/data` in Docker) |
+| `REINS_DATA_DIR` | `.reins/` (cwd) | Directory for the server SQLite database, which holds every session, and for Pi's `models.json` (custom providers) and model catalog (`pi/`) (under `/data` in Docker) |
 | `REINS_PORT` | `3100` | Server port |
 | `REINS_NODE_SOCKET` | `~/.reins/run/node.sock` | Unix socket between the server and the node; set it for both processes (the supervisor passes it to both) |
 | `REINS_SECRET` | auto-generated | Hex-encoded 32-byte key for encrypting sensitive settings at rest |

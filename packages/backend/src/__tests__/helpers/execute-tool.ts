@@ -1,7 +1,7 @@
 import {
   BACKGROUND_CONTEXT,
   withAbortSignal,
-} from "@earendil-works/pi-agent-core";
+} from "@taco-ai/pi-harness";
 import { createReinsTools } from "../../session-runtime/reins-tools.js";
 import { serverToolCalls } from "../../tools/index.js";
 import { createAppState, type TestAppState } from "./app-state.js";

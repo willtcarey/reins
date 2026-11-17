@@ -6,7 +6,7 @@ import {
   estimateContextTokens,
   type AgentMessage,
   type Entry,
-} from "@earendil-works/pi-agent-core";
+} from "@taco-ai/pi-harness";
 import type { ClientPromptContent } from "../messages-store.js";
 import { getDb } from "../app-globals.js";
 import { PiStorageAdapter } from "../pi-storage.js";

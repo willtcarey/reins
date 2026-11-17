@@ -5,8 +5,8 @@ import { join } from "node:path";
 import {
   applyShellOutputUpdate, BACKGROUND_CONTEXT, createBashTool, createEditTool, createReadTool, createWriteTool, withAbortSignal,
   type AgentHarnessTool, type Context, type ExecutionEnv, type ShellOutputUpdate, type ShellOutputView,
-} from "@earendil-works/pi-agent-core";
-import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
+} from "@taco-ai/pi-harness";
+import { NodeExecutionEnv } from "@taco-ai/pi-harness/node";
 import { REMOTE_MAX_FRAME_BYTES, RpcFailure } from "@reins/node-protocol";
 import { startNode, type Node } from "@reins/node/node";
 import { NODE_CALL_TIMEOUT_MS, NodeCommandError, NodeDirClient, NodeFileError, type CommandCall } from "../../nodes/node-dir-client.js";

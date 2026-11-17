@@ -25,7 +25,7 @@ import {
   type Value,
   type ValueList,
   type Write,
-} from "@earendil-works/pi-agent-core";
+} from "@taco-ai/pi-harness";
 import type { Usage } from "@earendil-works/pi-ai";
 
 const ZERO_USAGE: Usage = {

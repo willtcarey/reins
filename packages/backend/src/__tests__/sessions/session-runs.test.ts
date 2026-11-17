@@ -1,7 +1,7 @@
 import { describe, test, expect, spyOn, beforeEach } from "bun:test";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
-import { BACKGROUND_CONTEXT } from "@earendil-works/pi-agent-core";
-import { insertEntry } from "@earendil-works/pi-agent-core/harness/session";
+import { BACKGROUND_CONTEXT } from "@taco-ai/pi-harness";
+import { insertEntry } from "@taco-ai/pi-harness/harness/session";
 import { getDb } from "../../app-globals.js";
 import { createProject } from "../project-fixture.js";
 import { createSession, getSession } from "../session-fixture.js";

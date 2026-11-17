@@ -11,9 +11,9 @@ import { mkdir, open } from "node:fs/promises";
 import { pipeline } from "node:stream/promises";
 import { dirname, join } from "node:path";
 // Pi's narrowest entry points: its root would bring the whole agent harness into the node bundle.
-import type { FileError, Result } from "@earendil-works/pi-agent-core";
-import { BACKGROUND_CONTEXT } from "@earendil-works/pi-agent-core/harness/context";
-import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/harness/env/nodejs";
+import type { FileError, Result } from "@taco-ai/pi-harness";
+import { BACKGROUND_CONTEXT } from "@taco-ai/pi-harness/harness/context";
+import { NodeExecutionEnv } from "@taco-ai/pi-harness/harness/env/nodejs";
 import {
   MAX_DIRECTORY_ENTRIES, MAX_FILE_ERROR_CHARS, NodeRejection,
   type FileErrorData, type FsInfo, type FsInfoResult, type FsList, type FsListResult, type FsPath, type FsPathResult, type FsRead, type FsReadResult, type FsWrite,

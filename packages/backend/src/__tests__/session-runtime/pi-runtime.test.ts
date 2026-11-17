@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, test } from "bun:test";
-import { BACKGROUND_CONTEXT } from "@earendil-works/pi-agent-core";
-import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
-import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall, Type } from "@earendil-works/pi-ai";
+import { BACKGROUND_CONTEXT } from "@taco-ai/pi-harness";
+import { NodeExecutionEnv } from "@taco-ai/pi-harness/node";
+import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai";
+import { Type } from "typebox";
 import { getDb } from "../../app-globals.js";
 import { PiStorageAdapter } from "../../pi-storage.js";
 import { PauseGate } from "../../process-state.js";

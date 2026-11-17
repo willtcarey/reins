@@ -6,7 +6,7 @@
  * Skills are Pi's (`loadSkills`), with their content.
  */
 import { posix } from "node:path";
-import { BACKGROUND_CONTEXT, loadSkills, withAbortSignal, type Context, type ExecutionEnv, type Skill } from "@earendil-works/pi-agent-core";
+import { BACKGROUND_CONTEXT, loadSkills, withAbortSignal, type Context, type ExecutionEnv, type Skill } from "@taco-ai/pi-harness";
 import type { NodeDocs } from "@reins/node-protocol";
 import { logger } from "../logger.js";
 

@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import type { Database } from "bun:sqlite";
-import { BACKGROUND_CONTEXT } from "@earendil-works/pi-agent-core";
-import { insertEntry } from "@earendil-works/pi-agent-core/harness/session";
-import { createStorageConformance } from "@earendil-works/pi-agent-core/harness/session/testing";
+import { BACKGROUND_CONTEXT } from "@taco-ai/pi-harness";
+import { insertEntry } from "@taco-ai/pi-harness/harness/session";
+import { createStorageConformance } from "@taco-ai/pi-harness/harness/session/testing";
 import { PiStorageAdapter } from "../pi-storage.js";
 import { createProject } from "./project-fixture.js";
 import { setupTestDb, teardownTestDb } from "./helpers/test-db.js";

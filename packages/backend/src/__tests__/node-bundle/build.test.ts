@@ -24,8 +24,8 @@ test("a test build is another build of the same sources", async () => {
 test("a bundle runs no Pi: of Pi it holds only the execution environment its files and shell commands run on", async () => {
   const bundle = text((await buildNodeBundle()).bytes);
 
-  expect(bundle).toContain("@earendil-works/pi-agent-core/dist/harness/env/nodejs.js");
-  for (const absent of ["@earendil-works/pi-ai/", "@earendil-works/pi-coding-agent/", "@earendil-works/pi-agent-core/dist/harness/runtime/"]) expect(bundle).not.toContain(absent);
+  expect(bundle).toContain("@taco-ai/pi-harness/dist/harness/env/nodejs.js");
+  for (const absent of ["@earendil-works/pi-ai/", "@earendil-works/pi-coding-agent/", "@taco-ai/pi-harness/dist/harness/runtime/"]) expect(bundle).not.toContain(absent);
 });
 
 test("a bundle holding a path of the build machine, or importing what Bun does not provide, is not shippable", () => {

@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { BACKGROUND_CONTEXT as BACKGROUND } from "@earendil-works/pi-agent-core/harness/context";
-import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/harness/env/nodejs";
+import { BACKGROUND_CONTEXT as BACKGROUND } from "@taco-ai/pi-harness/harness/context";
+import { NodeExecutionEnv } from "@taco-ai/pi-harness/harness/env/nodejs";
 import { join } from "node:path";
 import { startNode, type Node, type OpenStreamSource } from "./node.js";
 

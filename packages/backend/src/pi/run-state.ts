@@ -13,7 +13,7 @@
  * Pi's storage cannot tell an operation being driven from one an exit cut off: only the process knows.
  */
 import type { Database } from "bun:sqlite";
-import { laneState, operationMeta, operationResult, type LaneState, type OperationMeta, type OperationResultRecord, type Value } from "@earendil-works/pi-agent-core";
+import { laneState, operationMeta, operationResult, type LaneState, type OperationMeta, type OperationResultRecord, type Value } from "@taco-ai/pi-harness";
 import { MAIN_LANE } from "../session-runtime/lane.js";
 
 /** An operation in progress on a session's main lane, as Pi left it in storage. */

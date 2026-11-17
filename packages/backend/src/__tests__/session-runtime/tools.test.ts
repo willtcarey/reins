@@ -5,8 +5,8 @@ import { join } from "node:path";
 import {
   BACKGROUND_CONTEXT, ExecutionError,
   type AgentHarnessToolInvocation, type ExecutionEnv, type Result, type ShellExecOptions, type ShellExecResult, type ShellOutputTruncation,
-} from "@earendil-works/pi-agent-core";
-import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
+} from "@taco-ai/pi-harness";
+import { NodeExecutionEnv } from "@taco-ai/pi-harness/node";
 import { createHostTools } from "../../session-runtime/tools.js";
 import type { CommandCall } from "../../nodes/node-dir-client.js";
 

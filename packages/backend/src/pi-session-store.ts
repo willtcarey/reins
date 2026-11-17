@@ -2,7 +2,7 @@
  * Admission proof in a session's Pi storage: waits (`waitForSettlement`) tell an input Pi admitted from
  * one it never did.
  */
-import { pendingEntry } from "@earendil-works/pi-agent-core";
+import { pendingEntry } from "@taco-ai/pi-harness";
 import { getDb } from "./app-globals.js";
 
 const PENDING_ENTRY_NAMESPACE = pendingEntry("").namespace;
