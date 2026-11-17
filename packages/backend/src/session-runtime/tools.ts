@@ -1,7 +1,7 @@
 import {
   createReadTool, createWriteTool, createEditTool, createBashTool,
   type AgentHarnessTool, type AgentToolResult, type ExecutionEnv, type ExecutionError, type Result, type ShellExecResult,
-} from "@earendil-works/pi-agent-core";
+} from "@taco-ai/pi-harness";
 import { z } from "zod";
 import type { CommandCall } from "../nodes/node-dir-client.js";
 import type { PiNodeEnv } from "../nodes/pi-node-env.js";

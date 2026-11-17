@@ -8,9 +8,9 @@
  * it, a running command is killed, and either way it is forgotten.
  */
 // Pi's narrowest entry points: its root would bring the whole agent harness into the node bundle.
-import type { ShellOutputUpdate, ShellOutputView } from "@earendil-works/pi-agent-core";
-import { BACKGROUND_CONTEXT, withAbortSignal } from "@earendil-works/pi-agent-core/harness/context";
-import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/harness/env/nodejs";
+import type { ShellOutputUpdate, ShellOutputView } from "@taco-ai/pi-harness";
+import { BACKGROUND_CONTEXT, withAbortSignal } from "@taco-ai/pi-harness/harness/context";
+import { NodeExecutionEnv } from "@taco-ai/pi-harness/harness/env/nodejs";
 import { NodeRejection, type ExecRecord, type PiExec, type PiExecAttach, type PiExecAttachResult, type PiExecKill, type PiExecKillResult } from "@reins/node-protocol";
 import type { OpenStreamSource } from "./node.js";
 import { OutputBuffer } from "./output-buffer.js";

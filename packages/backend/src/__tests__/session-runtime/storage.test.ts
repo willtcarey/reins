@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
-import { BACKGROUND_CONTEXT, type Write } from "@earendil-works/pi-agent-core";
-import { setValue, value } from "@earendil-works/pi-agent-core/harness/session";
+import { BACKGROUND_CONTEXT, type Write } from "@taco-ai/pi-harness";
+import { setValue, value } from "@taco-ai/pi-harness/harness/session";
 import { getDb } from "../../app-globals.js";
 import { PiStorageAdapter } from "../../pi-storage.js";
 import { SessionStorage } from "../../session-runtime/storage.js";

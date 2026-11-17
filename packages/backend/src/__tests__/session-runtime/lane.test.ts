@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { AgentHarness, BACKGROUND_CONTEXT, StorageBackedSession } from "@earendil-works/pi-agent-core";
+import { AgentHarness, BACKGROUND_CONTEXT, StorageBackedSession } from "@taco-ai/pi-harness";
 import { createModels, fauxProvider } from "@earendil-works/pi-ai";
 import { getDb } from "../../app-globals.js";
 import { PiStorageAdapter } from "../../pi-storage.js";

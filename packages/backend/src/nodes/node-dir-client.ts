@@ -1,5 +1,5 @@
 import { posix } from "node:path";
-import type { ExecutionErrorCode, FileInfo, ShellExecOptions, ShellExecResult, ShellOutputUpdate } from "@earendil-works/pi-agent-core";
+import type { ExecutionErrorCode, FileInfo, ShellExecOptions, ShellExecResult, ShellOutputUpdate } from "@taco-ai/pi-harness";
 import { APPLICATION_ERROR, WRITE_CHUNK_BYTES, execRecord, nodeError, RpcFailure, type ExecRecord, type FileErrorData } from "@reins/node-protocol";
 import type { Spawn } from "../git.js";
 import { splitOutput, stderrTail } from "./process-output.js";

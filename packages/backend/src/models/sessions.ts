@@ -39,7 +39,7 @@ import {
 import { stripLeadingSkillBlocks } from "./skill.js";
 import { getDb } from "../app-globals.js";
 import { readPendingPiOperation, type PendingPiOperation } from "../pi/run-state.js";
-import { DEFAULT_COMPACTION_SETTINGS } from "@earendil-works/pi-agent-core";
+import { DEFAULT_COMPACTION_SETTINGS } from "@taco-ai/pi-harness";
 import { findPiModel } from "../pi/model-catalog.js";
 import { createDbCredentialStore } from "../pi/credential-store.js";
 import { getNode, getSource, listNodePathsForProject } from "../node-store.js";

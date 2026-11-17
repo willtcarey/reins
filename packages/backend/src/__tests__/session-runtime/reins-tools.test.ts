@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { BACKGROUND_CONTEXT, withAbortSignal } from "@earendil-works/pi-agent-core";
+import { BACKGROUND_CONTEXT, withAbortSignal } from "@taco-ai/pi-harness";
 import type { ReinsToolCalls } from "../../tools/index.js";
 import { createReinsTools, type ReinsTool } from "../../session-runtime/reins-tools.js";
 

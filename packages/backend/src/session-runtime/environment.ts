@@ -5,7 +5,7 @@
  * expansion of the same skills.
  */
 import { posix } from "node:path";
-import { formatSkillInvocation } from "@earendil-works/pi-agent-core";
+import { formatSkillInvocation } from "@taco-ai/pi-harness";
 import type { PromptBlock } from "./events.js";
 import { Git } from "../git.js";
 import type { NodeDirClient } from "../nodes/node-dir-client.js";

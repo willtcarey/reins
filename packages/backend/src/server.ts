@@ -24,6 +24,8 @@ import { serveNodeBundle } from "./node-bundle/delivery.js";
 import { createApp } from "./app.js";
 import { sessionRuns } from "./sessions/session-runs.js";
 import { logger } from "./logger.js";
+import { resolveDataDir } from "./database.js";
+import { setUpPiConfigDir } from "./pi/factory.js";
 
 /** A started app: the HTTP and browser WebSocket message handlers the process's server delegates to. */
 export interface RunningApp {
@@ -47,6 +49,7 @@ export interface StartOptions {
 export async function start(serverProcess: ServerProcess, { recoverRuns = false }: StartOptions = {}): Promise<RunningApp> {
   injectProcessState(serverProcess);
   prepareDatabase(serverProcess.db);
+  setUpPiConfigDir(resolveDataDir());
   // REINS_TEST_FAUX_PROVIDER is a TEST HOOK ONLY (pi/test-faux-provider.ts): process tests drive a
   // scripted model in the sessions this server runs. Never set it in production.
   const testFauxProvider = process.env.REINS_TEST_FAUX_PROVIDER?.trim();

@@ -9,8 +9,8 @@
  */
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { BACKGROUND_CONTEXT } from "@earendil-works/pi-agent-core";
-import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
+import { BACKGROUND_CONTEXT } from "@taco-ai/pi-harness";
+import { NodeExecutionEnv } from "@taco-ai/pi-harness/node";
 import { reinsSystemPrompt } from "../src/sessions/system-prompt.js";
 import { environmentPrompt } from "../src/session-runtime/environment.js";
 import { nodeResources } from "../src/session-runtime/resources.js";

@@ -13,7 +13,7 @@ import {
   type HarnessEvent,
   type OpenOperation,
   type Storage,
-} from "@earendil-works/pi-agent-core";
+} from "@taco-ai/pi-harness";
 import type { AssistantMessageEvent, Message, Models } from "@earendil-works/pi-ai";
 import type { AssistantStreamEvent, ConversationEntry, PromptBlock, RuntimeMessage, AgentRuntimeEvent, RuntimeOperationError } from "./events.js";
 import type { PauseGate, SessionRuntime } from "../state.js";
@@ -91,7 +91,7 @@ interface ReinsInputMessage {
   timestamp: number;
 }
 
-declare module "@earendil-works/pi-agent-core" {
+declare module "@taco-ai/pi-harness" {
   interface CustomAgentMessages { reinsInput: ReinsInputMessage }
 }
 

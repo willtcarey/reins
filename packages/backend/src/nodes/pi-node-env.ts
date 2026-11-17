@@ -2,7 +2,7 @@ import { posix } from "node:path";
 import {
   err, ExecutionError, FileError, ok, toError,
   type Context, type ExecutionEnv, type FileInfo, type Result, type ShellExecOptions, type ShellExecResult,
-} from "@earendil-works/pi-agent-core";
+} from "@taco-ai/pi-harness";
 import { NodeCommandError, NodeFileError, type CallOptions, type CommandCall, type NodeDirClient } from "./node-dir-client.js";
 
 const messageOf = (error: unknown) => error instanceof Error ? error.message : String(error);

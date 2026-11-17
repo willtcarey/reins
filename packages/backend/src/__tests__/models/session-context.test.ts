@@ -4,7 +4,7 @@ import {
   createBranchSummaryMessage,
   createCompactionSummaryMessage,
   estimateTokens,
-} from "@earendil-works/pi-agent-core";
+} from "@taco-ai/pi-harness";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { getDb } from "../../app-globals.js";
 import { buildSessionContextSnapshot } from "../../models/session-context.js";

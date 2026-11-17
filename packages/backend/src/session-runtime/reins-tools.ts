@@ -6,8 +6,8 @@
  * (the app derives project/task scope from its row).
  */
 
-import { Type } from "@earendil-works/pi-ai";
-import type { AgentHarnessTool } from "@earendil-works/pi-agent-core";
+import { Type } from "typebox";
+import type { AgentHarnessTool } from "@taco-ai/pi-harness";
 import type { HostToolContext } from "./tools.js";
 import type { ReinsToolCalls } from "../tools/index.js";
 import type { ScriptExecuteResult } from "../tools/execute.js";

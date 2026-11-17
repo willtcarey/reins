@@ -11,7 +11,7 @@
  * `ServerProcess.app`, never from the app that built it: the runtime outlives it. Its run lifecycle it
  * applies itself, against the process's database and broadcast (`lifecycleReports`), app or no app.
  */
-import type { AgentHarnessTool } from "@earendil-works/pi-agent-core";
+import type { AgentHarnessTool } from "@taco-ai/pi-harness";
 import { RpcFailure } from "@reins/node-protocol";
 import type { ReinsToolCalls } from "../tools/index.js";
 import { runSettled, type SessionSettled } from "../sessions/session-runs.js";

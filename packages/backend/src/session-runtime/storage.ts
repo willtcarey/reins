@@ -1,4 +1,4 @@
-import type { CommitResult, Context, Entry, EntryScan, EntryStructure, ListElement, ListReadOptions, SessionStats, Storage, StorageBranchScan, StoredValue, UsageRow, UsageScan, Value, ValueList, Write } from "@earendil-works/pi-agent-core";
+import type { CommitResult, Context, Entry, EntryScan, EntryStructure, ListElement, ListReadOptions, SessionStats, Storage, StorageBranchScan, StoredValue, UsageRow, UsageScan, Value, ValueList, Write } from "@taco-ai/pi-harness";
 
 /**
  * A running session's Pi storage: the server's own (`PiStorageAdapter` on the process's database
