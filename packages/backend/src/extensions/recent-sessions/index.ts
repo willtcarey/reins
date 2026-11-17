@@ -1,6 +1,6 @@
 /**
  * The Recent sessions extension's backend part (docs/features/sidebar.md *Recent*): which sessions are recent.
- * Recent is the sessions with the latest activity (`updatedAt`), of any project. Closing a task puts its sessions
+ * Recent is the top-level sessions (not children) with the latest activity (`updatedAt`), of any project. Closing a task puts its sessions
  * away: one is recent again only once a run starts in it after the task closed. A run that was going when the
  * task closed (an agent closing its own task) ends after, but does not bring it back, as it does not mark it
  * unread. It uses only the server SDK.
@@ -46,6 +46,8 @@ export async function recentSessions({ sessions, projects, tasks }: RecentReads,
   for (let offset = 0; found.length < limit && offset < MAX_READ; offset += PAGE) {
     const page = await sessions.list({ limit: PAGE, offset });
     for (const session of page) {
+      // A child is its parent's work: the parent is the session the user goes back to.
+      if (session.parentSessionId !== null) continue;
       const itsTask = session.taskId === null ? null : await task(session.taskId);
       if (putAway(session, itsTask)) continue;
       found.push({

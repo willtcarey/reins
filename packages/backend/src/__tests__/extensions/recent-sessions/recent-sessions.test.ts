@@ -70,4 +70,19 @@ describe("the Recent sessions extension", () => {
 
     expect((await recentSessions(reads, 8)).map(({ id }) => id)).toEqual(["started-after", "no-task"]);
   });
+
+  test("leaves out child sessions: their parent is the session the user works in", async () => {
+    const at = "2026-01-01T00:00:00.000Z";
+    const sessions = [
+      { ...session("child", at, "2026-01-02T00:00:00.000Z", null), parentSessionId: "parent" },
+      session("parent", at, at, null),
+    ];
+    const reads: RecentReads = {
+      sessions: { list: async ({ offset = 0 } = {}) => offset === 0 ? sessions : [] },
+      projects: { get: async () => ({ id: 1, name: "Api", baseBranch: "main", defaultSourceId: 1, createdAt: at, lastOpenedAt: at }) },
+      tasks: { get: async () => { throw new Error("no task"); } },
+    };
+
+    expect((await recentSessions(reads, 8)).map(({ id }) => id)).toEqual(["parent"]);
+  });
 });
