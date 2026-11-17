@@ -26,6 +26,10 @@ Talk to a started server through `ServerApi` (same file): its `client` is `@rein
 
 Run `bun run test:process` when you touch entrypoints, the supervisor, the node link or process lifecycle (startup, shutdown, reconnect, recovery, hot reload), and before merging a branch.
 
+## DOM tests
+
+Frontend tests run on Lit's server-side DOM shim, which has no real DOM. A test that needs one (an element used from plain DOM, as an extension uses it: `document.createElement`, attributes, what it draws) is named `<module>.dom-test.ts`, where its `.test.ts` would be. `bun test` does not discover that name; the frontend's `test` script runs those files in a second `bun test` with happy-dom preloaded (`__tests__/helpers/happy-dom.ts`), as Lit picks its base class when it is evaluated, so the two cannot share a process. Today: `components/reins-markdown.dom-test.ts` and `components/file-viewer/file-viewer-markdown.dom-test.ts`. Prefer a `.test.ts`; write a DOM test only for behavior the shim cannot show.
+
 ## Conventions
 
 - Use one `*.test.ts` file per source module or logical unit.

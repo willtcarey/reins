@@ -188,10 +188,11 @@ What `reins` gives (in depth in [reins-sdk.md](../dev/reins-sdk.md)):
 
 ### Looking like Reins
 
-Use Reins' components, `@reins/ui`, for what Reins has one of, so your extension looks like Reins and keeps looking like it: the page provides them, so a change to Reins' look reaches your extension with no rebuild. Today there are two; more will come (sections, list rows, empty states, buttons, inputs).
+Use Reins' components, `@reins/ui`, for what Reins has one of, so your extension looks like Reins and keeps looking like it: the page provides them, so a change to Reins' look reaches your extension with no rebuild. Today there are three; more will come (sections, list rows, empty states, buttons, inputs).
 
 - **`<reins-sidebar-row>`**: a sidebar section's row that opens something. Attributes: `label`, `icon` (an SVG's markup, drawn at 14px in `currentColor`), `current` (what it opens is shown now: `aria-current="page"`), `accessible-label` (what a screen reader reads instead of the label: give the counts in words). Its children are its badges. It draws a button (the icon and label); its badges follow. Listen for `click` on the row.
 - **`<reins-badge>`**: a count or short text in a pill, in the sidebar or anywhere. Attributes: `value`, `tone` (`attention` amber: the user is needed; `info` blue; `neutral` grey, the default), `icon` (an SVG's markup, at 10px), `title` (its tooltip). It is not shown while its value is empty or 0, so a count needs no condition.
+- **`<reins-markdown>`**: Markdown drawn as the chat draws it (its styles, code highlighting, Mermaid diagrams). Attribute `text`. Safe for text from outside (an issue, an email): raw HTML is left out, `javascript:` and other unsafe links become plain text, and links that leave the page open in a new tab. Images show as they are, with no viewer. The app defines it, so it is there even if you do not import `@reins/ui`.
 
 They work in any framework, and need no Lit in your code: import the module once, mark it external, and write the elements. In Svelte:
 
@@ -207,7 +208,7 @@ They work in any framework, and need no Lit in your code: import the module once
 </reins-sidebar-row>
 ```
 
-From plain DOM: `document.createElement("reins-badge")`, then `setAttribute("value", "3")` (or `badge.value = 3`). In a Lit frontend that uses `@reins/sdk/lit`'s registry, also call `define(registry)` once (`import { define } from "@reins/ui"` and `import { registry } from "@reins/sdk/lit"`): that registry does not see the page's, where the import defines them.
+From plain DOM: `document.createElement("reins-badge")`, then `setAttribute("value", "3")` (or `badge.value = 3`); `markdown.text = item.context`. In a Lit frontend that uses `@reins/sdk/lit`'s registry, also call `define(registry)` once (`import { define } from "@reins/ui"` and `import { registry } from "@reins/sdk/lit"`): that registry does not see the page's, where the import defines them. Then write `<reins-markdown .text=${item.context}></reins-markdown>` in your templates.
 
 The components draw in the light DOM with Reins' rules, which are low in the cascade: your own CSS wins. To change one on purpose, put a class on it (`<reins-badge class="ml-2">`) or write a rule for it or its parts (`reins-sidebar-row`, `.reins-sidebar-row-label`, `.reins-sidebar-row-icon`, `reins-badge`, `.reins-badge-icon`). Their colors and sizes are Reins' design tokens, so a change you leave out follows Reins. A row draws its button before its children; give it only badges as children.
 

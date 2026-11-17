@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { parseMarkdown } from "../../components/markdown-content.js";
+import { parseMarkdown } from "../../components/markdown-rendering.js";
 import { decoratedMarkdown, decoratedPlainText, type DecoratedHtml } from "../../models/decorated-html.js";
 import { referenceDecorators } from "../helpers/reins-sdk.js";
 
