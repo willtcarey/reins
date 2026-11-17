@@ -1,9 +1,8 @@
 /**
  * Markdown Content
  *
- * Lit component that renders markdown text with mermaid diagram support.
- * Owns the full lifecycle: marked parsing, mermaid code block detection,
- * and lazy-loading the mermaid library to render diagrams after DOM update.
+ * The chat's Markdown: the app's renderer (markdown-rendering.ts, which extensions' `<reins-markdown>` shares),
+ * with what only the chat has: streaming, message decorators and the image viewer.
  *
  * Usage:
  *   <markdown-content .text=${someMarkdown}></markdown-content>
@@ -20,58 +19,14 @@
 import { LitElement, html } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import { unsafeHTML } from "lit/directives/unsafe-html.js";
-import { marked, type MarkedExtension } from "marked";
 import { InlineViewsController } from "../controllers/inline-views-controller.js";
-import { getSharedHighlighter } from "../models/changes/shared-highlighter.js";
 import { decoratedMarkdown, type DecoratedHtml } from "../models/decorated-html.js";
 import { scanSettledMarkdown } from "../models/streaming-markdown.js";
 import { streamingTelemetry } from "../models/streaming-telemetry.js";
 import type { BoundDecorators } from "../sdk-host/decorators.js";
 import { openImageViewerEvent, type OpenImageViewerDetail } from "./events.js";
+import { MARKDOWN_CLASSES, parseMarkdown, renderCodeAndDiagrams } from "./markdown-rendering.js";
 import "./view-mount.js";
-
-// ---------------------------------------------------------------------------
-// Marked configuration — runs once at module load
-// ---------------------------------------------------------------------------
-
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
-
-const mermaidExtension: MarkedExtension = {
-  renderer: {
-    code({ text, lang }) {
-      if (lang === "mermaid") {
-        return `<div class="mermaid">${escapeHtml(text)}</div>`;
-      }
-      if (lang) {
-        return `<pre><code data-lang="${escapeHtml(lang)}">${escapeHtml(text)}</code></pre>`;
-      }
-      // Return false to fall through to the default renderer
-      return false;
-    },
-  },
-};
-
-marked.use({
-  breaks: true,
-  gfm: true,
-  extensions: [],
-});
-marked.use(mermaidExtension);
-
-// ---------------------------------------------------------------------------
-// Public helper — pure markdown→HTML, exported for testing
-// ---------------------------------------------------------------------------
-
-/** Parse markdown to HTML. Mermaid fenced code blocks become `<div class="mermaid">`. */
-export function parseMarkdown(text: string): string {
-  return marked.parse(text, { async: false });
-}
 
 /** Build an image-viewer event payload from a clicked markdown image target. */
 export function imageViewerDetailFromMarkdownTarget(target: unknown): OpenImageViewerDetail | null {
@@ -149,22 +104,6 @@ class StreamingMarkdownSegments {
 }
 
 // ---------------------------------------------------------------------------
-// Mermaid lazy-loader
-// ---------------------------------------------------------------------------
-
-let mermaidReady: Promise<typeof import("mermaid")["default"]> | null = null;
-
-async function ensureMermaid() {
-  if (!mermaidReady) {
-    mermaidReady = import("mermaid").then((m) => {
-      m.default.initialize({ startOnLoad: false, theme: "dark" });
-      return m.default;
-    });
-  }
-  return mermaidReady;
-}
-
-// ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 
@@ -192,7 +131,7 @@ export class MarkdownContent extends LitElement {
 
   override render() {
     try {
-      return html`<div class="prose prose-invert prose-sm max-w-none break-words leading-relaxed" @click=${this._handleClick}>${this._renderContent()}</div>`;
+      return html`<div class=${MARKDOWN_CLASSES} @click=${this._handleClick}>${this._renderContent()}</div>`;
     } catch {
       this._segments.reset();
       return html`<pre class="whitespace-pre-wrap text-sm">${this.text}</pre>`;
@@ -224,48 +163,7 @@ export class MarkdownContent extends LitElement {
 
   override async updated() {
     if (this.streaming) return;
-
-    this._highlightCodeBlocks();
-    await this._renderMermaid();
-  }
-
-  /** Syntax-highlight fenced code blocks via the shared Shiki worker. */
-  private _highlightCodeBlocks() {
-    const codeEls = this.querySelectorAll<HTMLElement>("pre code[data-lang]");
-    if (codeEls.length === 0) return;
-
-    const highlighter = getSharedHighlighter();
-
-    for (const codeEl of codeEls) {
-      if (codeEl.hasAttribute("data-highlighted")) continue;
-      codeEl.setAttribute("data-highlighted", "");
-
-      const lang = codeEl.dataset.lang;
-      if (!lang) continue;
-
-      const text = codeEl.textContent ?? "";
-      highlighter.highlightCode(lang, text, (highlighted) => {
-        codeEl.innerHTML = highlighted;
-      });
-    }
-  }
-
-  /** Render mermaid diagrams from fenced code blocks. */
-  private async _renderMermaid() {
-    const nodes = this.querySelectorAll<HTMLElement>("div.mermaid");
-    if (nodes.length === 0) return;
-
-    const unrendered = Array.from(nodes).filter(
-      (n) => !n.hasAttribute("data-processed"),
-    );
-    if (unrendered.length === 0) return;
-
-    try {
-      const mermaid = await ensureMermaid();
-      await mermaid.run({ nodes: unrendered });
-    } catch {
-      // If mermaid fails, the raw source remains visible in the div
-    }
+    await renderCodeAndDiagrams(this);
   }
 }
 

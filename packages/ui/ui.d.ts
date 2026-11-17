@@ -10,7 +10,9 @@
  * The elements draw in the light DOM, with Reins' rules low in the cascade (the page's `components` layer): your own
  * CSS restyles them when you mean it to. Their colors and sizes are Reins' design tokens.
  *
- * This file is the contract (part of an SDK version); `src/` implements it (checked by `src/contract.ts`).
+ * This file is the contract (part of an SDK version); `src/` implements the kit's elements (checked by
+ * `src/contract.ts`), and the app implements `<reins-markdown>` (checked where it does: it `implements` the
+ * interface).
  */
 
 export type BadgeTone = "attention" | "info" | "neutral";
@@ -44,13 +46,28 @@ export interface ReinsSidebarRowElement extends HTMLElement {
   accessibleLabel: string | null;
 }
 
+/**
+ * `<reins-markdown>`: Markdown, drawn as the chat draws it (its styles, code highlighting, Mermaid diagrams), in
+ * the light DOM. The app defines it, from the chat's own renderer, in the page's global registry before extensions
+ * load: it is there whether or not you import this module, and `define(registry)` gives your scoped registry it too.
+ * The text may come from outside (an issue, an email): raw HTML is left out, tags and all; links keep only
+ * http(s), mailto and relative URLs, and one that leaves the page opens in a new tab; images keep only http(s)
+ * URLs. Images show as they are (no viewer).
+ */
+export interface ReinsMarkdownElement extends HTMLElement {
+  /** Attribute `text`: the Markdown. No attribute is no text. */
+  text: string;
+}
+
 /** Defines the elements in `registry` (a scoped one, such as `@reins/sdk/lit`'s `registry`); null is the global
- * registry, where importing the module defines them. A name already defined there is left as it is. */
+ * registry, where importing the module defines the kit's. A scoped registry also gets the elements the app defines
+ * globally (`<reins-markdown>`). A name already defined there is left as it is. */
 export function define(registry: CustomElementRegistry | null): void;
 
 declare global {
   interface HTMLElementTagNameMap {
     "reins-badge": ReinsBadgeElement;
+    "reins-markdown": ReinsMarkdownElement;
     "reins-sidebar-row": ReinsSidebarRowElement;
   }
 }

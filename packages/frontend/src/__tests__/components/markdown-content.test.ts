@@ -6,7 +6,8 @@
  * <div class="mermaid"> instead of <pre><code>.
  */
 import { describe, test, expect, spyOn } from "bun:test";
-import { imageViewerDetailFromMarkdownTarget, MarkdownContent, parseMarkdown } from "../../components/markdown-content.js";
+import { imageViewerDetailFromMarkdownTarget, MarkdownContent } from "../../components/markdown-content.js";
+import { parseMarkdown } from "../../components/markdown-rendering.js";
 import { streamingTelemetry } from "../../models/streaming-telemetry.js";
 import { referenceDecorators } from "../helpers/reins-sdk.js";
 
@@ -136,6 +137,18 @@ describe("parseMarkdown", () => {
     const result = parseMarkdown(md);
     const matches = result.match(/<div class="mermaid">/g);
     expect(matches).toHaveLength(2);
+  });
+});
+
+describe("links", () => {
+  test("a link that leaves the page opens in a new tab; one in the app stays in its tab", () => {
+    expect(parseMarkdown("[out](https://example.com/a?b=1) and www.example.org")).toBe(
+      '<p><a href="https://example.com/a?b=1" target="_blank" rel="noopener noreferrer">out</a> and '
+      + '<a href="http://www.example.org" target="_blank" rel="noopener noreferrer">www.example.org</a></p>\n',
+    );
+    expect(parseMarkdown("[in](/sessions) [mail](mailto:a@example.com)")).toBe(
+      '<p><a href="/sessions">in</a> <a href="mailto:a@example.com">mail</a></p>\n',
+    );
   });
 });
 
