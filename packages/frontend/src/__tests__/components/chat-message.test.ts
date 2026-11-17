@@ -168,6 +168,22 @@ describe("ChatMessage", () => {
     expect(unattributed).toContain("state: MERGED");
   });
 
+  test("a typed message's details are opened from their label: a /skill's text folds under the message as typed", () => {
+    const output = templateToString(displayMessage({
+      role: "user", timestamp: 2,
+      content: [{ type: "text", text: "/mine go" }, { type: "text", text: "<skill name=\"mine\">BODY</skill>" }],
+      metadata: { details: { label: "Skill /mine", start: 1 } },
+    }).render());
+    const bubble = output.slice(output.indexOf('data-role="user-message-bubble"'), output.indexOf('data-role="message-details"'));
+    const summary = output.slice(output.indexOf("<summary"), output.indexOf("</summary>"));
+
+    expect(bubble).toContain("/mine go");
+    expect(bubble).not.toContain("BODY");
+    expect(summary).toContain("Skill /mine");
+    expect(output.match(/Skill \/mine/g)).toHaveLength(1);
+    expect(output.indexOf("BODY")).toBeGreaterThan(output.indexOf("</summary>"));
+  });
+
   test("renders assistant text and associated tool results in native content order", () => {
     const assistant: AgentAssistantMessage = {
       role: "assistant",

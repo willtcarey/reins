@@ -235,9 +235,9 @@ export async function buildSessionRuntime({ serverProcess, sessionId, projectId,
       hydratePrompt: async (id, content) => hydratePrompt(attachments, id, content),
       // A prompt's attachments are checked against the store before Pi admits it. A kind without the
       // environment (a utility kind) sees exactly what was submitted: no skills are expanded.
-      expandPrompt: async content => {
+      expandPrompt: async (content, metadata) => {
         materializePromptAttachments(attachments, sessionId, content);
-        return configuration.environment ? expandSkills(content, nodeSkills) : content;
+        return configuration.environment ? expandSkills(content, metadata, nodeSkills) : { content, metadata };
       },
       emit,
       // Running is the runtime's busy state: browsers hear of each change, and read it from the views.

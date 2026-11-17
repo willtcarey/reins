@@ -68,8 +68,8 @@ export class CompactionRefusedError extends Error {
 
 /** Attachment references to provider bytes (the runtime's attachment cache in front of the store). */
 type HydratePrompt = (sessionId: string, content: ClientPromptContent) => Promise<ProviderBlock[]>;
-/** Rewrites submitted prompt/steer content before admission (slash expansion of skills). */
-type ExpandPrompt = (content: ClientPromptContent) => Promise<ClientPromptContent>;
+/** Rewrites submitted prompt/steer content and its metadata before admission (slash expansion of skills). */
+type ExpandPrompt = (content: ClientPromptContent, metadata: Record<string, unknown>) => Promise<{ content: ClientPromptContent; metadata: Record<string, unknown> }>;
 /**
  * A run's system prompt, prepared at its first assistant request (Pi resolves the system prompt there,
  * before `before_request`, with nothing of the request recorded yet: a clean pause point). It may wait
@@ -504,9 +504,9 @@ export class AgentHarnessPiRuntime implements SessionRuntime {
     options: RuntimePromptOptions = {},
   ): Promise<RuntimePromptSubmission> {
     const reinsId = options.reinsId ?? crypto.randomUUID();
-    const expanded = await this.expandPrompt(content);
+    const expanded = await this.expandPrompt(content, options.metadata ?? {});
     return this.deduplicateAdmission(`prompt:${reinsId}`, () => (
-      this.admitPrompt(expanded, { ...options, reinsId })
+      this.admitPrompt(expanded.content, { ...options, metadata: expanded.metadata, reinsId })
     ));
   }
 
@@ -642,7 +642,8 @@ export class AgentHarnessPiRuntime implements SessionRuntime {
   }
 
   async steer(content: ClientPromptContent, options: RuntimePromptOptions = {}): Promise<void> {
-    const message = createReinsInputMessage(await this.expandPrompt(content), options.reinsId, options.metadata);
+    const expanded = await this.expandPrompt(content, options.metadata ?? {});
+    const message = createReinsInputMessage(expanded.content, options.reinsId, expanded.metadata);
     await this.deduplicateAdmission(`steer:${message.reinsId}`, () => this.admitSteering(message));
   }
 

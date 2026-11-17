@@ -49,7 +49,7 @@ async function openRuntime(sessionId: string, params: Pick<CreateAgentHarnessPiR
     sessionEnvironment: { provider: "faux", modelId: "fake" },
     lifecycle: { started() {}, settled() {} },
     hydratePrompt: async (id, content) => hydratePrompt(new AttachmentCache(), id, content),
-    expandPrompt: async content => content,
+    expandPrompt: async (content, metadata) => ({ content, metadata }),
     emit: event => { for (const listener of subscribed) listener(event); },
     // Runs a test fails on purpose log their failure; the tests check the outcome.
     onError: () => undefined,

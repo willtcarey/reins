@@ -46,29 +46,40 @@ REINS documentation (read only when the user asks about REINS itself):
 });
 
 const skill = (name: string, filePath: string, content: string): Skill => ({ name, description: name, filePath, disableModelInvocation: false, content });
-const text = (blocks: Awaited<ReturnType<typeof expandSkills>>) => blocks.find(block => block.type === "text")?.text;
 const offline = async (): Promise<never> => { throw new Error("The node's skills are unavailable (node offline)"); };
-
-describe("expandSkills", () => {
-  test("each /name of a skill expands into a block before the content, the first text block's; names no skill has are left as they are", async () => {
-    const skills = async () => [skill("repo-skill", "/repo/.agents/skills/repo-skill/SKILL.md", "REPO_BODY"), skill("mine", "/home/u/.agents/skills/mine/SKILL.md", "MINE_BODY")];
-    expect(text(await expandSkills([{ type: "text", text: "/mine go" }], skills))).toBe(`<skill name="mine" location="/home/u/.agents/skills/mine/SKILL.md">
+const MINE = `<skill name="mine" location="/home/u/.agents/skills/mine/SKILL.md">
 References are relative to /home/u/.agents/skills/mine.
 
 MINE_BODY
-</skill>
+</skill>`;
 
-/mine go`);
+describe("expandSkills", () => {
+  const skills = async () => [skill("repo-skill", "/repo/.agents/skills/repo-skill/SKILL.md", "REPO_BODY"), skill("mine", "/home/u/.agents/skills/mine/SKILL.md", "MINE_BODY")];
 
-    const both = text(await expandSkills([{ type: "text", text: "/repo-skill and /mine and /nobody" }], skills));
-    expect(both).toStartWith(`<skill name="repo-skill" location="/repo/.agents/skills/repo-skill/SKILL.md">`);
-    expect(both).toContain("MINE_BODY");
-    expect(both).toEndWith("\n\n/repo-skill and /mine and /nobody");
+  test("the message stays as typed; each /name of a skill follows it as a hidden block, labelled; names no skill has are left as they are", async () => {
+    expect(await expandSkills([{ type: "text", text: "/mine go" }], {}, skills)).toEqual({
+      content: [{ type: "text", text: "/mine go" }, { type: "text", text: MINE }],
+      metadata: { details: { start: 1, label: "Skill /mine" } },
+    });
+
+    const both = await expandSkills([{ type: "text", text: "/repo-skill and /mine and /nobody" }], {}, skills);
+    expect(both.content.map(block => block.type === "text" ? block.text.slice(0, 30) : block.type)).toEqual([
+      "/repo-skill and /mine and /nob", '<skill name="repo-skill" locat', '<skill name="mine" location="/',
+    ]);
+    expect(both.metadata).toEqual({ details: { start: 1, label: "Skills /repo-skill, /mine" } });
+  });
+
+  test("a message that has hidden blocks already gets the skills after them, under its own label; its other metadata is kept", async () => {
+    const content = [{ type: "text" as const, text: "/mine now" }, { type: "text" as const, text: "output" }];
+    expect(await expandSkills(content, { details: { start: 1, label: "Command output" }, sourceExtension: "x" }, skills)).toEqual({
+      content: [...content, { type: "text", text: MINE }],
+      metadata: { details: { start: 1, label: "Command output" }, sourceExtension: "x" },
+    });
   });
 
   test("content without a /name token is admitted as it is without asking the node; a node that cannot answer fails the expansion", async () => {
     const content = [{ type: "text" as const, text: "no skills here, a/path" }];
-    expect(await expandSkills(content, offline)).toEqual(content);
-    await expect(expandSkills([{ type: "text", text: "/repo-skill" }], offline)).rejects.toThrow("unavailable");
+    expect(await expandSkills(content, { a: 1 }, offline)).toEqual({ content, metadata: { a: 1 } });
+    await expect(expandSkills([{ type: "text", text: "/repo-skill" }], {}, offline)).rejects.toThrow("unavailable");
   });
 });

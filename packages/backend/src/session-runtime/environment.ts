@@ -70,29 +70,32 @@ REINS documentation (read only when the user asks about REINS itself):${devDocs 
   return prompt;
 }
 
+/** A prompt with its metadata, as a session admits it. */
+export interface ExpandedPrompt { content: PromptBlock[]; metadata: Record<string, unknown> }
+
 /**
- * Expands slash invocations of skills (`/name`) into the prompt's first text block. `skills` (which needs
- * the session's node) is asked only when the content has a `/name` token, and its failure (the node
- * offline) fails the expansion. Names no skill has are left as they are.
+ * Expands slash invocations of skills (`/name`): the message stays as typed, and each skill's text follows it as a
+ * hidden block (the chat folds it under the message, labelled with the skills' names; the model gets it after the
+ * message's text). A message that has hidden blocks already gets the skills after them, under its own label.
+ * `skills` (which needs the session's node) is asked only when the content has a `/name` token, and its failure
+ * (the node offline) fails the expansion. Names no skill has are left as they are.
  */
-export async function expandSkills(content: PromptBlock[], skills: () => Promise<Skill[]>): Promise<PromptBlock[]> {
+export async function expandSkills(content: PromptBlock[], metadata: Record<string, unknown>, skills: () => Promise<Skill[]>): Promise<ExpandedPrompt> {
   const tokens = content.flatMap(block => block.type === "text"
     ? [...block.text.matchAll(/(^|\s)\/([a-z0-9-]+)(?=\s|$)/g)].map(match => match[2]!)
     : []);
-  if (!tokens.length) return content;
+  if (!tokens.length) return { content, metadata };
 
   const byName = new Map((await skills()).map(skill => [skill.name, skill]));
-  const blocks: string[] = [];
-  for (const name of tokens) {
-    const skill = byName.get(name);
-    if (skill) blocks.push(formatSkillInvocation(skill));
-  }
-  if (!blocks.length) return content;
-  const firstTextIndex = content.findIndex(block => block.type === "text");
-  return content.map((block, index) => index === firstTextIndex && block.type === "text"
-    ? { ...block, text: `${blocks.join("\n\n")}\n\n${block.text}` }
-    : block);
+  const used = [...new Set(tokens)].flatMap(name => byName.get(name) ?? []);
+  if (!used.length) return { content, metadata };
+  const hidden = used.map(skill => ({ type: "text" as const, text: formatSkillInvocation(skill) }));
+  if (hasDetails(metadata)) return { content: [...content, ...hidden], metadata };
+  const label = `${used.length === 1 ? "Skill" : "Skills"} ${used.map(skill => `/${skill.name}`).join(", ")}`;
+  return { content: [...content, ...hidden], metadata: { ...metadata, details: { start: content.length, label: label.slice(0, 80) } } };
 }
+
+const hasDetails = (metadata: Record<string, unknown>) => typeof metadata.details === "object" && metadata.details !== null;
 
 /** Where the branch begins is only shown: one that cannot be found (no common history with the base
  * branch) leaves the task without it rather than fail the run. */
