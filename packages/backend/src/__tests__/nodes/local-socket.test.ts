@@ -38,8 +38,11 @@ test("creates a private directory and a 0600 socket, accepts NDJSON connections,
 test("replaces a stale socket nobody accepts on, and fails clearly while another listener is live", async () => {
   using temp = tempDir();
   const path = join(temp.dir, "node.sock");
-  // A socket file left by a process that exited without cleanup: Bun leaves the file and nothing accepts on it.
-  Bun.listen({ unix: path, socket: { data() {} } }).stop(true);
+  // A socket file left by a process that exited without cleanup (killed): the file stays and nothing accepts on it.
+  const stale = Bun.spawn([process.execPath, "-e", `Bun.listen({ unix: ${JSON.stringify(path)}, socket: { data() {} } }); setInterval(() => {}, 1000)`]);
+  for (let i = 0; i < 200 && !existsSync(path); i++) await Bun.sleep(10);
+  stale.kill("SIGKILL");
+  await stale.exited;
   expect(lstatSync(path).isSocket()).toBe(true);
   await expect(connect(path)).rejects.toThrow();
   const listener = await listenLocalNodeSocket(path, () => {});
