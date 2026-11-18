@@ -38,7 +38,10 @@ test("private loopback WS negotiates, then calls the node's commands: the protoc
     expect(await peer.call("pi.execKill", { execId: "e1" })).toEqual({ killed: true });
     expect(await peer.call("pi.execKill", { execId: "e1" })).toEqual({ killed: false });
     // Any method of the version is called; one the node does not serve is its answer.
-    await expect(peer.call("fs.info", { cwd: "/tmp", path: "." })).rejects.toMatchObject({ code: METHOD_NOT_FOUND });
+    // Settled before `expect`: on Bun 1.4.4, `expect(promise).rejects` waiting inside a Bun.serve WebSocket
+    // message callback (this continuation runs there) breaks the server's frame parsing, closing the link.
+    const unserved = await peer.call("fs.info", { cwd: "/tmp", path: "." }).catch((error: unknown) => error);
+    expect(unserved).toMatchObject({ code: METHOD_NOT_FOUND });
   } finally {
     node?.close(); serverPeer?.close(); client.close(); server.stop(true);
   }

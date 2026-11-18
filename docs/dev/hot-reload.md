@@ -114,3 +114,22 @@ kill -HUP <server pid>              # restart the supervised server alone (proce
 ```
 
 For protocol changes, work in a separate worktree and test against isolated ports, databases and sockets, then restart the server and node together at a deliberate idle point.
+
+## A second instance for testing
+
+To try something on a real instance (another Bun version, a protocol change, a migration) while `bun run dev` serves your checkout, run a second dev instance from a worktree, with nothing shared with the first:
+
+```sh
+git worktree add --detach /tmp/reins-try HEAD        # then apply your uncommitted changes there (git diff | git -C /tmp/reins-try apply)
+mkdir -m 700 -p /tmp/reins-try-state/run              # the node socket's directory must be private: the server refuses it otherwise
+cd /tmp/reins-try && bun install
+tmux new-session -d -s reins-try "REINS_PORT=3199 REINS_DATA_DIR=/tmp/reins-try-state/data \
+  REINS_NODE_SOCKET=/tmp/reins-try-state/run/node.sock REINS_NODE_DATA_DIR=/tmp/reins-try-state/node-home \
+  bun run dev 2>&1 | tee /tmp/reins-try-state/dev.log"
+```
+
+- **Why each variable:** `REINS_PORT` (the HTTP port), `REINS_DATA_DIR` (its database, secret key and Pi catalog; else `.reins/` in the cwd), `REINS_NODE_SOCKET` (else both use `~/.reins/run/node.sock`: the second server refuses to listen on a socket another server holds, and its node connects to the first server), `REINS_NODE_DATA_DIR` (the node's home, else `~/.reins`, shared with the first node and an installed one). A worktree, not the same checkout: a dev instance watches its checkout, so an edit made to test the second would reload the first too. `.dev-build/<pid>/` is per process either way.
+- **Another Bun:** put it first in `PATH` for the `tmux` command (`PATH=$HOME/.local/share/mise/installs/bun/<version>/bin:$PATH`) or use `mise exec bun@<version> --`; the supervisor runs every child on the Bun that started it.
+- **Models without the first instance's credentials:** the new database has none. Keys in the environment (e.g. `OPENROUTER_API_KEY`) are seen as for any server. For a run with no model at all, set `REINS_TEST_FAUX_PROVIDER=<provider id>` (test hook: model `fake` echoes the prompt; `[bash:<command>]` in a prompt makes it call bash first, `pi/test-faux-provider.ts`), store any API key for that provider and make it the default model.
+- **Driving it:** the browser at `http://localhost:3199`, or `@reins/client` (`new ReinsClient({ baseUrl: "http://localhost:3199" })`) from a script in a package of the worktree (where the workspace packages resolve). `reins.*` scripts (`execute`) need a session with a model that calls the tool.
+- **When done:** stop it (Ctrl-C in its pane: the supervisor stops all its processes and the server removes its socket), then `git worktree remove --force /tmp/reins-try` and `rm -rf /tmp/reins-try-state`.

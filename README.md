@@ -93,4 +93,6 @@ bun run test         # fast suite, every package (in-process only)
 bun run test:process # real server/node/supervisor process tests; run before merging
 ```
 
+To try a change on a real instance without touching the one you work in (another Bun version, a risky migration), run a second one with its own port, data and node paths: see [docs/dev/hot-reload.md](docs/dev/hot-reload.md) *A second instance for testing*.
+
 Server code hot-reloads, the session runtime and node hub included: running sessions are kept (each keeps its code until it is idle), the node redials, and tool calls continue through the redial. Only the process owner (bootstrap, `server-process.ts`, the dev bundler, the process-owned session state and database connection) and the supervisor require a server restart; `@reins/node-protocol` changes require restarting the server and node together. The node does not hot reload: reload it (`bun run node:reload`) to run changed node code. The watcher logs restart-required warnings instead of partially applying startup/protocol edits. See [docs/dev/hot-reload.md](docs/dev/hot-reload.md).
