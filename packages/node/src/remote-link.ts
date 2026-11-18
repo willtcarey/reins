@@ -54,12 +54,22 @@ function dialWebSocket(url: string, maxFrameBytes: number, dialTimeoutMs: number
       resolve();
     };
     ws.onmessage = event => wire?.receive(event.data);
+    // Why a dial failed, e.g. "Failed to connect" or "Expected 101 status code: 503" for a server answering 503
+    // while it reloads. Bun 1.4 gives it only in the error event ("WebSocket connection to '…' failed: …"),
+    // closing with an empty reason; Bun 1.3 gave it as the close reason too.
+    let failure = "";
+    ws.onerror = event => {
+      const message = event instanceof ErrorEvent ? event.message : "";
+      failure = message.replace(/^WebSocket connection to '.*?' failed: /, "");
+    };
     ws.onclose = event => {
       clearTimeout(timeout);
       stopPolling();
       if (wire) wire.ended();
-      // Bun's reason, e.g. "Expected 101 status code" for a server answering 503 while it reloads.
-      else if (!timedOut) reject(new Error(`WebSocket to ${url} closed before opening${event.reason ? ` (${event.reason})` : ""}`));
+      else if (!timedOut) {
+        const reason = event.reason || failure;
+        reject(new Error(`WebSocket to ${url} closed before opening${reason ? ` (${reason})` : ""}`));
+      }
     };
   });
 }

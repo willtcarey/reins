@@ -77,6 +77,10 @@ Before adding or keeping a test, ask:
 - Is another layer already covering the same contract?
 - Can several nearby micro-tests be collapsed into one clearer scenario?
 
+### Bun pitfalls
+
+- **`expect(promise).rejects` / `.resolves` runs the event loop nested** until the promise settles. Code that a `Bun.serve` WebSocket `message` callback resumes (an `await` on a reply that callback delivered) is still inside the callback; nesting the loop there makes Bun 1.4.4's server misread the socket's next frame ("Received new message inside a fragmented message", close 1006). After such an `await`, settle the promise first, then assert: `const error = await call().catch(e => e); expect(error).toMatchObject(...)` (`server-peer.test.ts`).
+
 ## Scope
 
 This is the default for backend and frontend code going forward. Existing non-mirrored tests can remain temporarily, but new tests should follow this structure and quality guidance.
