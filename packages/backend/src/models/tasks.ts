@@ -4,7 +4,7 @@
  * Business logic for task lifecycle: creation, listing, update, and deletion.
  * Orchestrates store calls, branch-name derivation, the checkout's git (diff stats, deleting a branch)
  * and WebSocket broadcasts. A task's branch is made where its sessions work, by their runs
- * (`prepareCheckout`), not here.
+ * (Reins' own hook before a run, `sessions/hooks/task-branch.ts`), not here.
  *
  * Accessed via `ProjectModel.tasks()` — not constructed directly by callers.
  */
@@ -52,7 +52,10 @@ export class TaskHasActiveSessionsError extends Error {
 export interface CreateTaskParams {
   title: string;
   description: string;
+  /** Its own branch: its sessions work on it. */
   branch_name?: string;
+  /** Give it a branch of its own named from its title, when `branch_name` is not given. */
+  branch?: boolean;
 }
 
 export interface TaskWithDiffStats extends TaskListItem {
@@ -74,14 +77,15 @@ export class ProjectTasks {
   private get broadcast(): Broadcast { return this.nodes.broadcast; }
 
   /**
-   * Create a task and broadcast it. Touches no checkout: its branch is made by its sessions' runs where
-   * they work (`TaskBranch`), adopting one that exists there or on origin. A name derived from the title
-   * that another of the project's tasks has gets a suffix; a name given is kept, to adopt that branch.
+   * Create a task and broadcast it. Touches no checkout. It has a branch of its own when one is given or asked
+   * for (`branch`: named from the title); its sessions then work on it (the Task branches extension makes it,
+   * or adopts one of that name that exists, where they work). A name derived from the title that another of the
+   * project's tasks has gets a suffix; a name given is kept, to adopt that branch.
    */
   async create(params: CreateTaskParams): Promise<TaskRow> {
     const given = params.branch_name?.trim();
-    let branchName = given || slugifyBranchName(params.title);
-    if (!given && projectHasTaskBranch(this.projectId, branchName)) branchName = `${branchName}-${Date.now().toString(36).slice(-4)}`;
+    let branchName = given || (params.branch ? slugifyBranchName(params.title) : null);
+    if (!given && branchName && projectHasTaskBranch(this.projectId, branchName)) branchName = `${branchName}-${Date.now().toString(36).slice(-4)}`;
 
     const task = createTask(this.projectId, params.title.trim(), params.description?.trim() || null, branchName);
     this.broadcast({ type: "task_updated", projectId: this.projectId });
@@ -108,8 +112,9 @@ export class ProjectTasks {
   /**
    * List tasks for a project, optionally filtered by status, enriching open ones with diff stats.
    *
-   * Per-task errors (e.g. missing branch) are swallowed — the task is
-   * returned with `diffStats: null`.
+   * A task with a branch of its own is measured against the base branch; one without, by the checkout's
+   * changes since the commit it started on (none before its first run). Per-task errors (e.g. a missing
+   * branch) are swallowed: the task is returned with `diffStats: null`.
    */
   async listWithDiffStats(
     status?: TaskStatus,
@@ -123,7 +128,9 @@ export class ProjectTasks {
           return { ...task, diffStats: null };
         }
         try {
-          const diffStats = await this.git.getDiffStats(task.branch_name, this.baseBranch);
+          const diffStats = task.branch_name ? await this.git.getDiffStats(task.branch_name, this.baseBranch)
+            : task.base_commit ? await this.git.getDiffStatsSince(task.base_commit)
+            : null;
           return { ...task, diffStats };
         } catch {
           return { ...task, diffStats: null };
@@ -167,8 +174,7 @@ export class ProjectTasks {
   }
 
   /**
-   * Reopen a closed task and broadcast the change. A branch deleted meanwhile is made again by its next
-   * session's run. Throws if the task doesn't exist.
+   * Reopen a closed task and broadcast the change. Throws if the task doesn't exist.
    */
   reopen(taskId: number): TaskRow {
     if (!this.get(taskId)) throw new TaskNotFoundError();
@@ -179,7 +185,7 @@ export class ProjectTasks {
   }
 
   /**
-   * Delete a task, its sessions/messages, and remove the git branch. The counterpart to `create`.
+   * Delete a task, its sessions/messages, and remove its git branch if it has one. The counterpart to `create`.
    *
    * Throws if the task doesn't exist, doesn't belong to the project,
    * or has active sessions (`sessionActivity`). The sessions' live runtimes (`serverProcess`'s) are closed
@@ -206,14 +212,16 @@ export class ProjectTasks {
     this.broadcast({ type: "task_updated", projectId: this.projectId });
 
     // Delete the git branch (best-effort — may fail if checked out)
+    const branch = task.branch_name;
+    if (!branch) return;
     try {
       const currentBranch = await this.git.getCurrentBranch();
-      if (currentBranch === task.branch_name) {
+      if (currentBranch === branch) {
         await this.git.checkoutBranch(this.baseBranch);
       }
-      await this.git.deleteBranch(task.branch_name);
+      await this.git.deleteBranch(branch);
     } catch (err: any) {
-      logger.warn(`  Could not delete branch ${task.branch_name}: ${err.message}`);
+      logger.warn(`  Could not delete branch ${branch}: ${err.message}`);
     }
   }
 }

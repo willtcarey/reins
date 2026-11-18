@@ -78,7 +78,7 @@ export class SessionDiff {
     this.listeners.clear();
   }
 
-  /** Scopes the diff and the review once the session's details and its task's branch are known, so it fetches once. */
+  /** Scopes the diff and the review once the session's details and its task's branch (or start) are known, so it fetches once. */
   private async scope(): Promise<void> {
     const detail = this.app.sessionCache.getDetail(this.sessionId) ?? await this.app.sessionCache.fetchDetail(this.sessionId);
     if (this.disposed || !detail) return;
@@ -88,10 +88,9 @@ export class SessionDiff {
       await this.app.projectsStore.ensureLoaded(projectId);
       if (this.disposed) return;
     }
-    const branch = projectId == null || taskId == null
-      ? null
-      : this.app.projectsStore.peekStore(projectId)?.findTask(taskId)?.branch_name ?? null;
-    this.files.setScope(this.sessionId, branch, projectId);
+    const task = projectId == null || taskId == null ? undefined : this.app.projectsStore.peekStore(projectId)?.findTask(taskId);
+    // A task without a branch of its own shows what its checkout changed since the task started.
+    this.files.setScope(this.sessionId, task?.branch_name ?? null, projectId, task && !task.branch_name ? task.base_commit : null);
     if (projectId != null) void this.review.setScope({ projectId, taskId });
   }
 

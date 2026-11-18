@@ -30,7 +30,7 @@ describe("ProjectTasks", () => {
     model = new ProjectModel(projectId, new Nodes(loopback.state, broadcast));
   });
 
-  test("creates the task's row, and no branch: its sessions' runs make it where they work", async () => {
+  test("creates the task's row with no branch unless one is asked for", async () => {
     const params: CreateTaskParams = {
       title: "Add login page",
       description: "Build the login UI",
@@ -44,34 +44,34 @@ describe("ProjectTasks", () => {
     expect(task.title).toBe("Add login page");
     expect(task.description).toBe("Build the login UI");
     expect(task.status).toBe("open");
-    expect(task.branch_name).toStartWith("task/");
+    expect(task.branch_name).toBeNull();
     expect(task.base_commit).toBeNull();
     expect(task.created_at).toBeTruthy();
     expect(task.updated_at).toBeTruthy();
 
-    expect(await localGit(repo.dir).branchExists(task.branch_name)).toBe(false);
 
     // DB row matches what getTask returns
     const fetched = getTask(task.id);
     expect(fetched).toEqual(task);
   });
 
-  test("derives branch name from title when not provided", async () => {
-    const task = await model.tasks().create({ title: "Fix broken tests", description: "" });
+  test("a task asked to have a branch gets one named from its title, made by no one yet", async () => {
+    const task = await model.tasks().create({ title: "Fix broken tests", description: "", branch: true });
 
     expect(task.branch_name).toBe("task/fix-broken-tests");
+    expect(await localGit(repo.dir).branchExists("task/fix-broken-tests")).toBe(false);
   });
 
-  test("uses provided branch name when given", async () => {
+  test("a branch name given is the task's branch", async () => {
     const task = await model.tasks().create({ title: "Some task", description: "", branch_name: "task/custom-name" });
 
     expect(task.branch_name).toBe("task/custom-name");
   });
 
   test("a branch name derived from the title that another of the project's tasks has gets a suffix; one given is kept", async () => {
-    await model.tasks().create({ title: "My Feature", description: "" });
+    await model.tasks().create({ title: "My Feature", description: "", branch: true });
 
-    const derived = await model.tasks().create({ title: "My Feature", description: "" });
+    const derived = await model.tasks().create({ title: "My Feature", description: "", branch: true });
     const given = await model.tasks().create({ title: "Again", description: "", branch_name: "task/my-feature" });
 
     expect(derived.branch_name).toStartWith("task/my-feature-");
@@ -122,6 +122,20 @@ describe("ProjectTasks", () => {
     await expect(model.tasks().delete(task.id, loopback.state.process)).rejects.toThrow("currently running");
     expect(getTask(task.id)).not.toBeNull();
     expect(getSession("node-active")!.activity_state).toBe("running");
+  });
+
+  test("deleting a task deletes its own branch, and no branch of a task without one", async () => {
+    const git = localGit(repo.dir);
+    await git.createBranch("task/owned", "main");
+    await git.createBranch("task/unrelated", "main");
+    const owned = createTask(projectId, "Owned", null, "task/owned");
+    const branchless = createTask(projectId, "Branchless", null, null);
+
+    await model.tasks().delete(owned.id, loopback.state.process);
+    await model.tasks().delete(branchless.id, loopback.state.process);
+
+    expect(await git.branchExists("task/owned")).toBe(false);
+    expect(await git.branchExists("task/unrelated")).toBe(true);
   });
 
   test("deleting a task closes its sessions' live runtimes before their rows go", async () => {

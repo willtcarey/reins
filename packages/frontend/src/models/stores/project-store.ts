@@ -350,10 +350,10 @@ export class ProjectStore {
     }
   }
 
-  /** Generate a task from a freeform prompt. */
-  async generateTask(prompt: string): Promise<{ ok: true } | { error: string }> {
+  /** Generate a task from a freeform prompt; with `branch`, it gets a branch of its own. */
+  async generateTask(prompt: string, { branch = false }: { branch?: boolean } = {}): Promise<{ ok: true } | { error: string }> {
     try {
-      await api.tasks.generate(this.projectId, { prompt });
+      await api.tasks.generate(this.projectId, { prompt, ...(branch ? { branch } : {}) });
       return { ok: true };
     } catch (error) {
       return { error: error instanceof ReinsHttpError ? error.message : "Network error" };

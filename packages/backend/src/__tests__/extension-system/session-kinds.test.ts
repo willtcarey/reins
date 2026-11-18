@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { ServerSdk, SessionKind, SessionKindContext, SystemPromptContext } from "@reins/sdk/server";
 import { getCurrentSystemPrompt, getCurrentTools } from "@earendil-works/pi-ai";
 import { useTestDb } from "../helpers/test-db.js";
-import { useTestRepo } from "../helpers/test-repo.js";
+import { git, useTestRepo } from "../helpers/test-repo.js";
 import { createAppState, type TestAppState } from "../helpers/app-state.js";
 import { loopbackLink, stopLoopbackNode } from "../helpers/loopback-node.js";
 import { useFakeModel, type FakeTurn } from "../helpers/fake-model.js";
@@ -12,8 +12,6 @@ import { createProject } from "../project-fixture.js";
 import { createTask } from "../../task-store.js";
 import { getSession } from "../../session-store.js";
 import { createSession } from "../session-fixture.js";
-import { getSource } from "../../node-store.js";
-import { SessionModel } from "../../models/session.js";
 import { buildRouter } from "../../routes/index.js";
 import { buildApiObject } from "../../sdk-host/scripts.js";
 import { SessionHandleSchema } from "../../sdk-host/sessions.js";
@@ -33,7 +31,7 @@ describe("session kinds of extensions", () => {
   let other: ServerSdk;
   /** What each extension registers as its `coordinator` kind; a test changes it before the app starts. */
   let kinds: Record<"coord" | "other", SessionKind>;
-  let seen: { kind: SessionKindContext[]; sections: SystemPromptContext[] };
+  let seen: { kind: SessionKindContext[]; sections: SystemPromptContext[]; runs: { sessionId: string; tools: readonly string[] | null }[] };
 
   const start = async () => {
     state = createAppState(undefined, {
@@ -45,7 +43,8 @@ describe("session kinds of extensions", () => {
             coord = reins;
             const section = reins.sessions.registerSystemPromptSection(context => { seen.sections.push(context); return "Coord's section"; });
             const kind = reins.sessions.registerKind("coordinator", kinds.coord);
-            return async () => { await section(); await kind(); };
+            const hook = reins.sessions.beforeRun(({ session, tools }) => { seen.runs.push({ sessionId: session.id, tools }); });
+            return async () => { await section(); await kind(); await hook(); };
           },
         },
         {
@@ -63,7 +62,7 @@ describe("session kinds of extensions", () => {
   };
 
   beforeEach(() => {
-    seen = { kind: [], sections: [] };
+    seen = { kind: [], sections: [], runs: [] };
     kinds = {
       coord: { systemPrompt: context => { seen.kind.push(context); return "You coordinate."; }, tools: ["execute", "search"], environment: false },
       other: { systemPrompt: () => "You are the other coordinator.", tools: ["read"], environment: false },
@@ -121,23 +120,22 @@ describe("session kinds of extensions", () => {
     turn.finish();
   });
 
-  test("a kind's task session checks out its task's branch when it is offered tools; one with no tools changes nothing on open", async () => {
+  test("a kind's task session works on its task's branch when it is offered tools; one offered none (a utility kind) has no checkout; hooks are told the tools", async () => {
     kinds.other = { systemPrompt: () => "Summarize.", tools: [], environment: false };
     await start();
     const project = createProject("Project", repo.dir);
     const task = createTask(project.id, "Ship it", null, "task/ship-it");
-    const contextOf = async (sessionId: string) => {
-      const row = getSession(sessionId)!;
-      return new SessionModel(row, state.nodes).context(getSource(row.source_id)!, state.process.app);
-    };
     const created = (extension: ServerSdk) => extension.sessions.start("Go", { projectId: project.id, taskId: task.id, model: model.model, kind: "coordinator" });
 
-    const coordinated = await created(coord);
     const summarized = await created(other);
+    (await model.nextTurn(summarized.sessionId)).finish();
+    expect(await git(repo.dir, ["rev-parse", "--abbrev-ref", "HEAD"])).toBe("main");
+    const coordinated = await created(coord);
+    (await model.nextTurn(coordinated.sessionId)).finish();
+    expect(await git(repo.dir, ["rev-parse", "--abbrev-ref", "HEAD"])).toBe("task/ship-it");
 
-    expect((await contextOf(coordinated.sessionId)).branch).toMatchObject({ name: "task/ship-it" });
-    expect((await contextOf(summarized.sessionId)).branch).toBeNull();
-    for (const { sessionId } of [coordinated, summarized]) (await model.nextTurn(sessionId)).finish();
+    expect(seen.runs).toContainEqual({ sessionId: coordinated.sessionId, tools: ["execute", "search"] });
+    expect(seen.runs).toContainEqual({ sessionId: summarized.sessionId, tools: [] });
   });
 
   test("the kind's model is the session's when start gives none; a model start gives wins; a model the server does not have is refused", async () => {

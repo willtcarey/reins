@@ -15,7 +15,7 @@ function added(name: string, build: string | null, overrides: Partial<ExtensionV
     frontendFailure: null,
     build: build ? { id: build, frontend: { script: `/extension-bundles/${name}/${build}/frontend.js?g=0`, styles: null } } : null,
     errors: [],
-    registrations: { tools: null, systemPromptSections: 0, settlementListeners: 0, sessionKinds: [], scriptFunctions: [], httpMethods: [], pages: [] },
+    registrations: { tools: null, systemPromptSections: 0, settlementListeners: 0, beforeRunHooks: 0, sessionKinds: [], scriptFunctions: [], httpMethods: [], pages: [] },
     services: [],
     storage: null,
     ...overrides,

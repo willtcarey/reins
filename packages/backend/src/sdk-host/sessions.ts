@@ -3,8 +3,8 @@
  * `reins.sessions`, for an extension and an agent's script alike, over the `Sessions` model. The caller
  * decides the defaults and the origin: a script's session starts where the caller works and reports back to it as
  * its child, and its messages are session updates from it (`sourceSessionId`); an extension acts as no session,
- * so it names where a session works, and what it starts and sends records it (`sourceExtension`). Settlement
- * listeners are the host's (`ExtensionHost.sessionSettled`), for extensions only.
+ * so it names where a session works, and what it starts and sends records it (`sourceExtension`). Session
+ * hooks (`beforeRun`, `onSettled`) are `sessions/hooks/`'s.
  */
 
 import { Type } from "@sinclair/typebox";
@@ -265,7 +265,7 @@ async function fitToProvider(image: CheckedImage): Promise<CheckedImage> {
 }
 
 /** A message's blocks, checked whole before any image is stored, and where its hidden ones begin (with their label). */
-async function checkContent(message: MessageContent, blank: string): Promise<CheckedContent> {
+export async function checkContent(message: MessageContent, blank: string): Promise<CheckedContent> {
   if (typeof message === "string") {
     if (!message.trim()) throw new Error(blank);
     return { blocks: [{ type: "text", text: message }] };
@@ -292,7 +292,7 @@ async function checkContent(message: MessageContent, blank: string): Promise<Che
 }
 
 /** The submission's content: each image stored as an attachment of the session, and referred to in its place. */
-function storeImages(sessionId: string, { blocks, details }: CheckedContent): Pick<SessionSubmission, "content" | "details"> {
+export function storeImages(sessionId: string, { blocks, details }: CheckedContent): Pick<SessionSubmission, "content" | "details"> {
   const content = blocks.map((block): ClientPromptBlock => {
     if (block.type === "text") return block;
     const stored = storeSessionAttachment(sessionId, block.image);
@@ -321,7 +321,7 @@ function thinkingLevelOf(level: string): Exclude<SessionInfo["model"], null>["th
   return ThinkingLevelSchema.anyOf.find(member => member.const === level)?.const ?? "off";
 }
 
-function sessionInfo(context: CallContext, row: SessionRow): SessionInfo {
+export function sessionInfo(context: CallContext, row: SessionRow): SessionInfo {
   const source = resolveSource(row.source_id);
   const running = context.models.sessions.running(row);
   return {

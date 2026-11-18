@@ -46,13 +46,12 @@ export class DeleteTaskDialog extends LitElement {
             <div class="text-xs text-zinc-200 font-medium">${task.title}</div>
             ${task.description ? html`<div class="text-[11px] text-zinc-400 mt-1">${task.description}</div>` : nothing}
             <div class="text-[10px] text-zinc-500 mt-1.5">
-              Branch: <span class="text-zinc-400 font-mono">${task.branchName}</span>
-              · ${task.sessionCount} session${task.sessionCount !== 1 ? "s" : ""}
+              ${task.branchName ? html`Branch: <span class="text-zinc-400 font-mono">${task.branchName}</span> · ` : nothing}${task.sessionCount} session${task.sessionCount !== 1 ? "s" : ""}
             </div>
           </div>
           <p class="text-[11px] text-zinc-400">
-            This will permanently delete the task, all its sessions, and the git branch
-            <span class="font-mono text-zinc-300">${task.branchName}</span>.
+            ${task.branchName ? html`This will permanently delete the task, all its sessions, and the git branch
+            <span class="font-mono text-zinc-300">${task.branchName}</span>.` : "This will permanently delete the task and all its sessions."}
           </p>
         ` : nothing}
         .actions=${html`

@@ -134,11 +134,10 @@ describe("the task-generator kind", () => {
       return new SessionModel(row, state.nodes).context(getSource(row.source_id)!, state.process.app);
     };
 
-    const { branch, runtime } = await contextOf(TASK_GENERATOR_KIND);
+    const { runtime } = await contextOf(TASK_GENERATOR_KIND);
     const agent = await contextOf("agent");
 
     expect(agent.runtime.systemPrompt).toContain("## Automations");
-    expect(branch).toBeNull();
     expect(runtime).toEqual({ systemPrompt: expect.stringMatching(/^You parse user intent into a structured task definition\.[\s\S]*no extra text\.$/), tools: [], environment: false });
     expect(runtime.systemPrompt).not.toContain("Do it");
   });

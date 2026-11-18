@@ -5,7 +5,8 @@ import { createAppState, stubRuntime, useLoopbackState } from "../helpers/app-st
 import { useTestRepo, createTestRepo, commitFile } from "../helpers/test-repo.js";
 import { buildRouter } from "../../routes/index.js";
 import { createProject } from "../project-fixture.js";
-import { createTask, getTask, setTaskStatus } from "../../task-store.js";
+import { createTask, getTask, recordTaskStart, setTaskStatus } from "../../task-store.js";
+import { localGit } from "../helpers/local-git.js";
 import { createSession, updateSessionMetadata } from "../session-fixture.js";
 import { getSession } from "../../session-store.js";
 import { fauxAssistantMessage, fauxProvider, getCurrentSystemPrompt, getCurrentTools } from "@earendil-works/pi-ai";
@@ -60,7 +61,19 @@ describe("task routes", () => {
       const body = await res!.json();
       expect(body).toHaveLength(1);
       expect(body[0].title).toBe("My Task");
-      expect(body[0].diffStats).not.toBeNull();
+      expect(body[0].diffStats).toEqual({ additions: 1, removals: 0 });
+    });
+
+    test("measures a task without a branch of its own by the checkout's changes since the commit it started on; one that has not run, not at all", async () => {
+      const started = createTask(projectId, "Started", null, null);
+      const unstarted = createTask(projectId, "Unstarted", null, null);
+      recordTaskStart(started.id, { branch: "main", commit: (await localGit(repo.dir).revParse("HEAD")) });
+      await commitFile(repo.dir, "work.txt", "one\ntwo\n", "Work");
+
+      const res = await router.handle(makeRequest("GET", `/api/projects/${projectId}/tasks`), state);
+      const body: { id: number; diffStats: unknown }[] = await res!.json();
+      expect(body.find(task => task.id === started.id)?.diffStats).toEqual({ additions: 2, removals: 0 });
+      expect(body.find(task => task.id === unstarted.id)?.diffStats).toBeNull();
     });
 
     test("with the source's node offline, still lists tasks, without diffStats", async () => {
@@ -291,7 +304,7 @@ describe("task routes", () => {
   });
 
   describe("POST /api/projects/:id/tasks/generate", () => {
-    test("generates the task with the utility model, creates it, and leaves no session behind", async () => {
+    test("generates the task with the utility model, creates it (with the branch it names when asked for one), and leaves no session behind", async () => {
       const provider = fauxProvider({ provider: "task-generator-faux", models: [{ id: "fake", contextWindow: 200_000, maxTokens: 1_000 }] });
       const seen: Array<{ systemPrompt?: string; tools: string[] }> = [];
       provider.setResponses([context => {
@@ -310,8 +323,11 @@ describe("task routes", () => {
         );
 
         expect(res!.status).toBe(201);
-        expect(await res!.json()).toMatchObject({ title: "Add dark mode", description: "A theme toggle.", branch_name: "task/dark-mode" });
-        expect(seen).toEqual([{ systemPrompt: expect.stringContaining("You parse user intent into a structured task definition."), tools: [] }]);
+        expect(await res!.json()).toMatchObject({ title: "Add dark mode", description: "A theme toggle.", branch_name: null });
+        provider.setResponses([fauxAssistantMessage(JSON.stringify({ title: "Add dark mode", description: "A theme toggle.", branch_name: "task/dark-mode" }))]);
+        const branched = await router.handle(makeRequest("POST", `/api/projects/${projectId}/tasks/generate`, { prompt: "Dark mode", branch: true }), state);
+        expect(await branched!.json()).toMatchObject({ branch_name: "task/dark-mode" });
+        expect(seen.slice(0, 1)).toEqual([{ systemPrompt: expect.stringContaining("You parse user intent into a structured task definition."), tools: [] }]);
         expect(getDb().query("SELECT id FROM sessions").all()).toEqual([]);
         expect(state.process.sessions.live.size).toBe(0);
         expect(broadcasts.filter(message => message.type === "session_created")).toEqual([]);

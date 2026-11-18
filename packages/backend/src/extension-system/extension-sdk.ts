@@ -5,7 +5,7 @@
  */
 
 import type {
-  Disposer, ImagesProvider, PageHandler, ProcessOptions, SystemPromptSection, ScriptNamespace, SecretStorage, ServerSdk, Service, SessionKind, SessionSettlement, ToolProvider,
+  BeforeRunHook, Disposer, ImagesProvider, PageHandler, ProcessOptions, SystemPromptSection, ScriptNamespace, SecretStorage, ServerSdk, Service, SessionKind, SessionSettlement, ToolProvider,
 } from "@reins/sdk/server";
 import type { ExtensionStorage } from "../database.js";
 import type { AppState } from "../state.js";
@@ -69,7 +69,8 @@ export function createExtensionSdk({ name, storage: { dataDir, db }, host, app, 
     services: Object.freeze({ register: (service: Service) => own(host.addService(name, service, started())) }),
     sessions: Object.freeze({
       ...bind(SESSIONS.methods, context),
-      onSettled: (listener: (settlement: SessionSettlement) => void | Promise<void>) => own(host.addSettlementListener(name, listener)),
+      onSettled: (listener: (settlement: SessionSettlement) => void | Promise<void>) => own(host.sessionHooks.add("onSettled", name, listener)),
+      beforeRun: (hook: BeforeRunHook) => own(host.sessionHooks.add("beforeRun", name, hook)),
       registerKind: (kind: string, definition: SessionKind) => own(host.addSessionKind(name, kind, definition)),
       registerSystemPromptSection: (section: SystemPromptSection) => own(host.addSystemPromptSection(name, section)),
     }),

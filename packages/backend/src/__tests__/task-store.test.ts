@@ -10,6 +10,8 @@ import {
   touchTask,
   getTaskSessionIds,
   setTaskStatus,
+  recordTaskStart,
+  taskStartRecorded,
 } from "../task-store.js";
 import { createSession, getSession } from "./session-fixture.js";
 import { loadMessages } from "../messages-store.js";
@@ -26,14 +28,15 @@ describe("task-store", () => {
   });
 
   describe("createTask", () => {
-    test("returns full row with status 'open'", () => {
-      const t = createTask(projectId, "My Task", "A description", "task/my-task", "abc123");
+    test("returns full row with status 'open', its branch, and no start yet", () => {
+      const t = createTask(projectId, "My Task", "A description", "task/my-task");
       expect(t.id).toBeGreaterThan(0);
       expect(t.project_id).toBe(projectId);
       expect(t.title).toBe("My Task");
       expect(t.description).toBe("A description");
       expect(t.branch_name).toBe("task/my-task");
-      expect(t.base_commit).toBe("abc123");
+      expect(t.start_branch).toBeNull();
+      expect(t.base_commit).toBeNull();
       expect(t.status).toBe("open");
       expect(t.created_at).toBeString();
       expect(t.updated_at).toBeString();
@@ -118,8 +121,22 @@ describe("task-store", () => {
       expect(updated!.description).toBe("new");
     });
 
+    test("records where it started once, keeping a base it has", () => {
+      const fresh = createTask(projectId, "Fresh", null, null);
+      recordTaskStart(fresh.id, { branch: "main", commit: "c1" });
+      recordTaskStart(fresh.id, { branch: "other", commit: "c2" });
+      expect(getTask(fresh.id)).toMatchObject({ start_branch: "main", base_commit: "c1" });
+      expect(taskStartRecorded(fresh.id)).toBe(true);
+
+      const branched = createTask(projectId, "Branched", null, "task/b");
+      updateTask(branched.id, { base_commit: "merge-base" });
+      expect(taskStartRecorded(branched.id)).toBe(false);
+      recordTaskStart(branched.id, { branch: "task/b", commit: "head" });
+      expect(getTask(branched.id)).toMatchObject({ start_branch: "task/b", base_commit: "merge-base" });
+    });
+
     test("can update base_commit", () => {
-      const t = createTask(projectId, "T", null, "task/t", "old-commit");
+      const t = createTask(projectId, "T", null, "task/t");
       const updated = updateTask(t.id, { base_commit: "new-commit" });
       expect(updated!.base_commit).toBe("new-commit");
       expect(updated!.title).toBe("T"); // unchanged

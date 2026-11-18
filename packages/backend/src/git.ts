@@ -208,14 +208,15 @@ export class Git {
   /**
    * Makes the local branch exist, without checking it out: as it is (`existing`), else tracking origin's
    * (`tracked`: someone pushed it, from this checkout or another), else new from the base branch
-   * (`created`, as `createBranch`).
+   * (`created`, as `createBranch`). With `create: false` a branch neither has is left `missing`.
    */
-  async ensureBranch(branchName: string, baseBranch: string): Promise<"existing" | "tracked" | "created"> {
+  async ensureBranch(branchName: string, baseBranch: string, { create = true }: { create?: boolean } = {}): Promise<"existing" | "tracked" | "created" | "missing"> {
     if (await this.branchExists(branchName)) return "existing";
     if (await this.fetchOrigin(branchName) && await this.remoteBranchExists(branchName)) {
       await this.trackBranch(branchName);
       return "tracked";
     }
+    if (!create) return "missing";
     await this.createBranch(branchName, baseBranch);
     return "created";
   }
@@ -306,7 +307,16 @@ export class Git {
    * Uses `git diff --numstat baseBranch...branch` — local only, cheap.
    */
   async getDiffStats(branch: string, baseBranch: string): Promise<DiffStats> {
-    const raw = await this.run(["diff", "--numstat", `${baseBranch}...${branch}`]);
+    return this.numstatTotals(["diff", "--numstat", `${baseBranch}...${branch}`]);
+  }
+
+  /** Total line additions/removals of the working tree's tracked files since `commit`. */
+  async getDiffStatsSince(commit: string): Promise<DiffStats> {
+    return this.numstatTotals(["diff", "--numstat", commit]);
+  }
+
+  private async numstatTotals(args: string[]): Promise<DiffStats> {
+    const raw = await this.run(args);
     let additions = 0;
     let removals = 0;
     for (const line of raw.trim().split("\n").filter(Boolean)) {

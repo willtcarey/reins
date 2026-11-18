@@ -161,12 +161,31 @@ const { sessionId } = await reins.sessions.start("Plan this week's releases", { 
 ```
 
 - **The system prompt replaces Reins' own.** `reinsSystemPrompt()` gives Reins' system prompt for the session (its task, its project, your tools) if you want to build on it. Every extension's system prompt sections (`sessions.registerSystemPromptSection`, yours too) follow it, then the environment (working directory, tool list, `AGENTS.md`, skills) unless you give `environment: false`.
-- **`tools`**: the tools offered, by name; left out, every tool. A session of a task that is offered tools works on its task's branch; one with `tools: []` changes nothing in the checkout.
+- **`tools`**: the tools offered, by name; left out, every tool. A session with `tools: []` has no checkout: its run does not wait for its node, and works on no task branch.
 - **`model`**: the model of a session you start without one.
 - **`pinnedViews`**: views pinned in the Inspector while one of its sessions is shown, by name. Each is opened as `{ view: name, sessionId }`; your renderer's `key` decides whether the tab is the session's own (`key: view => view.sessionId`) or one tab for every session (no `key`). A view your frontend part has not registered is left out until it does. Left out: nothing is pinned. Reins' agent sessions pin the Changes tree (`diff-file-tree`); your kind's sessions do not, though `/changes` still opens it as a tab the user closes.
 - **`mainViews`**: the session's tabs in the main area, by name, in order: views registered with `tabOf: { type: "session", parameter: "sessionId" }`. The Chat (`session`) is always the first. Left out: the Chat alone. Agent sessions have `["session", "session-changes"]` (Chat and Changes). On a phone, the swipe pages follow the tabs.
 - **Names are yours.** A session records `<your extension>/<name>` (its `kind`). You start only your own kinds. Agents' scripts cannot start them: give them a script method that does (`scripting.register`) if they should.
 - **A session's kind never changes.** Reins reads the kind each time the session opens, so a changed prompt reaches its sessions the next time they open (a reload closes idle ones). While the kind is not registered (your extension turned off or removed), its sessions refuse to run: the chat and `send` say why. They run again once it is back.
+
+### Session hooks
+
+`reins.sessions.beforeRun(hook)` runs your code before each run of every session asks the model anything: to prepare the checkout, check something, or change what the run starts with. Reins itself checks out a task's own branch before the hooks, so your hook sees the checkout as the run will.
+
+```ts
+reins.sessions.beforeRun(async ({ session, task, tools, message, signal }) => {
+  if (!task || task.status === "closed" || tools?.length === 0) return;  // your filter: every session's runs come here
+  const result = await reins.nodes.run(session.source.nodeId, "make prepare", { cwd: session.source.path, signal });
+  if (result.exitCode !== 0) throw new Error(`Could not prepare the checkout: ${result.output}`);
+  // Return a message to replace the run's input; return nothing to keep it.
+});
+```
+
+- **Once per run**, before the first model request, for every session of every project, task and kind: you filter. Not for a message steered into a run already going. For a session that works in its checkout (offered tools), its node is connected when you are called, and the checkout's `AGENTS.md` and skills are read after you, so the model sees what you leave there.
+- **`message`** is the run's input. It is **null when a run resumes** after an interruption or a restart: the run goes on from where it was, and you are called again, so the checkout can be made right before it does.
+- **Replace** the input by returning a message (`MessageContent`, as for `sessions.send`). The model and the chat get your message in its place. Hooks of several extensions chain in a fixed order (Reins' built-in extensions first, then added ones by name): each gets the message the one before it returned.
+- **Throw to stop the run.** The run fails with your error's message, which the chat shows, and the model is not asked.
+- **No time limit**, but pass `signal` on: stopping the run aborts it. While you wait the run is paused cleanly, so a restart meanwhile prepares it again.
 
 ## The frontend part
 

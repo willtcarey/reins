@@ -6,7 +6,7 @@ import type { SessionRow } from "../session-store.js";
 import { getNode, type Source } from "../node-store.js";
 import type { NodeHub } from "../state.js";
 import { getProject } from "../project-store.js";
-import { getTask, updateTask, type TaskRow } from "../task-store.js";
+import { getTask, type TaskRow } from "../task-store.js";
 import { resolveSessionKind, sessionKindConfig, type SessionKindConfig, type SessionKindSource } from "../sessions/session-kinds.js";
 import { piModelSetting } from "./model-settings.js";
 import { resolveSource, SourceModel } from "./sources.js";
@@ -22,18 +22,9 @@ export interface SessionBinding { sourceId: number; cwd: string; createdAt: stri
  * Pi's own lane state is the selection. */
 export interface LaneSeed { model: { provider: string; modelId: string } | null; thinkingLevel: string | null }
 
-/**
- * The branch a run works on, checked out first: its task's. A checkout that does not have it gets it
- * (`Git.ensureBranch`: origin's, else new from `base`, the project's base branch), so a task's branch is
- * made where its sessions work, not where it was created. `recordBaseCommit` keeps where it begins (its
- * merge base with `base`) on the task, when it was made here or the task does not know it yet.
- */
-export interface TaskBranch { name: string; base: string; baseCommitKnown: boolean; recordBaseCommit(commit: string): void }
-
-/** What a session's runtime is opened with: the binding, the lane seed, and what the session's kind
- * resolves, the runtime configuration (with the system prompt) and the branch checked out first (null:
- * none). */
-export interface SessionContext { binding: SessionBinding; branch: TaskBranch | null; lane: LaneSeed; runtime: SessionKindConfig }
+/** What a session's runtime is opened with: the binding, the lane seed, what the session's kind resolves (the
+ * runtime configuration, with the system prompt), and its task (null: none), whose start its first run records. */
+export interface SessionContext { binding: SessionBinding; taskId: number | null; lane: LaneSeed; runtime: SessionKindConfig }
 
 /** The session's node was removed: no node runs its work until it is moved to another (`Sessions.move`). */
 export class SessionNodeRemovedError extends Error {
@@ -101,7 +92,7 @@ export class SessionModel {
     const { row } = this;
     const task = row.task_id === null ? null : getTask(row.task_id);
     const kind = await resolveSessionKind(row.kind, kinds);
-    const { branch = null, ...runtime } = await sessionKindConfig(kind, {
+    const runtime = await sessionKindConfig(kind, {
       session: row, task,
       systemPromptSections: async tools => kinds ? kinds.systemPromptSections({
         session: { id: row.id, projectId: row.project_id, taskId: row.task_id, kind: row.kind },
@@ -109,11 +100,7 @@ export class SessionModel {
         tools,
       }) : [],
     });
-    const project = branch && task && row.project_id !== null ? getProject(row.project_id) : null;
-    const taskBranch: TaskBranch | null = branch && task && project
-      ? { name: branch, base: project.base_branch, baseCommitKnown: task.base_commit !== null, recordBaseCommit: commit => { updateTask(task.id, { base_commit: commit }); } }
-      : null;
-    return { binding: this.binding(source), branch: taskBranch, lane: laneSeed(this.row), runtime };
+    return { binding: this.binding(source), taskId: task?.id ?? null, lane: laneSeed(this.row), runtime };
   }
 }
 

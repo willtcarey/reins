@@ -40,7 +40,8 @@ function createLegacySchema(db: Database): void {
       branch_name TEXT NOT NULL,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-      status TEXT NOT NULL DEFAULT 'open'
+      status TEXT NOT NULL DEFAULT 'open',
+      base_commit TEXT
     );
 
     CREATE TABLE sessions (
@@ -828,6 +829,36 @@ describe("migrations", () => {
       runMigrations(db);
 
       expect(db.query("SELECT id, default_source_id FROM projects").all()).toEqual([{ id: 1, default_source_id: 1 }]);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("067 lets a task have no branch: existing tasks keep theirs, with their sessions; none has a start yet", () => {
+    const db = new Database(":memory:");
+    try {
+      db.exec("PRAGMA foreign_keys = ON");
+      runMigrations(db, MIGRATIONS.filter(([name]) => name < "067"));
+      db.exec(`
+        INSERT INTO projects (id, name) VALUES (1, 'Project');
+        INSERT INTO sources (id, node_id, path) VALUES (10, 'internal', '/work');
+        INSERT INTO tasks (id, project_id, title, description, branch_name, base_commit, closed_at) VALUES
+          (5, 1, 'Ran', 'Did things', 'task/ran', 'abc', NULL), (6, 1, 'Closed', NULL, 'task/closed', NULL, '2026-11-01T00:00:00.000Z');
+        INSERT INTO sessions (id, project_id, source_id, task_id, agent_runtime_type) VALUES ('s', 1, 10, 5, 'pi');
+      `);
+
+      runMigrations(db);
+
+      expect(db.query("SELECT id, title, description, branch_name, start_branch, base_commit, closed_at FROM tasks ORDER BY id").all()).toEqual([
+        { id: 5, title: "Ran", description: "Did things", branch_name: "task/ran", start_branch: null, base_commit: "abc", closed_at: null },
+        { id: 6, title: "Closed", description: null, branch_name: "task/closed", start_branch: null, base_commit: null, closed_at: "2026-11-01T00:00:00.000Z" },
+      ]);
+      expect(db.query("SELECT task_id FROM sessions").all()).toEqual([{ task_id: 5 }]);
+      db.exec("INSERT INTO tasks (project_id, title) VALUES (1, 'New')");
+      expect(db.query("SELECT branch_name FROM tasks WHERE title = 'New'").get()).toEqual({ branch_name: null });
+      db.exec("DELETE FROM tasks WHERE id = 5");
+      expect(db.query("SELECT COUNT(*) AS count FROM sessions").get()).toEqual({ count: 0 });
+      expect(db.query("PRAGMA foreign_key_check").all()).toEqual([]);
     } finally {
       db.close();
     }

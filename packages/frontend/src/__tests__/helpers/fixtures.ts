@@ -11,6 +11,7 @@ export function makeTask(overrides: Partial<TaskListItem> = {}): TaskListItem {
     title: "Task",
     description: null,
     branch_name: "task/example",
+    start_branch: null,
     base_commit: null,
     status: "open",
     created_at: "",

@@ -181,10 +181,10 @@ export class ProjectsStore {
     return store.deleteTask(taskId);
   }
 
-  async generateTask(projectId: number, prompt: string): Promise<{ ok: true } | { error: string }> {
+  async generateTask(projectId: number, prompt: string, options: { branch?: boolean } = {}): Promise<{ ok: true } | { error: string }> {
     const store = this.peekStore(projectId);
     if (!store) return { error: "No project data" };
-    return store.generateTask(prompt);
+    return store.generateTask(prompt, options);
   }
 
   async createSession(projectId: number, input: SessionCreateRequest = {}): Promise<{ sessionId: string } | { error: string }> {

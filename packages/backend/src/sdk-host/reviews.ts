@@ -14,6 +14,7 @@ import {
   ReviewEntrySchema,
 } from "../models/code-review.js";
 import type { SessionModel } from "../models/session.js";
+import { taskDiffTarget } from "../models/workspace.js";
 import { sdkMethod, type CallContext } from "./declaration.js";
 
 /** The calling session, of a project: code reviews belong to projects. */
@@ -59,7 +60,7 @@ const addComment = sdkMethod({
     const text = body.trim();
     if (!text) throw new Error("Review comment body cannot be empty");
     const { session, projectId } = reviewing(context);
-    const patch = await asyncIterableToText(session.workspace.getDiffPatchStream(3, "branch", session.task?.branch_name));
+    const patch = await asyncIterableToText(session.workspace.getDiffPatchStream(3, "branch", taskDiffTarget(session.task)));
     return context.models.project(projectId).codeReviews().addComment({
       scope: { taskId: session.taskId },
       author: options.author?.trim() || "Agent",

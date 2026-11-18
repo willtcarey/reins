@@ -68,7 +68,7 @@ export class TaskListItemElement extends LitElement {
   }
 
   private handleCopyBranchName() {
-    copyTextToClipboard(this.task.branchName).catch(() => {});
+    if (this.task.branchName) copyTextToClipboard(this.task.branchName).catch(() => {});
   }
 
   private renderActivityDot() {
@@ -80,10 +80,15 @@ export class TaskListItemElement extends LitElement {
     if (task.closed) return nothing;
 
     const stats = task.diffStats;
+    const changed = stats !== null && (stats.additions > 0 || stats.removals > 0);
+    // A task without a branch of its own shows only what changed since it started.
+    if (!task.branchName && !changed) return nothing;
     return html`
       <div class="flex items-center gap-1.5 mt-0.5">
-        ${branchIcon("shrink-0 text-zinc-500", 10)}
-        <span class="text-[10px] font-mono text-zinc-500 truncate">${task.branchName}</span>
+        ${task.branchName ? html`
+          ${branchIcon("shrink-0 text-zinc-500", 10)}
+          <span class="text-[10px] font-mono text-zinc-500 truncate">${task.branchName}</span>
+        ` : nothing}
         ${stats && (stats.additions > 0 || stats.removals > 0) ? html`
           <span class="text-[10px] shrink-0">
             ${stats.additions > 0 ? html`<span class="text-green-500">+${stats.additions}</span>` : nothing}
@@ -134,10 +139,10 @@ export class TaskListItemElement extends LitElement {
                 class="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 cursor-pointer transition-colors"
                 @click=${() => this.handleEditTask()}
               >Edit</button>
-              <button
+              ${this.task.branchName ? html`<button
                 class="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 cursor-pointer transition-colors"
                 @click=${() => this.handleCopyBranchName()}
-              >Copy branch</button>
+              >Copy branch</button>` : nothing}
               <button
                 class="w-full text-left px-3 py-1.5 text-xs text-red-400 hover:bg-zinc-700 cursor-pointer transition-colors"
                 @click=${() => this.handleDeleteTask()}

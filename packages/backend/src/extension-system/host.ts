@@ -8,12 +8,13 @@ import { Value } from "@sinclair/typebox/value";
 import { firstSchemaError } from "../schema-errors.js";
 import type {
   Disposer, HttpApi, HttpCall, ImagesProvider, Logger, PageHandler, SystemPromptContext, SystemPromptSection, ScriptContext, ScriptNamespace,
-  ServerSdk, Service, SessionKind, SessionSettlement, ToolFilters, ToolProvider, ToolResult, ToolSearchGroup,
+  ServerSdk, Service, SessionKind, ToolFilters, ToolProvider, ToolResult, ToolSearchGroup,
 } from "@reins/sdk/server";
 import type { ExtensionStorage } from "../database.js";
 import { scriptFunctions, scriptTypes, type ApiContext, type ScriptFunction } from "../sdk-host/projection.js";
 import type { NamedType } from "../sdk-host/scripts.js";
-import type { AppState, SessionSettledNotice } from "../state.js";
+import type { AppState } from "../state.js";
+import { SessionHooks } from "../sessions/hooks/registry.js";
 import { requestOrigin } from "../nodes/node-link.js";
 import { logger } from "../logger.js";
 import { getSession } from "../session-store.js";
@@ -55,7 +56,6 @@ interface Method {
 }
 interface Script { extension: string; namespace: string; functions: ScriptFunction[]; types: NamedType[] }
 interface RegisteredService { extension: string; runner: ServiceRunner }
-interface SettlementListener { extension: string; listener: (settlement: SessionSettlement) => void | Promise<void> }
 interface RegisteredKind { extension: string; name: string; kind: SessionKind }
 
 export interface ExtensionConnection {
@@ -74,8 +74,8 @@ export class ExtensionHost {
   private readonly pages: Page[] = [];
   private readonly methods: Method[] = [];
   private readonly services: RegisteredService[] = [];
-  private readonly settlementListeners: SettlementListener[] = [];
   private readonly kinds: RegisteredKind[] = [];
+  readonly sessionHooks = new SessionHooks();
 
   /** `report`: an extension's error after it loaded (a tool ID left out, a prompt section that threw, a
    * service's crash), which must not reach the core's caller. */
@@ -175,11 +175,6 @@ export class ExtensionHost {
     return remove;
   }
 
-  addSettlementListener(extension: string, listener: (settlement: SessionSettlement) => void | Promise<void>): Removal {
-    if (typeof listener !== "function") throw new Error("A settlement listener is a function");
-    return add(this.settlementListeners, { extension, listener });
-  }
-
   /** Its removal retires the open runtimes of its sessions, so an idle one opens again on what is registered
    * then (refusing when nothing is), not on the removed kind; one running keeps it until its run ends. */
   addSessionKind(extension: string, name: string, kind: SessionKind): Removal {
@@ -209,10 +204,12 @@ export class ExtensionHost {
   registrationsOf(extension: string) {
     const own = <T extends { extension: string }>(entry: T) => entry.extension === extension;
     const provider = this.providers.find(own)?.provider;
+    const hooks = this.sessionHooks.countsOf(extension);
     return {
       tools: provider ? { title: provider.title } : null,
       systemPromptSections: this.sections.filter(own).length,
-      settlementListeners: this.settlementListeners.filter(own).length,
+      settlementListeners: hooks.onSettled,
+      beforeRunHooks: hooks.beforeRun,
       sessionKinds: this.kinds.filter(own).map(entry => entry.name).toSorted(),
       scriptFunctions: this.scripts.filter(own).flatMap(script => script.functions.map(fn => fn.name)).toSorted(),
       httpMethods: this.methods.filter(own).map(method => method.name).toSorted(),
@@ -274,16 +271,6 @@ export class ExtensionHost {
       }
     }));
     return sections.filter((section): section is string => !!section);
-  }
-
-  sessionSettled({ extension, ...settlement }: SessionSettledNotice): void {
-    for (const entry of this.settlementListeners.filter(candidate => candidate.extension === extension)) {
-      try {
-        void Promise.resolve(entry.listener(settlement)).catch((error: unknown) => this.report(extension, error));
-      } catch (error) {
-        this.report(extension, error);
-      }
-    }
   }
 
   /** Asked at each request, so a reloaded extension's routes answer at once. */

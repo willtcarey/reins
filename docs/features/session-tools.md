@@ -19,7 +19,7 @@ These tools let the agent interact with Reins itself:
 
 | Tool | What it does | Availability |
 |------|-------------|-------------|
-| **create_task** | Create a new task with a title, description, and git branch. Can optionally kick off an initial session on the task immediately — the task is created and work begins in the background. | All sessions |
+| **create_task** | Create a new task with a title, a description and, optionally, a [branch of its own](tasks.md#branches), which its sessions then work on. Can optionally kick off an initial session on the task immediately — the task is created and work begins in the background. | All sessions |
 | **search** | Discover Reins internal API functions for `execute` scripts against Reins-managed data or UI state. Returns documentation-only TypeScript interfaces filtered by query. | All sessions |
 | **execute** | Run async JavaScript against Reins internals. The agent writes a function body with access to the existing `reins` object. See [Scripting](scripting.md) for details. | All sessions |
 

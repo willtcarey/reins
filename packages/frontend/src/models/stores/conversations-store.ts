@@ -464,14 +464,22 @@ export class ConversationsStore {
   }
 }
 
+/** An input a run's preparation replaced (an extension's `beforeRun` hook) shows as its replacement, in its place. */
+function replacedInput({ message }: { message: AgentMessage }): string | null {
+  const replaces = message.role === "user" ? message.metadata?.replaces : undefined;
+  return typeof replaces === "string" ? replaces : null;
+}
+
 function buildTranscript(state: ConversationState): Message[] {
   const entries = [...state.entries, ...state.pendingSubmissions.values()];
-  return buildMessages(entries.map((entry) => ({
-    entryId: entry.id,
-    parentEntryId: entry.parentId,
-    renderKey: entry.clientId
-      ? `submission-${entry.clientId}`
-      : entry.id!,
-    message: entry.message,
-  })));
+  const replaced = new Set(entries.flatMap((entry) => replacedInput(entry) ?? []));
+  return buildMessages(entries.filter((entry) => !entry.clientId || !replaced.has(entry.clientId)).map((entry) => {
+    const clientId = replacedInput(entry) ?? entry.clientId;
+    return {
+      entryId: entry.id,
+      parentEntryId: entry.parentId,
+      renderKey: clientId ? `submission-${clientId}` : entry.id!,
+      message: entry.message,
+    };
+  }));
 }

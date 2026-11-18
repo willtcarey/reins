@@ -9,7 +9,7 @@ const MODEL_VISIBLE_SURFACE: unknown = [
   {
     "name": "create_task",
     "label": "Create Task",
-    "description": "Create a new task for the current project with a dedicated git branch. Only use this when the user explicitly asks you to create a task — do not proactively create tasks.",
+    "description": "Create a new task for the current project. Only use this when the user explicitly asks you to create a task — do not proactively create tasks.",
     "parameters": {
       "type": "object",
       "required": [
@@ -26,7 +26,7 @@ const MODEL_VISIBLE_SURFACE: unknown = [
           "type": "string"
         },
         "branch_name": {
-          "description": "Git branch name in task/<slug> format. If omitted, derived from the title.",
+          "description": "Give the task a branch of its own, in task/<slug> format: its sessions' checkout is put on it before each run (made if missing). Omit it for a task whose sessions work on whatever is checked out.",
           "type": "string"
         },
         "prompt": {
