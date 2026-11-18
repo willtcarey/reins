@@ -365,7 +365,7 @@ sequenceDiagram
     B->>S: POST /api/sessions/:id/prompt "fix the bug"
     S->>DB: Pi admits the input (reinsInput under its clientId)
     S-->>B: 200 (admitted)
-    S->>N: process.start git … (the task branch), fs.* (the checkout's context files and skills, at the run's first request)
+    S->>N: process.start git … (a task's own branch, where a task started; an extension's beforeRun hook, through nodes.run), fs.* (the checkout's context files and skills, at the run's preparation)
     S->>S: model request (the server's model runtime and credentials)
     loop while the agent works
         S--)B: session events

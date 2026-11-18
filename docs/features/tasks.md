@@ -1,6 +1,6 @@
 # Tasks
 
-Tasks are the primary unit of work in Reins. Each task represents a discrete piece of work on a project — a bug fix, a feature, a refactor — and carries its own git branch and collection of agent sessions.
+Tasks are the primary unit of work in Reins. Each task represents a discrete piece of work on a project — a bug fix, a feature, a refactor, a document — and carries its collection of agent sessions, and a git branch of its own when you asked for one.
 
 ## Concepts
 
@@ -9,26 +9,32 @@ Tasks are the primary unit of work in Reins. Each task represents a discrete pie
 Reins organises work in a three-level hierarchy:
 
 - A **project** points at a local git repository and tracks a base branch (e.g. `main`).
-- A **task** belongs to a project. It has a title, an optional description, and a dedicated git branch.
+- A **task** belongs to a project. It has a title, an optional description, and, when you ask for one at its creation (*Branches*, below), a git branch of its own.
 - A **session** is a single agent conversation. Sessions belong to either the project's [assistant](assistant.md) or a task.
 
 Task sessions inherit context from their parent task: the agent's system prompt includes the task title and description so the agent understands what it's working on without being told each time.
 
-### Branch per task
+### Where a task starts
 
-Every task gets its own git branch. This keeps work isolated — multiple tasks can be in flight without interfering with each other.
+A task remembers where it started: at the first run of one of its sessions, Reins records the branch the session's checkout is on and its commit. What the task changed is measured from that commit: Changes shows the checkout's changes since then, and the sidebar counts them. Reins itself never switches a checkout's branch.
 
-Creating a task touches no checkout. The branch is made where the task's sessions work, when a run of one of them starts there and that checkout does not have it yet: Reins uses the branch from `origin` if someone pushed it (from another machine, for example), else makes it. So a task session moved to another node or directory gets the branch there too. A branch name made from the title that another task of the project has gets a short suffix.
+### Branches
 
-A new branch is made **from the latest upstream state** of the project's base branch. When a remote (`origin`) is available, Reins pulls the local base branch forward to match before branching, so the task starts from the most up-to-date commit. For repos without a remote, or when the local branch has diverged, it branches from whatever the local base branch points to.
+A task has a git branch of its own **only when you ask for one when you create it**. Then, before each run of one of its sessions, Reins puts the session's checkout on the task's branch. It keeps work isolated: tasks in flight in different checkouts do not interfere with each other. A task without a branch of its own runs on whatever its checkout has checked out: two such tasks can share one checkout and one branch. Use that for tasks that are not code, or when you manage branches yourself.
 
-When a task session is opened, the task's branch is checked out automatically.
+If the checkout does not have the task's branch yet, it is made there: from `origin` if someone pushed it (from another machine, for example), else new from the latest upstream state of the project's base branch (when a remote is available, the local base branch is pulled forward first; for repos without a remote, or when the local branch has diverged, it branches from the local base branch). So a task session moved to another node or directory gets the branch there too. Changes then compares the branch with the base branch.
+
+Creating a task touches no checkout. A branch name made from the title that another task of the project has gets a short suffix. Tasks made before branches became optional keep their branches.
+
+**Closed tasks** are left alone: their sessions run on whatever is checked out, and a branch deleted after the task closed is not made again.
+
+**A deleted branch is not made again.** If an open task's branch existed and was deleted (here and on origin), its next run is refused: "This task's branch, task/x, was deleted. Make it again, or close the task." Make the branch again (or push it from where it is), or close the task. The same message appears when a task's session moves to a checkout that never had its branch and the branch was not pushed.
 
 ## Creating a task
 
-Describe what you want to do in plain language — e.g. "add dark mode support" or "fix the login bug where sessions expire too early". Reins generates the task title, description, and branch name automatically from your input.
+Describe what you want to do in plain language — e.g. "add dark mode support" or "fix the login bug where sessions expire too early". Reins generates the task title and description automatically from your input. Tick **Work on a branch of its own** to give the task a branch (Reins names it from your input too); leave it unticked for a task whose sessions work on whatever is checked out. Agents creating a task (`create_task`, `reins.tasks.create`) give it a branch by naming one.
 
-Generation runs on the server, using the [utility model](settings.md#utility-model), as a hidden session that is deleted as soon as it answers: it never appears in session lists, and it needs no node. If the model can't produce a task within about 30 seconds (for example, the run fails or no model is configured), Reins creates the task anyway, using your text as the title and description and a branch name derived from it. You can edit the title and description afterwards.
+Generation runs on the server, using the [utility model](settings.md#utility-model), as a hidden session that is deleted as soon as it answers: it never appears in session lists, and it needs no node. If the model can't produce a task within about 30 seconds (for example, the run fails or no model is configured), Reins creates the task anyway, using your text as the title and description (and, if you asked for a branch, a branch name derived from it). You can edit the title and description afterwards.
 
 ### Adopting an existing branch
 
@@ -40,13 +46,13 @@ This supports the "pull someone else's branch" workflow: a colleague pushes a br
 
 You can view and edit a task's title and description after creation. Open the three-dot menu on a task in the sidebar and choose "Edit" to open the edit dialog. This is useful for refining the AI-generated title or description, or adding more detail as you learn more about the work.
 
-The branch name is shown in the edit dialog for reference but cannot be changed.
+The task's branch, once it has one, is shown in the edit dialog for reference but cannot be changed.
 
 ## Working on a task
 
 Once a task exists you can create sessions under it, from its **New session** button. Each session:
 
-1. **Checks out the task branch** in the session's source on its node, at the start of each run (making it there first if that checkout does not have it), so file changes always land on the right branch.
+1. **Works on the task's branch**, when the task has one: it is checked out in the session's source on its node at the start of each run (made there first if that checkout does not have it), so file changes land on the right branch. Otherwise it works on whatever is checked out.
 2. **Injects the task context** into the agent's system prompt (title + description). The task is read when the session's runtime opens, so an edited title or description reaches a session the next time it is opened (after it has been idle for a few minutes, or after a server restart), not mid-conversation.
 3. Is recorded against the task so you can see the full history of sessions that contributed to a piece of work.
 
@@ -60,7 +66,7 @@ Deleting a task removes:
 
 - The task itself
 - All sessions and their message history
-- The task's git branch
+- The task's git branch, if it has one of its own
 
 A task cannot be deleted while any of its sessions are actively running. Stop the running session first, then delete.
 

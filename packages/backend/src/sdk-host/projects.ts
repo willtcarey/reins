@@ -30,8 +30,9 @@ export const TaskSchema = Type.Object({
   projectId: Type.Number(),
   title: Type.String(),
   description: Type.Union([Type.String(), Type.Null()]),
-  branchName: Type.String(),
-  baseCommit: Type.Union([Type.String(), Type.Null()]),
+  branchName: Type.Union([Type.String(), Type.Null()], { description: "Its own branch, given at its creation, which its sessions work on; null when it has none (they work on whatever is checked out)." }),
+  startBranch: Type.Union([Type.String(), Type.Null()], { description: "The branch checked out when its first run started; null before that." }),
+  baseCommit: Type.Union([Type.String(), Type.Null()], { description: "What its changes are measured from: where its branch begins, else the commit its first run started on." }),
   status: TaskStatusSchema,
   closedAt: Type.Union([Type.String(), Type.Null()], { description: "When it was closed; null while it is open." }),
   createdAt: Type.String(),
@@ -62,6 +63,7 @@ export function taskInfo(task: TaskRow): TaskInfo {
     title: task.title,
     description: task.description,
     branchName: task.branch_name,
+    startBranch: task.start_branch,
     baseCommit: task.base_commit,
     status: task.status,
     closedAt: task.closed_at,
@@ -191,8 +193,8 @@ const tasksGet = sdkMethod({
 });
 
 const tasksCreate = sdkMethod({
-  description: "Create a new task with a dedicated git branch, in the current project unless projectId names another. Derives the branch name from the title if not given. " +
-    "No checkout is touched: its sessions' runs make the branch where they work, adopting one that exists there or on origin.",
+  description: "Create a new task, in the current project unless projectId names another. No checkout is touched. " +
+    "With branchName, the task has that branch of its own: before each run its sessions' checkout is put on it, made there (or adopted when it exists, there or on origin) if missing. Without, its sessions work on whatever is checked out.",
   params: [
     { name: "title", schema: Type.String() },
     { name: "description", schema: Type.String() },

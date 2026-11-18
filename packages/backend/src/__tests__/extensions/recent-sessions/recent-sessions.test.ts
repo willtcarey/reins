@@ -60,7 +60,7 @@ describe("the Recent sessions extension", () => {
       session("no-task", null, "2026-01-01T00:00:00.000Z", null),
     ];
     const task: TaskInfo = {
-      id: 5, projectId: 1, title: "Ship it", description: null, branchName: "task/ship-it", baseCommit: null, status: "closed", closedAt, createdAt: closedAt, updatedAt: closedAt,
+      id: 5, projectId: 1, title: "Ship it", description: null, startBranch: null, branchName: "task/ship-it", baseCommit: null, status: "closed", closedAt, createdAt: closedAt, updatedAt: closedAt,
     };
     const reads: RecentReads = {
       sessions: { list: async ({ offset = 0 } = {}) => offset === 0 ? sessions : [] },

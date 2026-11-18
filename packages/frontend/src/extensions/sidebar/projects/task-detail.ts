@@ -97,7 +97,7 @@ export class TaskDetail extends LitElement {
             @input=${(e: Event) => { if (e.target instanceof HTMLTextAreaElement) { this.description = e.target.value; this.handleInput(); } }}
           ></textarea>
 
-          ${task ? html`
+          ${task?.branchName ? html`
             <div class="mt-3 text-[10px] text-zinc-500">
               Branch: <span class="font-mono text-zinc-400">${task.branchName}</span>
             </div>

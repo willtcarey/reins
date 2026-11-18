@@ -30,8 +30,8 @@ export const DEFAULT_SESSION_KIND = "agent";
 export interface SessionKindViews { pinned: string[]; main: string[] }
 
 /** The Reins agent: Reins' prompt for the session's task (or the project assistant's, for a scratch session)
- * with the extensions' sections, every tool, the environment, and its task's branch checked out. The browser
- * pins its Changes tree and gives it a Changes tab. */
+ * with the extensions' sections, every tool and the environment. The browser pins its Changes tree and gives it
+ * a Changes tab. */
 const agent: SessionKind = {
   systemPrompt: context => context.reinsSystemPrompt(),
   pinnedViews: ["diff-file-tree"],
@@ -49,7 +49,7 @@ const TASK_GENERATOR_PROMPT = `You parse user intent into a structured task defi
 
 Return ONLY valid JSON. No markdown fences, no explanation, no extra text.`;
 
-/** A utility kind: exactly its prompt (sections describe tools it is not offered), no tools, no environment, no branch. */
+/** A utility kind: exactly its prompt (sections describe tools it is not offered), no tools, no environment, no checkout. */
 const taskGenerator: SessionKind = { systemPrompt: () => TASK_GENERATOR_PROMPT, tools: [], environment: false };
 
 /** Reins' own kinds, fixed in code: each app bundle has its own copy, so a hot reload changes them with the
@@ -103,11 +103,9 @@ export async function resolveSessionKind(name: string, source: SessionKindSource
 /**
  * How a session of `kind` runs, built each time its runtime opens (so prompt text and task edits reach it the next
  * time it opens): the kind's prompt (which may build on Reins' own), then the extensions' sections asked for its
- * tools, its tools (absent: every tool), whether the environment is appended, and the branch checked out before a
- * run. A task session offered tools works on its task's branch, since those tools work in the checkout; one offered
- * none (a utility kind) has no side effects on open.
+ * tools, its tools (absent: every tool) and whether the environment is appended.
  */
-export async function sessionKindConfig(kind: SessionKind, { session, task, systemPromptSections }: SessionOpening): Promise<SessionKindConfig & { branch?: string }> {
+export async function sessionKindConfig(kind: SessionKind, { session, task, systemPromptSections }: SessionOpening): Promise<SessionKindConfig> {
   const tools = kind.tools ? [...kind.tools] : undefined;
   const prompt = await kind.systemPrompt({
     session: { id: session.id, projectId: session.project_id, taskId: session.task_id, kind: session.kind },
@@ -119,6 +117,5 @@ export async function sessionKindConfig(kind: SessionKind, { session, task, syst
     systemPrompt: [prompt, ...sections].join("\n\n"),
     ...(tools ? { tools } : {}),
     environment: kind.environment !== false,
-    ...(task && (!tools || tools.length > 0) ? { branch: task.branch_name } : {}),
   };
 }

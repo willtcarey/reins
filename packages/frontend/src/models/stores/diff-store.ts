@@ -94,6 +94,11 @@ export class DiffStore {
    * the current HEAD (used for scratch sessions and completed-task history).
    */
   private _branch: string | null = null;
+  /**
+   * Without a branch, the commit a task without a branch of its own started on: the diff is the checkout's
+   * changes since then, rather than its HEAD's against the base branch.
+   */
+  private _base: string | null = null;
   private _listeners = new Set<DiffStoreListener>();
   private _pollTimer: ReturnType<typeof setInterval> | null = null;
   private _spreadTimer: ReturnType<typeof setInterval> | null = null;
@@ -147,17 +152,17 @@ export class DiffStore {
    */
   setBranch(branch: string | null) {
     if (branch === this._branch) return;
-    this.setScope(this._sessionId, branch, this._projectId);
+    this.setScope(this._sessionId, branch, this._projectId, this._base);
   }
 
   /**
    * Apply the session and its branch atomically. Otherwise it would fetch once
    * for HEAD and again after its `SessionDiff` resolves the task's branch.
    */
-  setScope(sessionId: string | null, branch: string | null, projectId: number | null = null) {
+  setScope(sessionId: string | null, branch: string | null, projectId: number | null = null, base: string | null = null) {
     const sessionChanged = sessionId !== this._sessionId;
     this._projectId = projectId;
-    const branchChanged = branch !== this._branch;
+    const branchChanged = branch !== this._branch || base !== this._base;
 
     if (sessionChanged) {
       this._sessionId = sessionId;
@@ -173,6 +178,7 @@ export class DiffStore {
 
     if (sessionChanged || branchChanged) {
       this._branch = branch;
+      this._base = base;
       this._filesLoadedForScope = false;
       this.patchData = Loadable.idle();
       this._patchDiffVersion = 0;
@@ -193,6 +199,12 @@ export class DiffStore {
     }
 
     if (sessionChanged || branchChanged) this._restartSpreadPolling();
+  }
+
+  /** What the API diffs: the branch, else the base commit, else the checkout's HEAD. */
+  private target(): { branch: string } | { base: string } | Record<string, never> {
+    if (this._branch) return { branch: this._branch };
+    return this._base ? { base: this._base } : {};
   }
 
   // ---- Diff mode -------------------------------------------------------------
@@ -229,10 +241,7 @@ export class DiffStore {
     this.notify();
 
     try {
-      const json = await api.diff.files(sessionId, {
-        mode,
-        ...(this._branch ? { branch: this._branch } : {}),
-      });
+      const json = await api.diff.files(sessionId, { mode, ...this.target() });
       if (requestGeneration !== this._filesRequestGeneration) return;
       if (requestGeneration !== this._filesRequestGeneration) return;
       const newFiles = sortFileSummaries(json.files ?? []);
@@ -287,18 +296,14 @@ export class DiffStore {
     this.notify();
 
     try {
-      const patch = await api.diff.patch(this._sessionId, {
-        context: this.contextLines,
-        mode: this.diffMode,
-        ...(this._branch ? { branch: this._branch } : {}),
-      });
+      const patch = await api.diff.patch(this._sessionId, { context: this.contextLines, mode: this.diffMode, ...this.target() });
       if (requestGeneration !== this._patchRequestGeneration) return;
       if (requestGeneration !== this._patchRequestGeneration) return;
       const version = this._patchDiffVersion + 1;
       this._patchDiffVersion = version;
       this.patchData = this.patchData.asLoaded({
         patch,
-        cacheKeyPrefix: `session-${this._sessionId}-${this.diffMode}-${this.contextLines}-${this._branch ?? "HEAD"}-v${version}`,
+        cacheKeyPrefix: `session-${this._sessionId}-${this.diffMode}-${this.contextLines}-${this._branch ?? this._base ?? "HEAD"}-v${version}`,
         version,
         branch: this.branch,
         baseBranch: this.fileData.data?.baseBranch ?? null,

@@ -2,7 +2,6 @@ import { describe, test, expect, beforeEach, spyOn } from "bun:test";
 import { Models } from "../../models/models.js";
 import { useTestDb } from "../helpers/test-db.js";
 import { useTestRepo } from "../helpers/test-repo.js";
-import { localGit } from "../helpers/local-git.js";
 import { createProject } from "../project-fixture.js";
 import { getTask } from "../../task-store.js";
 import { SessionInstance } from "../../sessions/session-instance.js";
@@ -70,7 +69,7 @@ describe("create_task tool", () => {
       const taskData = JSON.parse(textOf(result.content[0]));
       expect(taskData.title).toBe("Implement dark mode");
       expect(taskData.description).toBe("Add dark mode toggle to the settings page");
-      expect(taskData.branch_name).toStartWith("task/");
+      expect(taskData.branch_name).toBeNull();
       expect(taskData.status).toBe("open");
       expect(taskData.id).toBeGreaterThan(0);
 
@@ -78,8 +77,6 @@ describe("create_task tool", () => {
       const dbTask = getTask(taskData.id);
       expect(dbTask).not.toBeNull();
       expect(dbTask!.title).toBe("Implement dark mode");
-
-      expect(await localGit(repo.dir).branchExists(taskData.branch_name)).toBe(false);
 
       // Browsers were told
       expect(broadcasts).toEqual([{ type: "task_updated", projectId }]);

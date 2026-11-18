@@ -181,6 +181,21 @@ export interface App {
   /** A run of a session an extension started ended, its end recorded: tells that extension's settlement
    * listeners (`reins.sessions.onSettled`). Optional: a runtime on newer code may call an app on older code. */
   sessionSettled?(notice: SessionSettledNotice): void;
+  /** Runs this app's extensions' hooks before a run of `sessionId` (`reins.sessions.beforeRun`): the input that
+   * replaces the run's (null: keep it). Rejects with the message a hook threw. Optional, as `sessionSettled`. */
+  beforeRun?(run: BeforeRunCall): Promise<RunInput | null>;
+}
+
+/** A run's input as the runtime admits it: its blocks and its metadata (`details`, attribution, an extension's keys). */
+export interface RunInput { content: PromptBlock[]; metadata: Record<string, unknown> }
+
+/** A run about to start, as the runtime gives it to the app's hooks: `input` null for a run that resumes. */
+export interface BeforeRunCall {
+  sessionId: string;
+  /** The tools its model is offered; null for every tool. */
+  tools: readonly string[] | null;
+  input: RunInput | null;
+  signal: AbortSignal;
 }
 
 /** A run's end as an extension hears of it, for the extension that started the session. */

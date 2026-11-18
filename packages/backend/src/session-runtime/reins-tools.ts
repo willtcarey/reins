@@ -36,7 +36,7 @@ const createTaskParameters = Type.Object({
   title: Type.String({ description: "Concise task title (imperative mood, e.g. \"Add dark mode support\")" }),
   description: Type.String({ description: "Brief description with actionable detail (1-3 sentences)" }),
   branch_name: Type.Optional(
-    Type.String({ description: "Git branch name in task/<slug> format. If omitted, derived from the title." }),
+    Type.String({ description: "Give the task a branch of its own, in task/<slug> format: its sessions' checkout is put on it before each run (made if missing). Omit it for a task whose sessions work on whatever is checked out." }),
   ),
   prompt: Type.Optional(
     Type.String({
@@ -70,7 +70,7 @@ function createTaskTool(calls: ReinsToolCalls): AgentHarnessTool<HostToolContext
     name: reinsToolNames.createTask,
     label: "Create Task",
     description:
-      "Create a new task for the current project with a dedicated git branch. " +
+      "Create a new task for the current project. " +
       "Only use this when the user explicitly asks you to create a task — do not proactively create tasks.",
     parameters: createTaskParameters,
     replay: "never",

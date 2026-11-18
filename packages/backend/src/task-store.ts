@@ -2,7 +2,8 @@
  * Task Store
  *
  * SQLite-backed persistence for tasks.
- * Tasks represent units of work on a project, each with a dedicated git branch.
+ * Tasks represent units of work on a project. A task records where it started (its first run's branch and
+ * commit), and has a branch of its own when its creator asked for one.
  */
 
 import { getDb } from "./app-globals.js";
@@ -19,7 +20,11 @@ export interface TaskRow {
   project_id: number;
   title: string;
   description: string | null;
-  branch_name: string;
+  /** Its own branch, given at its creation; null: its sessions work on whatever is checked out. */
+  branch_name: string | null;
+  /** The branch its checkout was on when its first run started (`HEAD` when detached); null before that. */
+  start_branch: string | null;
+  /** What its changes are measured from: where its branch begins, else the commit its first run started on. */
   base_commit: string | null;
   status: TaskStatus;
   created_at: string;
@@ -39,22 +44,32 @@ export function createTask(
   projectId: number,
   title: string,
   description: string | null,
-  branchName: string,
-  baseCommit: string | null = null,
+  branchName: string | null,
 ): TaskRow {
   const db = getDb();
   return db
-    .query<TaskRow, [number, string, string | null, string, string | null]>(
-      `INSERT INTO tasks (project_id, title, description, branch_name, base_commit, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    .query<TaskRow, [number, string, string | null, string | null]>(
+      `INSERT INTO tasks (project_id, title, description, branch_name, created_at, updated_at)
+       VALUES (?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
        RETURNING *, ${STATUS_SQL}`,
     )
-    .get(projectId, title, description, branchName, baseCommit)!;
+    .get(projectId, title, description, branchName)!;
 }
 
 /** Whether one of the project's tasks has the branch name. */
 export function projectHasTaskBranch(projectId: number, branchName: string): boolean {
   return getDb().query("SELECT 1 FROM tasks WHERE project_id = ? AND branch_name = ?").get(projectId, branchName) !== null;
+}
+
+/** Whether the task's first run recorded where it started. */
+export function taskStartRecorded(id: number): boolean {
+  return getDb().query("SELECT 1 FROM tasks WHERE id = ? AND start_branch IS NOT NULL").get(id) !== null;
+}
+
+/** Records where the task started, once: its first run's branch, and its commit as the base its changes are
+ * measured from unless it has one (where its branch begins). */
+export function recordTaskStart(id: number, { branch, commit }: { branch: string; commit: string }): void {
+  getDb().query("UPDATE tasks SET start_branch = ?, base_commit = COALESCE(base_commit, ?) WHERE id = ? AND start_branch IS NULL").run(branch, commit, id);
 }
 
 export function getTask(id: number): TaskRow | null {

@@ -462,6 +462,12 @@ export interface Sessions {
    */
   onSettled(listener: (settlement: SessionSettlement) => void | Promise<void>): Disposer;
   /**
+   * Calls `hook` before each run of every session asks the model anything (`BeforeRun`). Several hooks chain in
+   * a fixed order, the built-in extensions' first, then the added ones' (by name): each gets the message the one
+   * before it returned. Removed by its disposer, and when the extension is reloaded or turned off. Extensions only.
+   */
+  beforeRun(hook: BeforeRunHook): Disposer;
+  /**
    * Registers a session kind: how the sessions an extension starts with `start(prompt, { kind: name })` run.
    * `name` is lowercase letters, digits and hyphens, unique among this extension's kinds (another extension's
    * of the same name is another kind); a session records it as `<extension>/<name>`. The kind is read each
@@ -474,6 +480,36 @@ export interface Sessions {
   /** Adds a section to the system prompt of every session it is given to (`SystemPromptSection`). Extensions only. */
   registerSystemPromptSection(section: SystemPromptSection): Disposer;
 }
+
+/**
+ * A run about to start (`Sessions.beforeRun`): every session's, of any project, task and kind, so a hook filters
+ * what it acts on itself. Called once per run, before its first model request: for a session that works in its
+ * checkout (offered tools, or the environment), once its node is connected; then the checkout's context files and
+ * skills are read, so what a hook changes there is what the model is told. Not for a message steered into a run
+ * already going.
+ */
+export interface BeforeRun {
+  readonly session: SessionInfo;
+  /** The session's task as it is now, or null. */
+  readonly task: TaskInfo | null;
+  /** The tools the session's model is offered, by name; null for every tool. A session offered none (a utility
+   * kind) has no checkout. */
+  readonly tools: readonly string[] | null;
+  /** The run's input, as the previous hook left it. Null when the run resumes after an interruption or a
+   * restart: its input was taken before, and the run goes on from where it was. */
+  readonly message: MessageContent | null;
+  /** Aborted when the run is (the user stops it, the session closes, Reins shuts down). */
+  readonly signal: AbortSignal;
+}
+
+/**
+ * Prepares a run (`BeforeRun`). Return a message to replace the run's input (its rules are `MessageContent`'s), or
+ * nothing to keep it: the replacement is what the model gets and the chat shows, recorded in the original's place.
+ * A run that resumes (`message` null) cannot be given one. Throw to fail the run with the error's message, which the
+ * chat shows; the model is not asked. The run waits for the hook, however long: waiting is a pause point (a
+ * restart meanwhile resumes the run, calling the hooks again), and stopping the run aborts `signal`.
+ */
+export type BeforeRunHook = (run: BeforeRun) => MessageContent | void | Promise<MessageContent | void>;
 
 /**
  * A kind of session an extension defines (`Sessions.registerKind`): its system prompt, which replaces Reins'
@@ -489,9 +525,8 @@ export interface SessionKind {
    */
   systemPrompt(context: SessionKindContext): string | Promise<string>;
   /** The tools the model is offered, by name (`execute`, `search`, `read`, `bash`, `edit`, `write`, …);
-   * left out, every tool. A name Reins does not have fails the session's opening. A session of a task that
-   * is offered tools works on its task's branch, checked out before each run; one offered none has no
-   * checkout. */
+   * left out, every tool. A name Reins does not have fails the session's opening. A session offered none
+   * has no checkout: its run does not wait for its node. */
   readonly tools?: readonly string[];
   /** Whether the environment follows the prompt: the working directory, the tools' list, Reins' docs and
    * the checkout's context files (`AGENTS.md`) and skills; `/skill` commands expand only with it. True when
@@ -556,9 +591,13 @@ export interface TaskInfo {
   readonly projectId: number;
   readonly title: string;
   readonly description: string | null;
-  /** The git branch its sessions work on. */
-  readonly branchName: string;
-  /** What its diffs compare with, when not its project's base branch. */
+  /** Its own git branch, given at its creation, which its sessions work on; null when it has none: its sessions
+   * work on whatever their checkout has checked out. */
+  readonly branchName: string | null;
+  /** The branch its checkout was on when its first run started (`HEAD` when detached); null before that. */
+  readonly startBranch: string | null;
+  /** What its changes are measured from: where its branch begins, else the commit checked out when its first
+   * run started; null before that. */
   readonly baseCommit: string | null;
   readonly status: "open" | "closed";
   /** When it was closed; null while it is open. Reopening it clears this. */
@@ -583,7 +622,8 @@ export interface Tasks {
   get(taskId: number): Promise<TaskInfo>;
   /** The calling session's task, or null for a session of no task; an extension has none, and is refused. */
   current(): Promise<TaskInfo | null>;
-  /** Creates a task and names its branch (from the title unless `branchName` is given); no checkout is touched. */
+  /** Creates a task; no checkout is touched. With `branchName`, the task has that branch of its own: before each
+   * run its sessions' checkout is put on it (made there if missing). Without, it has none. */
   create(title: string, description: string, branchName?: string, projectId?: number | "current"): Promise<TaskInfo>;
   update(taskId: number, changes: TaskChanges): Promise<TaskInfo>;
   close(taskId: number): Promise<TaskInfo>;

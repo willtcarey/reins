@@ -35,7 +35,7 @@ function backendExtension(name: string, overrides: Partial<ExtensionView> = {}):
     frontendFailure: null,
     build: null,
     errors: [],
-    registrations: { tools: null, systemPromptSections: 0, settlementListeners: 0, sessionKinds: [], scriptFunctions: [], httpMethods: [], pages: [] },
+    registrations: { tools: null, systemPromptSections: 0, settlementListeners: 0, beforeRunHooks: 0, sessionKinds: [], scriptFunctions: [], httpMethods: [], pages: [] },
     services: [],
     storage: null,
     ...overrides,
@@ -95,7 +95,7 @@ describe("SettingsExtensionDetails", () => {
   test("shows what it gives agents, its HTTP methods and pages, and what it keeps: its directory, its database's size and how many secrets", () => {
     const details = new SettingsExtensionDetails();
     details.store = loadedStore([backendExtension("notes", {
-      registrations: { tools: { title: "Notes tools" }, systemPromptSections: 1, settlementListeners: 0, sessionKinds: [], scriptFunctions: ["notes.list"], httpMethods: ["list"], pages: ["/extensions/notes/oauth/callback"] },
+      registrations: { tools: { title: "Notes tools" }, systemPromptSections: 1, settlementListeners: 0, beforeRunHooks: 0, sessionKinds: [], scriptFunctions: ["notes.list"], httpMethods: ["list"], pages: ["/extensions/notes/oauth/callback"] },
       storage: {
         dataDir: "/data/extensions/notes",
         databaseBytes: 4096,
@@ -135,7 +135,7 @@ describe("SettingsExtensionDetails", () => {
   test("shows how many listeners of its sessions' run ends it has, when it has any", () => {
     const details = new SettingsExtensionDetails();
     details.store = loadedStore([backendExtension("automation", {
-      registrations: { tools: null, systemPromptSections: 0, settlementListeners: 1, sessionKinds: [], scriptFunctions: [], httpMethods: [], pages: [] },
+      registrations: { tools: null, systemPromptSections: 0, settlementListeners: 1, beforeRunHooks: 0, sessionKinds: [], scriptFunctions: [], httpMethods: [], pages: [] },
     })]);
     details.name = "automation";
 
@@ -145,7 +145,7 @@ describe("SettingsExtensionDetails", () => {
   test("shows the session kinds it defines", () => {
     const details = new SettingsExtensionDetails();
     details.store = loadedStore([backendExtension("inbox", {
-      registrations: { tools: null, systemPromptSections: 0, settlementListeners: 0, sessionKinds: ["coordinator", "triage"], scriptFunctions: [], httpMethods: [], pages: [] },
+      registrations: { tools: null, systemPromptSections: 0, settlementListeners: 0, beforeRunHooks: 0, sessionKinds: ["coordinator", "triage"], scriptFunctions: [], httpMethods: [], pages: [] },
     })]);
     details.name = "inbox";
 

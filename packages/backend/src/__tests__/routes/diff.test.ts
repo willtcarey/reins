@@ -59,6 +59,17 @@ describe("diff routes", () => {
       expect(body.branch).toBe("feature/test");
     });
 
+    test("with a base commit and no branch (a task without a branch of its own), gives the checkout's changes since that commit, on its current branch", async () => {
+      await commitFile(repo.dir, "before.txt", "before", "Before the task");
+      const started = await git(repo.dir, ["rev-parse", "HEAD"]);
+      await commitFile(repo.dir, "during.txt", "during", "The task's work");
+
+      const res = await router.handle(makeRequest("GET", `/api/sessions/${sessionId}/diff/files?mode=branch&base=${started}`), state);
+      const body = await res!.json();
+      expect(body.files.map((file: { path: string }) => file.path)).toEqual(["during.txt"]);
+      expect(body.branch).toBe("main");
+    });
+
     test("gives no changes and no branch for a checkout that is not a git repository", async () => {
       const plain = mkdtempSync(join(tmpdir(), "reins-test-plain-"));
       try {

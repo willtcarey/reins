@@ -142,13 +142,15 @@ export class SettingsExtensionDetails extends LitElement {
     `);
   }
 
-  /** What its backend part does with sessions: the kinds it defines, and its listeners of the runs of the sessions it started. */
+  /** What its backend part does with sessions: the kinds it defines, its hooks before every run, and its listeners of the runs of the sessions it started. */
   private _renderSessions(extension: ExtensionSummary) {
     const listeners = extension.backend?.registrations.settlementListeners ?? 0;
+    const hooks = extension.backend?.registrations.beforeRunHooks ?? 0;
     const kinds = extension.backend?.registrations.sessionKinds ?? [];
-    if (listeners === 0 && kinds.length === 0) return nothing;
+    if (listeners === 0 && hooks === 0 && kinds.length === 0) return nothing;
     return group("Sessions", html`
       ${row("Session kinds", names(kinds))}
+      ${row("Before each run", hooks === 0 ? null : hooks === 1 ? "1 hook" : `${hooks} hooks`)}
       ${row("Run ends heard", listeners === 0 ? null : listeners === 1 ? "1 listener" : `${listeners} listeners`)}
     `);
   }

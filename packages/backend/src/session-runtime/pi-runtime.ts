@@ -16,7 +16,7 @@ import {
 } from "@taco-ai/pi-harness";
 import type { AssistantMessageEvent, Message, Models } from "@earendil-works/pi-ai";
 import type { AssistantStreamEvent, ConversationEntry, PromptBlock, RuntimeMessage, AgentRuntimeEvent, RuntimeOperationError } from "./events.js";
-import type { PauseGate, SessionRuntime } from "../state.js";
+import type { PauseGate, RunInput, SessionRuntime } from "../state.js";
 import type { ProviderBlock } from "./attachments.js";
 import type { ReferenceToolImages } from "./tool-images.js";
 import { MAIN_LANE } from "./lane.js";
@@ -24,8 +24,8 @@ import { logger } from "../logger.js";
 
 /**
  * A session's runtime on the server (ADR-029): AgentHarness over the session's storage. Slash expansion is
- * asynchronous (it may need the session's node), and a run's system prompt may be prepared at its first
- * assistant request (`prepareRun`: the checkout on the node, waited for there, a pause point).
+ * asynchronous (it may need the session's node), and a run may be prepared before its first model request
+ * (`prepareRun`: its node waited for, the extensions' hooks, its system prompt; a pause point).
  */
 
 type ClientPromptContent = PromptBlock[];
@@ -71,12 +71,14 @@ type HydratePrompt = (sessionId: string, content: ClientPromptContent) => Promis
 /** Rewrites submitted prompt/steer content and its metadata before admission (slash expansion of skills). */
 type ExpandPrompt = (content: ClientPromptContent, metadata: Record<string, unknown>) => Promise<{ content: ClientPromptContent; metadata: Record<string, unknown> }>;
 /**
- * A run's system prompt, prepared at its first assistant request (Pi resolves the system prompt there,
- * before `before_request`, with nothing of the request recorded yet: a clean pause point). It may wait
- * (for the session's node), calling `waiting(true)` meanwhile, and stops when `signal` aborts (the run is
- * aborted, or the runtime closes). It is called once per run; rejecting fails the run.
+ * Prepares a run: called once per run, at its first drive by this runtime (Pi's `before_drive`, before the run's
+ * start is committed or its next step is taken: nothing of a request is recorded yet, a clean pause point). It
+ * gets the run's input (null for a run this runtime resumes) and gives the system prompt and the input that
+ * replaces it, if any. It may wait (for the session's node, for an extension's hook), calling `waiting(true)`
+ * meanwhile, and stops when `signal` aborts (the run is aborted, or the runtime closes). Rejecting fails the
+ * run with the error's message and code (`failureCode`).
  */
-export type PrepareRun = (run: { signal: AbortSignal; waiting(waiting: boolean): void }) => Promise<string>;
+export type PrepareRun = (run: { signal: AbortSignal; waiting(waiting: boolean): void; input: RunInput | null }) => Promise<{ systemPrompt: string; input?: RunInput | null }>;
 
 type ImageReference = Extract<ClientPromptContent[number], { type: "image" }>;
 function isImageReference(block: unknown): block is ImageReference {
@@ -145,6 +147,20 @@ function providerInput(message: ReinsInputMessage, hydrated: unknown[]): { role:
     framed[firstText] = { ...block, text: `${framing}\n\n${block.text}` };
   }
   return { role: "user", content: framed, timestamp: message.timestamp };
+}
+
+/** Why a run could not be prepared: the error's own code (a hook's `branch_deleted` or `checkout_unavailable`), else
+ * `run_refused` for a hook's refusal (`BeforeRunRefused`) and `checkout_unavailable` for anything else (its node). */
+function failureCode(error: unknown): string {
+  const code = typeof error === "object" && error !== null && "code" in error ? error.code : undefined;
+  if (typeof code === "string") return code;
+  return error instanceof Error && error.name === "BeforeRunRefused" ? "run_refused" : "checkout_unavailable";
+}
+
+/** The inputs a run's preparation replaced (`metadata.replaces` on the replacement), by `reinsId`: the model
+ * gets the replacement in their place. */
+function replacedInputs(messages: readonly AgentMessage[]): Set<string> {
+  return new Set(messages.flatMap(message => message.role === "reinsInput" && typeof message.metadata.replaces === "string" ? [message.metadata.replaces] : []));
 }
 
 function projectMessage(message: AgentMessage): RuntimeMessage {
@@ -317,8 +333,16 @@ type SessionEnvironment = { provider: string; modelId: string; thinkingLevel?: s
  * it runs going when the runtime is suspended, for the next runtime to pick up. */
 type RuntimeExecutionEnv = ExecutionEnv & { detach?(): void };
 
-/** A run's system prompt being prepared, and why preparing it failed. */
-interface RunPreparation { prompt: Promise<string>; controller: AbortController; failure?: string }
+/** A run being prepared (`PrepareRun`): its system prompt once `done`, the input it started with (null for a
+ * run this runtime resumes), the input replacing it, and why preparing it failed. */
+interface RunPreparation {
+  done: Promise<void>;
+  controller: AbortController;
+  systemPrompt: string;
+  original: ReinsInputMessage | null;
+  replacement: RunInput | null;
+  failure?: RuntimeOperationError;
+}
 
 /** Registered Pi runtime backed directly by AgentHarness. */
 export class AgentHarnessPiRuntime implements SessionRuntime {
@@ -353,8 +377,10 @@ export class AgentHarnessPiRuntime implements SessionRuntime {
   private readonly systemPrompt: string;
   /** The run driven last: the one whose system prompt Pi asks for. */
   private currentRun: string | undefined;
-  /** Runs' system prompts, by run, while the run is driven. */
+  /** Runs' preparations, by run, while the run is driven. */
   private readonly preparations = new Map<string, RunPreparation>();
+  /** Runs this runtime admitted and has not driven yet: their input is the lane's tip when their drive begins. */
+  private readonly admittedRuns = new Set<string>();
   private readonly disposers: (() => void)[];
   private readonly lifecycle: RuntimeLifecycleSink;
   private metadata: { model?: { provider: string; modelId: string } | null; thinkingLevel?: string | null };
@@ -399,6 +425,22 @@ export class AgentHarnessPiRuntime implements SessionRuntime {
         if (calls?.size === 0) this.toolsInFlight.delete(event.runId);
       }),
     ];
+    if (this.prepareRun) {
+      const prepareRun = this.prepareRun;
+      this.disposers.push(
+        this.harness.hooks.on("before_drive", async (event) => {
+          if (event.lane === this.lane.name && event.operation === "run") await this.prepareOnce(event.runId, prepareRun);
+        }),
+        // The replacement is recorded after the input it replaces, which Pi admitted already: the model and the
+        // chat get it in the input's place (`replacedInputs`).
+        this.harness.hooks.on("before_run", (event) => {
+          const preparation = this.preparations.get(event.runId);
+          if (event.lane !== this.lane.name || !preparation?.replacement || !preparation.original) return undefined;
+          const { reinsId } = preparation.original;
+          return { messages: [createReinsInputMessage(preparation.replacement.content, `${reinsId}:replacement`, { ...preparation.replacement.metadata, replaces: reinsId })] };
+        }),
+      );
+    }
     const gate = params.pauseGate;
     if (gate) {
       const hold = async (lane: string, runId: string, signal: AbortSignal | undefined) => {
@@ -435,27 +477,41 @@ export class AgentHarnessPiRuntime implements SessionRuntime {
    * (which the runtime aborted) failed with why. */
   private runOutcome(event: { runId: string; status: "completed" | "failed" | "aborted"; error?: RuntimeOperationError }): Pick<RuntimeRunOutcome, "status" | "error"> {
     const failure = this.preparations.get(event.runId)?.failure;
-    if (failure !== undefined) return { status: "failed", error: { code: "checkout_unavailable", message: failure } };
+    if (failure !== undefined) return { status: "failed", error: failure };
     return { status: event.status, ...(event.status === "failed" && event.error ? { error: event.error } : {}) };
   }
 
-  /** The system prompt Pi asks for at an assistant request of the run driven now: prepared once per run
-   * (`PrepareRun`). Never rejects: Pi faults its harness on a failure there. On an abort it answers the
-   * plain prompt, which Pi never sends (its next step sees the abort); on a failure it also requests the
-   * run's abort, and the run settles failed (`runOutcome`). */
+  /** The system prompt Pi asks for at an assistant request of the run driven now: its preparation's (prepared
+   * at its first drive, `prepareOnce`). Never rejects: Pi faults its harness on a failure there. A run whose
+   * preparation was aborted or failed gets the plain prompt, which Pi never sends: its abort was requested. */
   resolveSystemPrompt(): Promise<string> {
     const runId = this.currentRun;
     if (!this.prepareRun || runId === undefined) return Promise.resolve(this.systemPrompt);
-    const existing = this.preparations.get(runId);
-    if (existing) return existing.prompt;
-    const preparation: RunPreparation = { controller: new AbortController(), prompt: Promise.resolve(this.systemPrompt) };
-    this.preparations.set(runId, preparation);
-    preparation.prompt = this.prepare(runId, this.prepareRun, preparation);
-    return preparation.prompt;
+    const preparation = this.preparations.get(runId);
+    if (!preparation) return Promise.resolve(this.systemPrompt);
+    return preparation.done.then(() => preparation.systemPrompt);
   }
 
-  private async prepare(runId: string, prepareRun: PrepareRun, preparation: RunPreparation): Promise<string> {
-    // Waiting for the node is a pause point: nothing of the request is recorded yet.
+  /** Prepares the run once while this runtime drives it, however many drives it takes (a retry's wait, a
+   * deferred step): at its first. */
+  private prepareOnce(runId: string, prepareRun: PrepareRun): Promise<void> {
+    const existing = this.preparations.get(runId);
+    if (existing) return existing.done;
+    const fresh = this.admittedRuns.delete(runId);
+    const preparation: RunPreparation = { done: Promise.resolve(), controller: new AbortController(), systemPrompt: this.systemPrompt, original: null, replacement: null };
+    this.preparations.set(runId, preparation);
+    preparation.done = this.prepare(runId, prepareRun, preparation, fresh);
+    return preparation.done;
+  }
+
+  /** The input a run just admitted starts with: the lane's tip, where Pi put it (or the steering it took in). */
+  private async admittedInput(): Promise<ReinsInputMessage | null> {
+    const tip = await this.lane.findEntry(undefined, BACKGROUND_CONTEXT);
+    return tip?.type === "message" && tip.message.role === "reinsInput" ? tip.message : null;
+  }
+
+  private async prepare(runId: string, prepareRun: PrepareRun, preparation: RunPreparation, fresh: boolean): Promise<void> {
+    // Waiting (for the node, for a hook) is a pause point: nothing of the request is recorded yet.
     let holding = false;
     const waiting = (wait: boolean) => {
       if (wait === holding) return;
@@ -463,24 +519,28 @@ export class AgentHarnessPiRuntime implements SessionRuntime {
       if (wait) this.hold(runId); else this.release(runId);
     };
     try {
-      return await prepareRun({ signal: preparation.controller.signal, waiting });
+      preparation.original = fresh ? await this.admittedInput() : null;
+      const { original } = preparation;
+      const prepared = await prepareRun({ signal: preparation.controller.signal, waiting, input: original && { content: original.content, metadata: original.metadata } });
+      preparation.systemPrompt = prepared.systemPrompt;
+      preparation.replacement = prepared.input ?? null;
     } catch (error) {
-      if (preparation.controller.signal.aborted) return this.systemPrompt;
-      preparation.failure = error instanceof Error ? error.message : String(error);
-      this.onError(`Run ${runId}'s system prompt could not be prepared:`, error);
+      if (preparation.controller.signal.aborted) return;
+      const message = error instanceof Error ? error.message : String(error);
+      preparation.failure = { code: failureCode(error), message };
+      this.onError(`Run ${runId} could not be prepared:`, error);
       try {
         const aborted = await this.lane.requestAbort(runId, BACKGROUND_CONTEXT);
         if (!aborted.ok) this.onError(`Run ${runId} could not be aborted:`, aborted.error);
       } catch (abortError) {
         this.onError(`Run ${runId} could not be aborted:`, abortError);
       }
-      return this.systemPrompt;
     } finally {
       waiting(false);
     }
   }
 
-  /** Stops preparing the system prompts of the runs being driven (an abort, or the runtime closing). */
+  /** Stops preparing the runs being driven (an abort, or the runtime closing). */
   private stopPreparations(): void {
     for (const preparation of this.preparations.values()) preparation.controller.abort();
   }
@@ -488,7 +548,9 @@ export class AgentHarnessPiRuntime implements SessionRuntime {
   /** Prompt images, and tool-result images the runtime stored (see `referenceToolImages`), are canonical
    * attachment references; they are hydrated to bytes only here, for the provider. */
   static async toProviderMessagesForSession(sessionId: string, messages: AgentMessage[], hydratePrompt: HydratePrompt): Promise<Message[]> {
+    const superseded = replacedInputs(messages);
     const converted = await Promise.all(messages.map(async (message) => {
+      if (message.role === "reinsInput" && superseded.has(message.reinsId)) return [];
       if (message.role === "reinsInput") return convertToLlm([providerInput(message, await hydratePrompt(sessionId, message.content)) as never]);
       if (message.role === "toolResult" && message.content.some(isImageReference)) {
         const content = await Promise.all(message.content.map(async block => isImageReference(block) ? (await hydratePrompt(sessionId, [block]))[0]! : block));
@@ -537,6 +599,7 @@ export class AgentHarnessPiRuntime implements SessionRuntime {
       const entry = admitted(await this.lane.findEntries({ limit: ADMITTED_ENTRY_WINDOW }, BACKGROUND_CONTEXT))
         ?? admitted(await this.lane.findEntries(undefined, BACKGROUND_CONTEXT));
       if (!entry) throw new Error(`AgentHarness accepted prompt ${message.reinsId} without a durable entry`);
+      this.admittedRuns.add(accepted.operationId);
       this.driveInBackground(accepted.operationId);
       return { messageId: entry.id };
     });
@@ -605,6 +668,7 @@ export class AgentHarnessPiRuntime implements SessionRuntime {
       this.activeOperations.delete(operationId);
       this.toolsInFlight.delete(operationId);
       this.preparations.delete(operationId);
+      this.admittedRuns.delete(operationId);
       this.noteBusy();
     });
   }
@@ -700,6 +764,7 @@ export class AgentHarnessPiRuntime implements SessionRuntime {
         await this.lane.waitForIdle(BACKGROUND_CONTEXT);
         const accepted = await this.lane.accept({ kind: "prompt", prompt: [] }, BACKGROUND_CONTEXT);
         if (accepted.ok) {
+          this.admittedRuns.add(accepted.value.operationId);
           this.driveInBackground(accepted.value.operationId);
           return;
         }
@@ -734,7 +799,7 @@ export class AgentHarnessPiRuntime implements SessionRuntime {
     const execution = await this.lane.inspectExecution(BACKGROUND_CONTEXT);
     if (!execution.current || !this.activeOperations.has(execution.current.id)) return;
     assertOk(await this.lane.requestAbort(execution.current.id, BACKGROUND_CONTEXT));
-    // A run waiting for its system prompt (its node) stops waiting; Pi then sees the abort.
+    // A run being prepared (waiting for its node, a hook) stops; Pi then sees the abort.
     this.preparations.get(execution.current.id)?.controller.abort();
     await this.lane.waitForIdle(BACKGROUND_CONTEXT);
   }

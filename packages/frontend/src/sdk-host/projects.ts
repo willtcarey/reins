@@ -118,9 +118,9 @@ export class SdkTasks implements Tasks {
     return this.watched.listen((projectIds) => listener({ projectIds }));
   }
 
-  async create(projectId: number, request: string): Promise<void> {
+  async create(projectId: number, request: string, options: { branch?: boolean } = {}): Promise<void> {
     this.store.getStore(projectId);
-    unwrap(await this.store.generateTask(projectId, request));
+    unwrap(await this.store.generateTask(projectId, request, options));
   }
 
   async update(projectId: number, taskId: number, changes: { title?: string; description?: string | null }): Promise<void> {

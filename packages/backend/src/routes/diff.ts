@@ -8,16 +8,17 @@
  * Both accept an optional `branch` query param. When provided, the diff is
  * computed against that branch instead of HEAD. If the branch is not currently
  * checked out, only committed changes are included (no uncommitted/untracked).
- * When omitted, the endpoints use HEAD and include uncommitted changes (the
- * previous default behavior).
+ * Without a branch, `base` (a commit: a task without a branch of its own, since
+ * it started) diffs the working tree against it. With neither, the endpoints use
+ * HEAD and include uncommitted changes.
  */
 
 import type { RouterGroup } from "../router.js";
 import type { SessionRouteContext } from "./index.js";
 import type { DiffFileSummary } from "../models/diff-parser.js";
-import type { DiffMode } from "../models/workspace.js";
+import type { DiffMode, DiffTarget } from "../models/workspace.js";
 
-export interface DiffQuery { mode?: DiffMode; branch?: string }
+export interface DiffQuery { mode?: DiffMode; branch?: string; base?: string }
 export interface DiffPatchQuery extends DiffQuery { context?: number }
 export interface DiffFileResponse {
   files: DiffFileSummary[];
@@ -25,16 +26,17 @@ export interface DiffFileResponse {
   baseBranch: string | null;
 }
 
-function parseDiffParams(url: URL): { contextLines: number; mode: DiffMode; branch?: string } {
+function parseDiffParams(url: URL): { contextLines: number; mode: DiffMode; target: DiffTarget } {
   const parsedContext = parseInt(url.searchParams.get("context") ?? "3", 10);
   const contextLines = Math.min(
     Math.max(Number.isNaN(parsedContext) ? 3 : parsedContext, 0),
     500,
   );
   const mode = url.searchParams.get("mode") === "uncommitted" ? "uncommitted" : "branch";
-  const branch = url.searchParams.get("branch") ?? undefined;
+  const branch = url.searchParams.get("branch") || undefined;
+  const base = url.searchParams.get("base") || undefined;
 
-  return { contextLines, mode, branch };
+  return { contextLines, mode, target: { ...(branch ? { branch } : {}), ...(base ? { base } : {}) } };
 }
 
 export function registerDiffRoutes(router: RouterGroup<SessionRouteContext>) {
@@ -43,23 +45,23 @@ export function registerDiffRoutes(router: RouterGroup<SessionRouteContext>) {
    * Returns file paths and +/− counts but no hunk/line data.
    */
   router.get("/diff/files", async (ctx) => {
-    const { mode, branch } = parseDiffParams(ctx.url);
+    const { mode, target } = parseDiffParams(ctx.url);
 
     const [files, currentBranch] = await Promise.all([
-      ctx.session.workspace.getChangedFiles(mode, branch),
+      ctx.session.workspace.getChangedFiles(mode, target),
       ctx.session.workspace.currentBranch(),
     ]);
     return Response.json({
       files,
-      branch: branch ?? currentBranch,
+      branch: target.branch ?? currentBranch,
       baseBranch: ctx.session.baseBranch,
     } satisfies DiffFileResponse);
   });
 
   /** Raw unified patch text for patch-backed diff consumers. */
   router.get("/diff/patch", async (ctx) => {
-    const { contextLines, mode, branch } = parseDiffParams(ctx.url);
-    const patch = ctx.session.workspace.getDiffPatchStream(contextLines, mode, branch);
+    const { contextLines, mode, target } = parseDiffParams(ctx.url);
+    const patch = ctx.session.workspace.getDiffPatchStream(contextLines, mode, target);
 
     // Bun accepts async iterables as response bodies; the cast bridges the DOM
     // Response type used by TypeScript in this package.

@@ -4,7 +4,7 @@ Changes (beside Chat in the toolbar) lets you review the work an agent has done.
 
 A moved or renamed file appears in the file tree at its new path, and its diff header shows the old path beside it. Paths with spaces or non-ASCII characters appear as they are.
 
-When viewing a task session, the diff shows changes on the task's branch compared to the base branch. When viewing a scratch session (no task), the diff shows the live working copy.
+When viewing a session of a task that has a branch of its own (see [Tasks](tasks.md#branches)), the diff shows changes on the task's branch compared to the base branch. For a task without a branch of its own, it shows what changed in the session's checkout since the task's first run started: commits since that commit, and uncommitted and new files. Before the task's first run, and for a scratch session (no task), the diff shows the live working copy against the base branch.
 
 Each file header can collapse or expand the file's diff body with a spring animation while leaving the header available, and provides actions to open the file in the file browser, copy its path, or download its current version. The animation is skipped when reduced motion is preferred. Collapsing while scrolled inside a file returns the viewport to that file's header so the spring begins visibly. Choosing a file in the tree opens Changes at that file (from Chat too) and navigates there even when the file is not currently mounted; a collapsed target expands first. The link names the file (`#/session/<id>/changes?file=<path>`), so a reload shows it again. While you scroll, the tree highlights the file at the top of the review. Long reviews stay responsive because Changes mounts only visible files and a bounded surrounding window. Binary changes retain their header and actions while showing a no-text-diff placeholder. Rich Markdown, image, and PDF previews remain available from the file browser rather than the review surface.
 
@@ -14,7 +14,7 @@ The file tree includes a dropdown at the top for switching between two diff mode
 
 ### Branch changes (default)
 
-Shows **all changes** on the selected session's branch compared to the base branch. This includes both committed and uncommitted work — the full picture of what the task branch has changed.
+Shows **all changes** on the selected session's branch compared to the base branch (for a task without a branch of its own: since its first run started). This includes both committed and uncommitted work — the full picture of what the task has changed.
 
 ### Uncommitted changes
 
@@ -48,7 +48,7 @@ A single file with more than 10,000 changed lines (additions plus removals) keep
 
 ## Sync status
 
-The diff header shows how the selected session's branch relates to the base branch and the remote.
+The diff header shows how the selected session's branch relates to the base branch and the remote: the task's branch, or, for a task without one and a scratch session, the branch the checkout has checked out.
 
 Next to the **base branch name**:
 

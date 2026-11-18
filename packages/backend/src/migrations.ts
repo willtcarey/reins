@@ -851,6 +851,43 @@ export const MIGRATIONS: Migration[] = [
       PRIMARY KEY (owner, node_id, key)
     )`,
   ],
+  [
+    // A task has a branch of its own only when its creator asks for one,
+    // so `branch_name` may be null; and a task records the branch its first run started on (its commit is
+    // `base_commit`). Existing tasks keep their branch. SQLite cannot drop NOT NULL, so the table is rebuilt
+    // under the same IDs, with foreign keys off so dropping the old one cascades nowhere.
+    "067_tasks_without_branches",
+    (db: Database) => {
+      db.exec("PRAGMA foreign_keys = OFF");
+      try {
+        db.transaction(() => {
+          db.exec(`
+            CREATE TABLE tasks_067 (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+              title TEXT NOT NULL,
+              description TEXT,
+              branch_name TEXT,
+              start_branch TEXT,
+              base_commit TEXT,
+              created_at TEXT NOT NULL DEFAULT (datetime('now')),
+              updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+              closed_at TEXT
+            );
+            INSERT INTO tasks_067 (id, project_id, title, description, branch_name, base_commit, created_at, updated_at, closed_at)
+              SELECT id, project_id, title, description, branch_name, base_commit, created_at, updated_at, closed_at FROM tasks;
+            DROP TABLE tasks;
+            ALTER TABLE tasks_067 RENAME TO tasks;
+            CREATE INDEX idx_tasks_project ON tasks(project_id, updated_at DESC);
+          `);
+          const violations = db.query("PRAGMA foreign_key_check").all();
+          if (violations.length > 0) throw new Error(`Foreign key violations after rebuilding tasks: ${JSON.stringify(violations)}`);
+        })();
+      } finally {
+        db.exec("PRAGMA foreign_keys = ON");
+      }
+    },
+  ],
 ];
 
 /** Applies those of `migrations` (all of them by default; a test may stop earlier) not applied yet, in order. */

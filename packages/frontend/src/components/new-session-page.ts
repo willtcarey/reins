@@ -254,7 +254,7 @@ export class NewSessionPage extends LitElement {
           <choice-menu
             .items=${[
               { id: null, label: "No task", detail: "A conversation with the project's assistant" },
-              ...tasks.map((task) => ({ id: task.id, label: task.title, detail: task.branch_name })),
+              ...tasks.map((task) => ({ id: task.id, label: task.title, ...(task.branch_name ? { detail: task.branch_name } : {}) })),
             ]}
             .selected=${taskId}
             .choose=${(id: number | null) => this.choose(projectId, id)}

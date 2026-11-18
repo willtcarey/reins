@@ -1,8 +1,8 @@
 /**
  * Server side of the `create_task` agent tool (`ReinsToolCalls.createTask`).
  *
- * Creates a task in the calling session's project through the task model layer (branch creation
- * and WS broadcast). With a `prompt`, kicks off an initial session on the new task
+ * Creates a task in the calling session's project through the task model layer (its branch, when given,
+ * and the WS broadcast). With a `prompt`, kicks off an initial session on the new task
  * (fire-and-forget): the task is returned immediately and the session runs in the background.
  */
 

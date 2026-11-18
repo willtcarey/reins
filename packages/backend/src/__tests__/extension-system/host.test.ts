@@ -594,6 +594,7 @@ describe("the server SDK's host", () => {
           tools: { title: "Notes tools" },
           systemPromptSections: 2,
           settlementListeners: 0,
+          beforeRunHooks: 0,
           sessionKinds: [],
           scriptFunctions: ["notes.add", "notes.list"],
           httpMethods: ["add", "list"],
@@ -611,7 +612,7 @@ describe("the server SDK's host", () => {
       expect(second).toMatchObject({
         name: "quiet",
         status: "loaded",
-        registrations: { tools: null, systemPromptSections: 0, settlementListeners: 0, sessionKinds: [], scriptFunctions: [], httpMethods: [], pages: [] },
+        registrations: { tools: null, systemPromptSections: 0, settlementListeners: 0, beforeRunHooks: 0, sessionKinds: [], scriptFunctions: [], httpMethods: [], pages: [] },
       });
     });
 

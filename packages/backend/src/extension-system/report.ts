@@ -38,6 +38,8 @@ export interface ExtensionView {
     tools: { title: string } | null;
     systemPromptSections: number;
     settlementListeners: number;
+    /** Its hooks called before each session's run (`reins.sessions.beforeRun`). */
+    beforeRunHooks: number;
     /** Its session kinds' names, as it registered them (its sessions record `<extension>/<name>`). */
     sessionKinds: string[];
     scriptFunctions: string[];

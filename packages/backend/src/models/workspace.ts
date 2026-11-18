@@ -8,6 +8,17 @@ import { timedSync } from "../request-timing.js";
 
 export type DiffMode = "branch" | "uncommitted";
 
+/** What a diff compares: a task's own `branch` (with the base branch), or the working tree since a `base`
+ * commit (a task without a branch: what changed since it started). Neither: the checkout's HEAD against
+ * the base branch. */
+export interface DiffTarget { branch?: string; base?: string }
+
+/** A task's diff: its branch's, else the working tree's since it started; none (HEAD's) before its first run. */
+export function taskDiffTarget(task: { branch_name: string | null; base_commit: string | null } | null): DiffTarget {
+  if (task?.branch_name) return { branch: task.branch_name };
+  return task?.base_commit ? { base: task.base_commit } : {};
+}
+
 export class Workspace {
   constructor(
     /** The checkout's path (on its node). */
@@ -28,9 +39,9 @@ export class Workspace {
    * cannot produce (e.g. a missing base branch) has no changes; an unreachable node rejects. */
   async getChangedFiles(
     mode: DiffMode = "branch",
-    branch?: string,
+    target: DiffTarget = {},
   ): Promise<DiffFileSummary[]> {
-    const { baseOrRange, untracked } = await this.diffScope(mode, branch);
+    const { baseOrRange, untracked } = await this.diffScope(mode, target);
     const raw = await this.git.getDiffNumstat(baseOrRange, { untracked }).catch((error: unknown) => {
       if (isNodeUnavailable(error)) throw error;
       return "";
@@ -51,9 +62,9 @@ export class Workspace {
   async *getDiffPatchStream(
     contextLines = 3,
     mode: DiffMode = "branch",
-    branch?: string,
+    target: DiffTarget = {},
   ): AsyncGenerator<Uint8Array> {
-    const { baseOrRange, untracked } = await this.diffScope(mode, branch);
+    const { baseOrRange, untracked } = await this.diffScope(mode, target);
     yield* this.git.streamDiffPatch(baseOrRange, contextLines, { untracked });
   }
 
@@ -67,8 +78,9 @@ export class Workspace {
   /** What to diff: the base or range, and whether the working tree's untracked files count. */
   private async diffScope(
     mode: DiffMode,
-    branch?: string,
+    { branch, base }: DiffTarget,
   ): Promise<{ baseOrRange: string; untracked: boolean }> {
+    if (!branch && base) return { baseOrRange: mode === "uncommitted" ? "HEAD" : base, untracked: true };
     const ref = branch ?? "HEAD";
     const requestedBranchActive = !branch || branch === await this.git.getCurrentBranch();
 

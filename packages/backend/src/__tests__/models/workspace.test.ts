@@ -5,7 +5,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { asyncIterableToText } from "../../async-iterable.js";
 import type { ReadFile } from "../../models/file-system.js";
-import { Workspace } from "../../models/workspace.js";
+import { taskDiffTarget, Workspace } from "../../models/workspace.js";
 import { dedent } from "../helpers/text.js";
 import { useTestRepo, commitFile, git } from "../helpers/test-repo.js";
 import { localGit } from "../helpers/local-git.js";
@@ -42,7 +42,7 @@ describe("getDiffPatchStream", () => {
     await localGit(repo.dir).checkoutBranch("main");
 
     const patch = await asyncIterableToText(
-      workspaceOf(repo.dir).getDiffPatchStream(3, "branch", "feature/raw-patch"),
+      workspaceOf(repo.dir).getDiffPatchStream(3, "branch", { branch: "feature/raw-patch" }),
     );
 
     expect(patch).toBe(dedent`
@@ -69,7 +69,7 @@ describe("getDiffPatchStream", () => {
     await localGit(repo.dir).checkoutBranch("main");
 
     const patch = await asyncIterableToText(
-      workspaceOf(repo.dir).getDiffPatchStream(3, "branch", "feature/child"),
+      workspaceOf(repo.dir).getDiffPatchStream(3, "branch", { branch: "feature/child" }),
     );
 
     expect(patch).toBe(dedent`
@@ -117,7 +117,7 @@ describe("getDiffPatchStream", () => {
     await git(repo.dir, ["commit", "-m", "Edit context file"]);
 
     const patch = await asyncIterableToText(
-      workspaceOf(repo.dir).getDiffPatchStream(0, "branch", "feature/context-patch"),
+      workspaceOf(repo.dir).getDiffPatchStream(0, "branch", { branch: "feature/context-patch" }),
     );
 
     expect(patch).toBe(dedent`
@@ -233,15 +233,28 @@ describe("getChangedFiles", () => {
 
   test("returns empty array for identical branches", async () => {
     await localGit(repo.dir).createBranch("feat", "main");
-    const files = await workspaceOf(repo.dir).getChangedFiles("branch", "feat");
+    const files = await workspaceOf(repo.dir).getChangedFiles("branch", { branch: "feat" });
     expect(files).toEqual([]);
+  });
+
+  test("a task without a branch of its own: the checkout's changes since the commit it started on, committed, uncommitted and untracked, not the base branch's", async () => {
+    await commitFile(repo.dir, "before.txt", "before\n", "before the task");
+    const started = await git(repo.dir, ["rev-parse", "HEAD"]);
+    await commitFile(repo.dir, "committed.txt", "one\n", "the task's commit");
+    writeFileSync(join(repo.dir, "untracked.txt"), "a\nb\n");
+
+    const files = await workspaceOf(repo.dir).getChangedFiles("branch", taskDiffTarget({ branch_name: null, base_commit: started }));
+
+    expect(files.map((file) => [file.path, file.additions]).toSorted()).toEqual([["committed.txt", 1], ["untracked.txt", 2]]);
+    expect(taskDiffTarget({ branch_name: null, base_commit: null })).toEqual({});
+    expect(taskDiffTarget({ branch_name: "task/x", base_commit: started })).toEqual({ branch: "task/x" });
   });
 
   test("returns file summaries with addition counts", async () => {
     await localGit(repo.dir).createBranch("feat", "main");
     await localGit(repo.dir).checkoutBranch("feat");
     await commitFile(repo.dir, "new.txt", "one\ntwo\n", "add new");
-    const files = await workspaceOf(repo.dir).getChangedFiles("branch", "feat");
+    const files = await workspaceOf(repo.dir).getChangedFiles("branch", { branch: "feat" });
 
     expect(files.length).toBeGreaterThanOrEqual(1);
     const file = files.find((f) => f.path === "new.txt");

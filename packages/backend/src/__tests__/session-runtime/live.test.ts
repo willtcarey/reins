@@ -108,7 +108,7 @@ describe("a session running on the server", () => {
     await expect(openSessionRuntime(host, sessionId)).rejects.toBeInstanceOf(ModelNotFoundError);
   });
 
-  test("the environment is the node's: the checkout's context files and skills in the system prompt and in slash expansion, after checking out the task branch on the node; nothing of the server's ~/.agents", async () => {
+  test("the environment is the node's: the checkout's context files and skills in the system prompt and in slash expansion; nothing of the server's ~/.agents", async () => {
     // The server's HOME; the loopback node's home is this test process's own (Pi's `~` is `os.homedir()`).
     mkdirSync(join(home, ".agents/skills/server-skill"), { recursive: true });
     writeFileSync(join(home, ".agents/AGENTS.md"), "Server-wide instructions");
@@ -118,7 +118,6 @@ describe("a session running on the server", () => {
     writeFileSync(join(repo.dir, ".agents/skills/repo-skill/SKILL.md"), "---\nname: repo-skill\ndescription: The checkout's skill\n---\nRepo skill body");
     await git(repo.dir, ["add", "."]);
     await git(repo.dir, ["commit", "-m", "Agents"]);
-    await git(repo.dir, ["branch", "task/environment"]);
     const project = createProject("Environment", repo.dir);
     const task = createTask(project.id, "Environment", null, "task/environment");
     const sessionId = createSession(state, { projectId: project.id, model: { provider: provider.provider.id, modelId: "fake" }, taskId: task.id }).id;
@@ -126,7 +125,6 @@ describe("a session running on the server", () => {
     const seen: Context[] = [];
     await promptAndSettle(sessionId, "Use /repo-skill and /server-skill", [context => { seen.push(context); return fauxAssistantMessage("ok"); }]);
 
-    expect(await git(repo.dir, ["rev-parse", "--abbrev-ref", "HEAD"])).toBe("task/environment");
     const systemPrompt = getCurrentSystemPrompt(seen[0]!.messages);
     expect(systemPrompt).toContain("Checkout instructions");
     expect(systemPrompt).toContain(`<location>${join(repo.dir, ".agents/skills/repo-skill/SKILL.md")}</location>`);
@@ -204,42 +202,25 @@ describe("a session running on the server", () => {
     expect(toolResults(sessionId)).toMatchObject([{ isError: false, content: [{ type: "text", text: "started\ndone\n" }] }]);
   });
 
-  test("a run makes its task's branch where its session works when the checkout does not have it, from the base branch, and records where it begins", async () => {
-    const project = createProject("New branch", repo.dir);
-    const task = createTask(project.id, "New", null, "task/new-here");
-    const base = await git(repo.dir, ["rev-parse", "main"]);
+  test("the run of a task without a branch of its own switches no branch: its task records the branch and commit its first run started on, once", async () => {
+    await git(repo.dir, ["branch", "other"]);
+    const project = createProject("No switching", repo.dir);
+    const task = createTask(project.id, "Branchless", null, null);
+    const main = await git(repo.dir, ["rev-parse", "HEAD"]);
     const sessionId = createSession(state, { projectId: project.id, model: { provider: provider.provider.id, modelId: "fake" }, taskId: task.id }).id;
 
     await promptAndSettle(sessionId, "Hello", [() => fauxAssistantMessage("ok")]);
-
     expect(latestSettlement(sessionId)).toMatchObject({ status: "completed" });
-    expect(await git(repo.dir, ["rev-parse", "--abbrev-ref", "HEAD"])).toBe("task/new-here");
-    expect(await git(repo.dir, ["rev-parse", "task/new-here"])).toBe(base);
-    expect(getTask(task.id)?.base_commit).toBe(base);
-  });
+    expect(await git(repo.dir, ["rev-parse", "--abbrev-ref", "HEAD"])).toBe("main");
+    expect(getTask(task.id)).toMatchObject({ branch_name: null, start_branch: "main", base_commit: main });
 
-  test("two runs of a task starting at once in one checkout both prepare it: one makes the branch, both are on it", async () => {
-    const project = createProject("Together", repo.dir);
-    const task = createTask(project.id, "Together", null, "task/together");
-    const sessions = [0, 1].map(() => createSession(state, { projectId: project.id, model: { provider: provider.provider.id, modelId: "fake" }, taskId: task.id }).id);
-    provider.setResponses(sessions.map(() => () => fauxAssistantMessage("ok")));
-
-    for (const sessionId of sessions) await (await openSessionRuntime(host, sessionId)).prompt([{ type: "text", text: "Hello" }], { reinsId: crypto.randomUUID() });
-    await until(() => sessions.every(sessionId => latestSettlement(sessionId) !== null), "both runs settled");
-
-    for (const sessionId of sessions) expect(latestSettlement(sessionId)).toMatchObject({ status: "completed" });
-    expect(await git(repo.dir, ["rev-parse", "--abbrev-ref", "HEAD"])).toBe("task/together");
-  });
-
-  test("a run whose checkout cannot be prepared fails, without asking the model", async () => {
-    const project = createProject("Missing base", repo.dir, "no-such-base");
-    const task = createTask(project.id, "Missing", null, "task/missing");
-    const sessionId = createSession(state, { projectId: project.id, model: { provider: provider.provider.id, modelId: "fake" }, taskId: task.id }).id;
-    const runtime = await openSessionRuntime(host, sessionId);
-    await runtime.prompt([{ type: "text", text: "Hello" }], { reinsId: "missing" });
-    await until(() => latestSettlement(sessionId) !== null, "the run settled");
-    expect(latestSettlement(sessionId)).toMatchObject({ status: "failed", error: { message: expect.stringContaining("Preparing the checkout failed") } });
-    expect(provider.state.callCount).toBe(0);
+    await git(repo.dir, ["checkout", "other"]);
+    writeFileSync(join(repo.dir, "later.txt"), "later");
+    await git(repo.dir, ["add", "."]);
+    await git(repo.dir, ["commit", "-m", "Later"]);
+    await promptAndSettle(sessionId, "Again", [() => fauxAssistantMessage("ok")]);
+    expect(await git(repo.dir, ["rev-parse", "--abbrev-ref", "HEAD"])).toBe("other");
+    expect(getTask(task.id)).toMatchObject({ start_branch: "main", base_commit: main });
   });
 });
 

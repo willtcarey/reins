@@ -15,7 +15,7 @@ import type { AgentHarnessTool } from "@taco-ai/pi-harness";
 import { RpcFailure } from "@reins/node-protocol";
 import type { ReinsToolCalls } from "../tools/index.js";
 import { runSettled, type SessionSettled } from "../sessions/session-runs.js";
-import type { App, NodeClient, ServerProcess } from "../state.js";
+import type { App, BeforeRunCall, NodeClient, RunInput, ServerProcess } from "../state.js";
 import type { SessionContext } from "../models/session.js";
 import { PiStorageAdapter } from "../pi-storage.js";
 import { createPiModelRuntime } from "../pi/factory.js";
@@ -29,7 +29,8 @@ import { createAgentHarnessPiRuntime, ModelNotFoundError, type AgentHarnessPiRun
 import { createHostTools, type HostToolContext } from "./tools.js";
 import { createReinsTools } from "./reins-tools.js";
 import { referenceInlineImages, toolImageReferences } from "./tool-images.js";
-import { environmentPrompt, expandSkills, prepareCheckout } from "./environment.js";
+import { environmentPrompt, expandSkills, readCheckoutStart } from "./environment.js";
+import { recordTaskStart, taskStartRecorded } from "../task-store.js";
 import { nodeResources } from "./resources.js";
 import { SessionStorage } from "./storage.js";
 import { sendableEvent } from "./events.js";
@@ -153,10 +154,36 @@ export function currentAppNode(serverProcess: ServerProcess, nodeId: string): No
   };
 }
 
+/** How often a run's preparation looks for the next app during a reload's gap. */
+const APP_GAP_POLL_MS = 50;
+
+/** The current app's hooks before a run (`App.beforeRun`, `sessions/hooks/before-run.ts`: Reins' own, then its extensions'): the input replacing
+ * the run's, or null.
+ * During a reload's gap a run that works in its checkout waits for the next app, as the hooks are its and may
+ * change the checkout; one that does not (a utility kind, which needs no app) runs none. An app on older code
+ * without hooks runs none. A hook's throw rejects as `BeforeRunRefused`, with the hook's message and its `code`, if it
+ * has one. */
+async function runBeforeRunHooks(serverProcess: ServerProcess, run: BeforeRunCall, { waitForApp }: { waitForApp: boolean }): Promise<RunInput | null> {
+  let app = serverProcess.app;
+  while (!app) {
+    if (!waitForApp) return null;
+    await Bun.sleep(APP_GAP_POLL_MS);
+    run.signal.throwIfAborted();
+    app = serverProcess.app;
+  }
+  try {
+    return await app.beforeRun?.(run) ?? null;
+  } catch (error) {
+    run.signal.throwIfAborted();
+    const code = typeof error === "object" && error !== null && "code" in error && typeof error.code === "string" ? { code: error.code } : {};
+    throw Object.assign(new Error(error instanceof Error ? error.message : String(error), { cause: error }), { name: "BeforeRunRefused", ...code });
+  }
+}
+
 /** Builds and opens a session's runtime. Throws `ModelNotFoundError` for a model the server's catalog does
  * not have (the lane's, else the seed's), `UnknownToolsError` for tools it does not have. */
 export async function buildSessionRuntime({ serverProcess, sessionId, projectId, nodeId, context, model: override, onActivity, onFault }: RuntimeOpening): Promise<AgentHarnessPiRuntime> {
-  const { binding, branch, lane: seedLane, runtime: configuration } = context;
+  const { binding, taskId, lane: seedLane, runtime: configuration } = context;
   const node = currentAppNode(serverProcess, nodeId);
   const modelRuntime = await createPiModelRuntime({ credentials: createDbCredentialStore(serverProcess) });
 
@@ -191,20 +218,28 @@ export async function buildSessionRuntime({ serverProcess, sessionId, projectId,
     if (unknown.length > 0) throw new UnknownToolsError(unknown);
     const activeTools = activeToolNames.map(name => tools.find(tool => tool.name === name)!);
 
-    // The checkout is prepared at each run's first assistant request (on its node, waiting for it): the
-    // task branch, and the environment the prompt lists. A kind without the environment and without a
-    // branch (a utility kind) needs no checkout: the model sees exactly its prompt.
-    // Discovery is strict: one the node could not answer fails, rather than pass for a node without them.
-    const prepareRun: PrepareRun | undefined = configuration.environment || branch
-      ? async ({ signal, waiting }) => {
-        // Its waits for the node are the run's pause point.
-        const checkout = new NodeDirClient({ cwd: binding.cwd, node, onWaiting: waiting });
-        const connected = await prepareCheckout(checkout, branch, signal);
-        if (!configuration.environment) return configuration.systemPrompt;
-        const resources = await nodeResources(new PiNodeEnv(checkout, { strict: true }), { signal });
-        return configuration.systemPrompt + environmentPrompt({ cwd: binding.cwd, tools: activeTools, resources: { ...resources, docs: connected.docs } });
+    // Each run is prepared before its first model request: its node waited for, when it works in its checkout
+    // (offered tools, or the environment; a utility kind does not, so its model sees exactly its prompt); the hooks
+    // (Reins' own, which checks out an open task's own branch, then the extensions'), which may change the checkout
+    // and the input; where its task started, at its first run; then the environment the prompt lists, read after
+    // the hooks. Discovery is strict: one the node could not answer fails, rather than pass for a node without them.
+    const worksInCheckout = configuration.environment || (configuration.tools?.length ?? 1) > 0;
+    const prepareRun: PrepareRun = async ({ signal, waiting, input }) => {
+      // Its waits for the node are the run's pause point.
+      const checkout = new NodeDirClient({ cwd: binding.cwd, node, onWaiting: waiting });
+      // An extension's hook reaches the node through `reins.nodes.run`, which does not wait for it: the run does first.
+      const connected = worksInCheckout ? await checkout.connectedNode({ signal }) : null;
+      waiting(true);
+      const replacement = await runBeforeRunHooks(serverProcess, { sessionId, tools: configuration.tools ?? null, input, signal }, { waitForApp: worksInCheckout })
+        .finally(() => waiting(false));
+      if (worksInCheckout && taskId !== null && !taskStartRecorded(taskId)) {
+        const start = await readCheckoutStart(checkout, signal);
+        if (start) recordTaskStart(taskId, start);
       }
-      : undefined;
+      if (!configuration.environment) return { systemPrompt: configuration.systemPrompt, input: replacement };
+      const resources = await nodeResources(new PiNodeEnv(checkout, { strict: true }), { signal });
+      return { systemPrompt: configuration.systemPrompt + environmentPrompt({ cwd: binding.cwd, tools: activeTools, resources: { ...resources, docs: connected?.docs ?? null } }), input: replacement };
+    };
     // Slash expansion does not wait for a node that is not connected: the submission fails at once.
     const nodeSkills = async () => {
       try {
@@ -247,7 +282,7 @@ export async function buildSessionRuntime({ serverProcess, sessionId, projectId,
       },
       referenceToolImages: toolImageReferences(attachments, sessionId),
       pauseGate: serverProcess.sessions.pauseGate,
-      ...(prepareRun ? { prepareRun } : {}),
+      prepareRun,
       onError: (message, error) => logger.error(message, error),
     });
   } catch (error) {

@@ -411,12 +411,14 @@ export interface Task {
   readonly projectId: number;
   readonly title: string;
   readonly description: string | null;
-  /** The branch its sessions work on. */
-  readonly branchName: string;
+  /** Its own branch, given at its creation, which its sessions work on; null when it has none: its sessions work
+   * on whatever their checkout has checked out. */
+  readonly branchName: string | null;
   readonly closed: boolean;
   readonly updatedAt: string;
   readonly sessionCount: number;
-  /** Lines its branch adds and removes against the project's base branch; null when not known. */
+  /** Lines its branch adds and removes against the project's base branch (a task without a branch: its
+   * checkout's since its first run started); null when not known. */
   readonly diffStats: { readonly additions: number; readonly removals: number } | null;
   readonly activity: Activity;
 }
@@ -433,8 +435,9 @@ export interface Tasks {
    * closed elsewhere), with nothing to read until they are asked for.
    */
   onDidChange(listener: (change: TasksChange) => void): Disposer;
-  /** Creates a task from what the user wants done: Reins writes its title, description and branch. */
-  create(projectId: number, request: string): Promise<void>;
+  /** Creates a task from what the user wants done: Reins writes its title and description, and, with `branch`, names
+   * a branch of its own, which its sessions then work on. */
+  create(projectId: number, request: string, options?: { readonly branch?: boolean }): Promise<void>;
   update(projectId: number, taskId: number, changes: { readonly title?: string; readonly description?: string | null }): Promise<void>;
   /** Deletes the task, with its sessions. */
   remove(projectId: number, taskId: number): Promise<void>;

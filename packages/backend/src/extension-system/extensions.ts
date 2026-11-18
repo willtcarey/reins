@@ -14,6 +14,7 @@ import {
   setExtensionBuild, setExtensionEnabled, type AddedExtensionRow, type ExtensionRow,
 } from "../extensions-store.js";
 import { EXTENSION_NAME, ExtensionHost } from "./host.js";
+import type { RegisteredHook, SessionHookName } from "../sessions/hooks/registry.js";
 import type { AppState } from "../state.js";
 import { BackendFailure, startBackend, type RunningBackend } from "./backend.js";
 import { installPackage, openInstalled, openPackage, PackageFailure, removeBuilds, type ExtensionPackage } from "./package.js";
@@ -234,6 +235,17 @@ export class Extensions {
       : state.kind === "loading" ? "is still loading"
       : "does not register it";
     return { missing: `the ${extension} extension ${reason}` };
+  }
+
+  /** The extensions' session hooks of the name `hook`, the built-ins' first in their order, then the added ones' by name, each
+   * extension's in its registration order: fixed, so a reload or a turn off and on does not move one. Extensions
+   * still loading (at the start, or a reload) are waited for, as their hooks are not registered yet. */
+  async sessionHooks<K extends SessionHookName>(hook: K): Promise<readonly RegisteredHook<K>[]> {
+    await this.loaded;
+    await Promise.all([...this.chains.values()].map(chain => chain.catch(() => undefined)));
+    const builtIns = [...this.builtIns.keys()];
+    const rank = (name: string) => { const at = builtIns.indexOf(name); return at < 0 ? builtIns.length : at; };
+    return this.host.sessionHooks.list(hook).toSorted((a, b) => rank(a.extension) - rank(b.extension) || (rank(a.extension) === builtIns.length ? a.extension.localeCompare(b.extension) : 0));
   }
 
   /** Only the current build's files: an old build ID must not serve files that have changed since. */

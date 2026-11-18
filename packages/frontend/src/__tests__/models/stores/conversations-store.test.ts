@@ -99,6 +99,17 @@ describe("ConversationsStore canonical reconciliation", () => {
     expect(store.get("session").messages.map(({ entryId }) => entryId)).toEqual(["entry-1", "entry-2"]);
   });
 
+  test("an input a run's preparation replaced shows as its replacement, in its place", () => {
+    const store = new ConversationsStore();
+    store.addOptimisticUserMessage("session", content("typed"), "client-1", 10);
+    store.applyEvent("session", { type: "entry_added", entry: entry("entry-1", 1, user("typed", 20), "client-1") });
+    const replacement = { ...user("rewritten", 21), metadata: { replaces: "client-1" } };
+    store.applyEvent("session", { type: "entry_added", entry: entry("entry-2", 2, replacement, "client-1:replacement") });
+
+    expect(raw(store)).toEqual([replacement]);
+    expect(store.get("session").messages.map(({ renderKey }) => renderKey)).toEqual(["submission-client-1"]);
+  });
+
   test("stale pages cannot consume a different pending submission", () => {
     const store = new ConversationsStore();
     const stale = entry("entry-old", 1, user("same", 1), "old-client");

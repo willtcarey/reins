@@ -23,6 +23,8 @@ export interface TaskHistoryPage { items: TaskWithDiffStats[]; hasMore: boolean 
 
 const GenerateTaskBody = Type.Object({
   prompt: Type.String({ minLength: 1, pattern: "\\S" }),
+  /** Give the task a branch of its own (the generated name). */
+  branch: Type.Optional(Type.Boolean()),
 });
 
 const UpdateTaskBody = Type.Object({
@@ -66,7 +68,7 @@ export function registerTaskRoutes(router: RouterGroup<ProjectRouteContext>) {
       const task = await ctx.project.tasks().create({
         title: generated.title,
         description: generated.description,
-        branch_name: generated.branch_name,
+        ...(body.branch ? { branch_name: generated.branch_name } : {}),
       });
       return Response.json(task, { status: 201 });
     } catch (err: unknown) {

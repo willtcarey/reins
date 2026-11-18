@@ -286,7 +286,7 @@ describe("ProjectsStore per-project data", () => {
     await expect(store.generateTask(42, "Build it")).resolves.toEqual({ ok: true });
     expect(updateTask).toHaveBeenCalledWith(7, { title: "Updated" });
     expect(deleteTask).toHaveBeenCalledWith(7);
-    expect(generateTask).toHaveBeenCalledWith("Build it");
+    expect(generateTask).toHaveBeenCalledWith("Build it", {});
   });
 
   test("returns a domain error when task mutations target unloaded project data", async () => {

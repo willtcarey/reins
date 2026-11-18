@@ -11,6 +11,8 @@ import { Models } from "./models/models.js";
 import { serverToolCalls, type ReinsToolCalls } from "./tools/index.js";
 import { SessionInstance } from "./sessions/session-instance.js";
 import { APP_CODE } from "./session-runtime/live.js";
+import { runBeforeRun } from "./sessions/hooks/before-run.js";
+import { runOnSettled } from "./sessions/hooks/on-settled.js";
 
 /** A failure with the outcome the runtime's tools tell the model (`App.executeScript`). */
 const failure = (message: string, outcome: "unknown" | "not_run") => Object.assign(new Error(message), { outcome });
@@ -50,7 +52,8 @@ export function createApp(state: AppState): App & { stop(): void } {
     createTask: (sessionId, input, signal) => toolCalls(sessionId).createTask(input, signal),
     systemPromptSections: context => state.extensions.host.systemPromptSections(context),
     findSessionKind: name => state.extensions.findSessionKind(name),
-    sessionSettled: notice => state.extensions.host.sessionSettled(notice),
+    sessionSettled: notice => runOnSettled(state, notice),
+    beforeRun: run => runBeforeRun(state, run),
     stop() {
       stopped = true;
       for (const script of scripts) script.abort(new Error("The server reloaded"));

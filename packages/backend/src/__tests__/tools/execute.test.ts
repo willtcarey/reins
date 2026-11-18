@@ -155,8 +155,8 @@ describe("execute tool", () => {
 
   describe("tasks API", () => {
     test("tasks.list() returns tasks for the current project", async () => {
-      createTask(project.id, "Task 1", "desc", "task/one", null);
-      createTask(project.id, "Task 2", "desc", "task/two", null);
+      createTask(project.id, "Task 1", "desc", "task/one");
+      createTask(project.id, "Task 2", "desc", "task/two");
 
       const tool = makeTool();
       const result = await executeTool(tool, "c5", {
@@ -169,7 +169,7 @@ describe("execute tool", () => {
     });
 
     test("tasks.current() returns the task for the current session", async () => {
-      const task = createTask(project.id, "Current Task", "desc", "task/current", null);
+      const task = createTask(project.id, "Current Task", "desc", "task/current");
       storeCreateSession("task-sess", project.id, { agentRuntimeType: "pi", taskId: task.id });
       const tool = makeTool("task-sess", task.id);
 
@@ -192,7 +192,7 @@ describe("execute tool", () => {
     });
 
     test("tasks.get() returns a task by ID", async () => {
-      const task = createTask(project.id, "My Task", "description", "task/my-task", null);
+      const task = createTask(project.id, "My Task", "description", "task/my-task");
 
       const tool = makeTool();
       const result = await executeTool(tool, "c6", {
@@ -204,7 +204,7 @@ describe("execute tool", () => {
       expect(parsed.title).toBe("My Task");
     });
 
-    test("tasks.create() creates a task with a git branch", async () => {
+    test("tasks.create() creates a task with no branch unless it names one", async () => {
       const tool = makeTool();
       const result = await executeTool(tool, "c7", {
         code: `return await reins.tasks.create("New Task", "A new task")`,
@@ -212,7 +212,7 @@ describe("execute tool", () => {
 
       const parsed = JSON.parse(textOf(result));
       expect(parsed.title).toBe("New Task");
-      expect(parsed.branchName).toContain("task/");
+      expect(parsed.branchName).toBeNull();
 
       // Verify in DB
       const dbTask = getTask(parsed.id);
@@ -221,7 +221,7 @@ describe("execute tool", () => {
     });
 
     test("tasks.update() updates a task", async () => {
-      const task = createTask(project.id, "Original", "desc", "task/orig", null);
+      const task = createTask(project.id, "Original", "desc", "task/orig");
 
       const tool = makeTool();
       const result = await executeTool(tool, "c8", {
@@ -236,7 +236,7 @@ describe("execute tool", () => {
   describe("reviews API", () => {
     test("creates a pending review comment from the current Git diff", async () => {
       await Bun.write(`${repo.dir}/README.md`, "# Reviewed\n");
-      const task = createTask(project.id, "Review task", "", "main", null);
+      const task = createTask(project.id, "Review task", "", "main");
       storeCreateSession("review-session", project.id, { agentRuntimeType: "pi", taskId: task.id });
       const tool = makeTool("review-session", task.id);
 
@@ -280,7 +280,7 @@ describe("execute tool", () => {
 
   describe("sessions API", () => {
     test("sessions.list() returns all sessions for the current project", async () => {
-      const task = createTask(project.id, "List Task", "desc", "task/list", null);
+      const task = createTask(project.id, "List Task", "desc", "task/list");
       storeCreateSession("sess-1", project.id, { agentRuntimeType: "pi" });
       storeCreateSession("sess-2", project.id, { agentRuntimeType: "pi" });
       storeCreateSession("task-sess", project.id, { agentRuntimeType: "pi", taskId: task.id });
@@ -410,7 +410,7 @@ describe("execute tool", () => {
     });
 
     test("sessions.list(options) can list task sessions through taskId", async () => {
-      const task = createTask(project.id, "Task Sessions", "desc", "task/sessions", null);
+      const task = createTask(project.id, "Task Sessions", "desc", "task/sessions");
       storeCreateSession("scratch-only", project.id, { agentRuntimeType: "pi" });
       storeCreateSession("task-only", project.id, { agentRuntimeType: "pi", taskId: task.id });
 
@@ -424,7 +424,7 @@ describe("execute tool", () => {
     });
 
     test("sessions.list(options) can list scratch sessions through taskId null", async () => {
-      const task = createTask(project.id, "Task Sessions", "desc", "task/sessions-null", null);
+      const task = createTask(project.id, "Task Sessions", "desc", "task/sessions-null");
       storeCreateSession("scratch-only", project.id, { agentRuntimeType: "pi" });
       storeCreateSession("task-only", project.id, { agentRuntimeType: "pi", taskId: task.id });
 
@@ -438,7 +438,7 @@ describe("execute tool", () => {
     });
 
     test("sessions.list(options) accepts current project and task identifiers", async () => {
-      const task = createTask(project.id, "Current Task Sessions", "desc", "task/current-sessions", null);
+      const task = createTask(project.id, "Current Task Sessions", "desc", "task/current-sessions");
       storeCreateSession("scratch-only", project.id, { agentRuntimeType: "pi" });
       storeCreateSession("task-current", project.id, { agentRuntimeType: "pi", taskId: task.id });
       storeCreateSession("task-context", project.id, { agentRuntimeType: "pi", taskId: task.id });

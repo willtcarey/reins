@@ -56,6 +56,28 @@ describe("SessionDiffs", () => {
     app.dispose();
   });
 
+  test("scopes the diff of a task without a branch of its own to what its checkout changed since the commit it started on", async () => {
+    const requests: string[] = [];
+    mockFetch((url) => {
+      requests.push(url);
+      const detail = url.match(/^\/api\/sessions\/([^/]+)$/);
+      if (detail) return Response.json(sessionDetail("s1", 1, 10));
+      if (/^\/api\/projects\/1\/tasks\?status=open$/.test(url)) return Response.json([{ id: 10, branch_name: null, base_commit: "abc123" }]);
+      if (url.includes("/diff/files")) return Response.json({ files: [], branch: "main", baseBranch: "main" });
+      return Response.json([]);
+    });
+    const app = new AppStore(new StubClient());
+
+    const { diff, release } = app.diffs.use("s1");
+    await settle();
+
+    expect(requests.find((url) => url.includes("/diff/files"))).toContain("base=abc123");
+    expect(requests.find((url) => url.includes("/diff/files"))).not.toContain("branch=");
+    expect(diff.files.branch).toBe("main");
+    release();
+    app.dispose();
+  });
+
   test("gives one source object while the session's checkout stays the same, and another when it moves", async () => {
     serveSessions({ s1: sessionDetail("s1", 1, 10) });
     const app = new AppStore(new StubClient());
