@@ -7,7 +7,7 @@ import { KindGuard, type TSchema } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 import { firstSchemaError } from "../schema-errors.js";
 import type {
-  Disposer, HttpApi, HttpCall, ImagesProvider, Logger, PageHandler, SystemPromptContext, SystemPromptSection, ScriptContext, ScriptNamespace,
+  DecisionsProvider, Disposer, HttpApi, HttpCall, ImagesProvider, Logger, PageHandler, SystemPromptContext, SystemPromptSection, ScriptContext, ScriptNamespace,
   ServerSdk, Service, SessionKind, ToolFilters, ToolProvider, ToolResult, ToolSearchGroup,
 } from "@reins/sdk/server";
 import type { ExtensionStorage } from "../database.js";
@@ -69,6 +69,7 @@ export interface ExtensionConnection {
 export class ExtensionHost {
   private readonly providers: { extension: string; provider: ToolProvider }[] = [];
   readonly imageProviders = new Map<string, ImagesProvider>();
+  readonly decisionProviders = new Map<string, DecisionsProvider>();
   private readonly sections: { extension: string; section: SystemPromptSection }[] = [];
   private readonly scripts: Script[] = [];
   private readonly pages: Page[] = [];
@@ -128,6 +129,12 @@ export class ExtensionHost {
     if (this.imageProviders.has(extension)) throw new Error("An extension registers one image provider at a time");
     this.imageProviders.set(extension, provider);
     return async () => { if (this.imageProviders.get(extension) === provider) this.imageProviders.delete(extension); };
+  }
+
+  addDecisionProvider(extension: string, provider: DecisionsProvider): Removal {
+    if (this.decisionProviders.has(extension)) throw new Error("An extension registers one decisions provider at a time");
+    this.decisionProviders.set(extension, provider);
+    return async () => { if (this.decisionProviders.get(extension) === provider) this.decisionProviders.delete(extension); };
   }
 
   addSystemPromptSection(extension: string, section: SystemPromptSection): Removal {

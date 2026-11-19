@@ -39,6 +39,7 @@ function mockSettingsFetch(modelsResponse: Response | Promise<Response> = jsonRe
     if (url.startsWith("/api/settings")) return jsonResponse([]);
     if (url === "/api/oauth/providers") return jsonResponse([]);
     if (url === "/api/models") return modelsResponse;
+    if (url === "/api/decisions/models") return jsonResponse([]);
     if (url === "/api/nodes") return jsonResponse([]);
     if (url === "/api/installed-extensions") return jsonResponse([]);
     return new Response("{}", { status: 500 });
@@ -85,9 +86,12 @@ describe("SettingsPage", () => {
     expect(output).toContain("Settings sections");
     expect(output).toContain("Default model");
     expect(output).toContain("Utility model");
+    expect(output).toContain("Decision model");
+    expect(output).toContain("<settings-decision-model-section");
     expect(output).toContain("<settings-api-keys-section");
     expect(output).not.toContain("<settings-nodes-section");
     expect(requests).toContain("/api/settings?key=default_model&key=utility_model");
+    expect(requests).toContain("/api/decisions/models");
     expect(requests).not.toContain("/api/nodes");
   });
 

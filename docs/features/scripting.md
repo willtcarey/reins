@@ -43,6 +43,7 @@ execute({
 | `reins.nodes` | `list()`, `get(node?)`, `reload(node?, force?)`, `readFile(node, path, options?)`, `writeFile(node, path, content)`, `copy(fromNode, fromPath, toNode, toPath)`, `run(node, command, options?)` |
 | `reins.tools` | `search(query, { filters? }?)`, `call(id, args?, { timeoutMs? }?)` |
 | `reins.images` | `list()`, `generate(prompt, { model?, images?, size?, count?, parameters? }?)` ([images.md](images.md)) |
+| `reins.decisions` | `list()`, `classify({ model?, state, images?, questions, temperature? })`: typed questions (`choice`, `bool`, `score`) answered by a decision model, by default the one chosen in Settings ([decisions.md](decisions.md)) |
 | `reins.mcp` | `list()`, `get(server)`, `add(server)`, `update(server, changes)`, `remove(server)`, `test(server)`, `signIn(server, callbackOrigin?)`, `finishSignIn(callbackUrl)`, `signOut(server)` |
 | `reins.automations` | `create({ trigger, message?, target?, once?, name?, source?, model?, compactAboveTokens?, background?, project? })` (target `"this"`, `"own"` or `"new"`) (a `{ schedule, timezone? }` or `{ command, every, node?, cwd?, timeoutMs? }` trigger), `cancel(id)`, `list({ all?, includeCancelled? }?)`, `runs(id, limit?)`, `replaceSession(id)` ([automations.md](automations.md)) |
 

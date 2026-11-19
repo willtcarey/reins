@@ -7,6 +7,7 @@ export const API = {
   tasks: "/api/tasks",
   settings: "/api/settings",
   models: "/api/models",
+  decisionModels: "/api/decisions/models",
   auth: "/api/auth",
   oauth: "/api/oauth",
   /** Each extension's HTTP API, under its name (routes/extensions.ts). */

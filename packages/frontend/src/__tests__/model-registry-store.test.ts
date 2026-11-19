@@ -54,6 +54,7 @@ describe("ModelRegistryStore", () => {
         label: "Anthropic",
         availabilitySource: "env",
         availabilitySources: ["env"],
+        isAvailable: true,
       },
     ]);
     expect(store.unconfiguredProviders.map((provider) => provider.provider)).toEqual(["openai"]);
@@ -62,5 +63,19 @@ describe("ModelRegistryStore", () => {
       { id: "claude-sonnet-4", name: "Claude Sonnet 4", reasoning: true, contextWindow: 200_000, maxTokens: 8_192 },
     ]);
     expect(store.findModel("anthropic", "claude-sonnet-4")?.name).toBe("Claude Sonnet 4");
+  });
+
+  test("a stored key whose provider cannot be used yet stays listed, as not usable, and is not offered again", async () => {
+    mockFetch((url) => url === "/api/models"
+      ? jsonResponse([{ provider: "cloudflare-workers-ai", isAvailable: false, availabilitySource: "db", availabilitySources: ["db"], models: [] }])
+      : jsonResponse({}, false));
+
+    await store.load();
+
+    expect(store.apiKeys).toEqual([{
+      provider: "cloudflare-workers-ai", label: "Cloudflare Workers Ai", availabilitySource: "db", availabilitySources: ["db"], isAvailable: false,
+    }]);
+    expect(store.unconfiguredProviders).toEqual([]);
+    expect(store.availableProviders).toEqual([]);
   });
 });

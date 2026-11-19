@@ -11,6 +11,7 @@ import {
   schemaAnyOf,
   schemaProperties,
   sameSchema,
+  schemaRecordValue,
 } from "./schema-utils.js";
 import { rankByTerms } from "./term-search.js";
 import type { ExtensionHost } from "../extension-system/host.js";
@@ -133,6 +134,9 @@ function schemaReferences(schema: TSchema, target: TSchema): boolean {
       if (schemaReferences(member, target)) return true;
     }
   }
+
+  const recordValue = schemaRecordValue(schema);
+  if (schema.type === "object" && recordValue && schemaReferences(recordValue, target)) return true;
 
   // Object properties
   const props = schemaProperties(schema);

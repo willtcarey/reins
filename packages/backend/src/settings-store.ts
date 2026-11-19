@@ -28,6 +28,8 @@ export const SidebarSectionsSettingSchema = Type.Object({
 export const SETTINGS_SCHEMA = {
   default_model: ModelSettingSchema,
   utility_model: ModelSettingSchema,
+  /** An ID from `reins.decisions.list()`: the model `reins.decisions.classify` uses when given none. */
+  decision_model: Type.String({ minLength: 1 }),
   sidebar_sections: SidebarSectionsSettingSchema,
 } as const;
 

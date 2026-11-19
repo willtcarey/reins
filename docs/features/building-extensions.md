@@ -138,7 +138,7 @@ What `reins` gives (each in depth in [server-sdk.md](../dev/server-sdk.md), in a
   ```
 - **`broadcast(message)`**: a message to every browser, which only its frontend part hears (`reins.onMessage`).
 - **`sessions`**: `start(prompt, { projectId, title, background?, kind? })` (a session, recorded as started by the extension), `send`, `get`, `list`, `wait`, `onSettled` (the end of each run of a session it started), `registerKind` (*Session kinds* below), `registerSystemPromptSection`.
-- **`projects`**, **`tasks`**, **`nodes`** (`list`, `get` with each node's sources, `readFile`, `writeFile`, `run(node, command, { cwd, timeoutMs, env, signal })`), **`models`**, **`images`**: the same methods agents have in `execute`.
+- **`projects`**, **`tasks`**, **`nodes`** (`list`, `get` with each node's sources, `readFile`, `writeFile`, `run(node, command, { cwd, timeoutMs, env, signal })`), **`models`**, **`images`**, **`decisions`**: the same methods agents have in `execute`. `images.registerProvider` and `decisions.registerProvider` give models of your own (*Writing a decisions provider* below).
 - **`tools.register(provider)`**: tools agents find and call through `reins.tools` (their IDs are `<name>__<tool>`). **`scripting.register(namespace)`**: `reins.<namespace>` functions in agents' scripts. **`sessions.registerSystemPromptSection(section)`**: a section of every session's system prompt.
 - **`logger`**: the server's log, under the extension's name.
 
@@ -186,6 +186,52 @@ reins.sessions.beforeRun(async ({ session, task, tools, message, signal }) => {
 - **Replace** the input by returning a message (`MessageContent`, as for `sessions.send`). The model and the chat get your message in its place. Hooks of several extensions chain in a fixed order (Reins' built-in extensions first, then added ones by name): each gets the message the one before it returned.
 - **Throw to stop the run.** The run fails with your error's message, which the chat shows, and the model is not asked.
 - **No time limit**, but pass `signal` on: stopping the run aborts it. While you wait the run is paused cleanly, so a restart meanwhile prepares it again.
+
+### Writing a decisions provider
+
+An extension can give decision models: models that answer typed questions about JSON state ([decisions.md](decisions.md)). Register one provider, with `list` and `classify`:
+
+```ts
+import type { DecisionAnswer, DecisionRequest, ServerSdk } from "@reins/sdk/server";
+
+/** A Worker of yours on Cloudflare that runs Clef and answers `{ state, questions }` with `{ answers, usage? }`. */
+const WORKER_URL = "https://clef.example.workers.dev/classify";
+
+export function registerClef(reins: ServerSdk) {
+  return reins.decisions.registerProvider({
+    list: async () => [
+      { id: "clef-flash", name: "Clef Flash", input: ["text", "image"] },
+      { id: "clef", name: "Clef", input: ["text", "image"] },
+    ],
+    async classify(model: string, request: DecisionRequest, signal: AbortSignal) {
+      const token = await reins.secrets.get("cloudflare/token");
+      if (!token) throw new Error("Set the Cloudflare token in the clef extension's settings first");
+      const response = await fetch(WORKER_URL, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ model: `@cf/cloudflare/${model}`, ...request }),
+        signal,
+      });
+      if (!response.ok) throw new Error(`Clef: HTTP ${response.status}: ${(await response.text()).slice(0, 300)}`);
+      const body: { answers: Record<string, DecisionAnswer>; usage?: { input: number; output: number; cost: number } } = await response.json();
+      return body;
+    },
+  });
+}
+```
+
+- **`list(signal)`** gives your models now, with your own IDs (no whitespace; `/` is allowed). Agents see `<your extension>__<id>`. `input` has `"image"` for a model that judges images. Reins asks at each list, and before each classification, so keep it cheap (cache what an HTTP call gives).
+- **`classify(model, request, signal)`** gets your own ID and `{ state, images?, questions, temperature? }`: `state` is plain JSON, `images` are `{ type: "image", data, mimeType }` blocks (only for a model whose `input` has `"image"`), and the questions are already checked. Give `{ answers, usage? }`, with answers in the shapes of [decisions.md](decisions.md) *The questions* (a bool's answer is the probability of `true`). Map the service's own format to these: Reins refuses answers that do not match the questions (`<model> gave malformed answers: …`). `usage` is `{ input, output, cost }`, tokens and USD. Throw for a failure: the caller gets your message. Pass `signal` on.
+- **One per extension.** A second `registerProvider` throws while the first is registered. Reins removes it when the extension is reloaded or turned off, even when your disposer forgets.
+- **Secrets**, such as an API token, go in `reins.secrets` (*Data, secrets and logs*), never in your code or files.
+- **A model on another machine:** a server that Reins' machine cannot reach (one on a node's `localhost`, such as Ollama) can be asked through the node with `reins.nodes.run`, which runs a bash command there. Give the request in `env`, not in the command's text, and parse the `output`:
+
+  ```ts
+  const { exitCode, output } = await reins.nodes.run("william-pc", `curl -sf http://127.0.0.1:11434/api/chat -d "$BODY"`, {
+    env: { BODY: JSON.stringify(ollamaRequest) }, timeoutMs: 60_000, signal,
+  });
+  if (exitCode !== 0) throw new Error(`Ollama on william-pc: ${output.slice(0, 300)}`);
+  ```
 
 ## The frontend part
 

@@ -8,6 +8,7 @@ export interface ApiKeyState {
   label: string;
   availabilitySource: "db" | "env" | "oauth" | "local" | null;
   availabilitySources: ("db" | "env" | "oauth" | "local")[];
+  isAvailable: boolean;
 }
 
 export type ModelRegistryStoreResult = { ok: true } | { error: string };
@@ -28,19 +29,22 @@ export class ModelRegistryStore {
     for (const fn of this._listeners) fn();
   }
 
+  /** Providers that are usable, and those with a credential that cannot be used yet (a key saved for a
+   * provider that also needs an environment variable), so a saved key never seems lost. */
   get apiKeys(): ApiKeyState[] {
     return this.providers
-      .filter((providerInfo) => providerInfo.isAvailable)
+      .filter((providerInfo) => providerInfo.isAvailable || providerInfo.availabilitySources.length > 0)
       .map((providerInfo) => ({
         provider: providerInfo.provider,
         label: providerLabel(providerInfo.provider),
         availabilitySource: providerInfo.availabilitySource,
         availabilitySources: providerInfo.availabilitySources,
+        isAvailable: providerInfo.isAvailable,
       }));
   }
 
   get unconfiguredProviders(): ProviderInfo[] {
-    return this.providers.filter((provider) => !provider.isAvailable);
+    return this.providers.filter((provider) => !provider.isAvailable && provider.availabilitySources.length === 0);
   }
 
   get availableProviders(): ProviderInfo[] {

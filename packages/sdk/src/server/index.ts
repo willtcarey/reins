@@ -55,6 +55,8 @@ export interface ServerSdk {
   readonly tools: Tools;
   /** Image models: list and use them, and register a provider of them. */
   readonly images: Images;
+  /** Decision (classifier) models: list and use them, and register a provider of them. */
+  readonly decisions: Decisions;
   readonly scripting: Scripting;
   readonly http: Http;
   readonly services: Services;
@@ -908,6 +910,88 @@ export interface Images {
   generate(prompt: string, options?: { readonly model?: string; readonly images?: unknown; readonly size?: string; readonly count?: number; readonly parameters?: Readonly<Record<string, unknown>>; readonly signal?: AbortSignal }): Promise<{ model: string; images: ImageBlock[] }>;
   /** One per extension: a second throws while the first is registered. */
   registerProvider(provider: ImagesProvider): Disposer;
+}
+
+// ---------------------------------------------------------------------------
+// Decisions
+// ---------------------------------------------------------------------------
+
+/** A decision model: one that answers typed questions about JSON state, and does not chat. */
+export interface DecisionModel {
+  /** Without whitespace. A provider's own; `Decisions.list` gives `<extension>__<id>`. */
+  id: string;
+  name: string;
+  /** `"image"` when it judges images with the state. */
+  input: ("text" | "image")[];
+}
+
+/** One question, answered by one of its `criteria`. */
+export type DecisionQuestion =
+  /** Pick one: `criteria` maps each choice to what it means. */
+  | { type: "choice"; instructions: string; criteria: Record<string, string> }
+  /** Yes or no. */
+  | { type: "bool"; instructions: string; criteria: { true: string; false: string } }
+  /** An ordered scale: `criteria` describes each level, lowest first. */
+  | { type: "score"; instructions: string; criteria: string[] };
+
+export type DecisionAnswer =
+  /** `choice` is a key of the question's `criteria`; `probabilities` has a number from 0 to 1 for each of its keys. */
+  | { type: "choice"; choice: string; probabilities: Record<string, number>; confidence: number }
+  /** The probability of `true`, from 0 to 1. */
+  | { type: "bool"; probability: number }
+  /** The expected level, from 0 to `criteria.length - 1`. */
+  | { type: "score"; score: number; confidence: number };
+
+/** Tokens, and their cost in USD, when the service reports them. */
+export interface DecisionUsage {
+  input: number;
+  output: number;
+  cost: number;
+}
+
+export type JsonValue = null | boolean | number | string | readonly JsonValue[] | { [key: string]: JsonValue };
+
+/** What a provider is asked: the questions are checked, the state is plain JSON, and `images` are image blocks. */
+export interface DecisionRequest {
+  state: { [key: string]: JsonValue };
+  images?: ImageBlock[];
+  questions: Record<string, DecisionQuestion>;
+  /** Positive: above 1 softens the probabilities, below 1 sharpens them. A provider that cannot apply it ignores it. */
+  temperature?: number;
+}
+
+export interface DecisionResult {
+  /** One for each question, by its ID. */
+  answers: Record<string, DecisionAnswer>;
+  usage?: DecisionUsage;
+}
+
+/** Where an extension's decision models come from. It is asked at each list and each classification. */
+export interface DecisionsProvider {
+  list(signal: AbortSignal): Promise<DecisionModel[]>;
+  /** A failure throws, and the throw reaches the caller. The host checks the answers against the questions. */
+  classify(model: string, request: DecisionRequest, signal: AbortSignal): Promise<DecisionResult>;
+}
+
+export interface DecisionsClassifyOptions {
+  /** An ID from `list`; by default the decision model chosen in Settings. */
+  readonly model?: string;
+  readonly state: Record<string, unknown>;
+  /** Anything a script's `image()` takes, such as an `images.generate` result. */
+  readonly images?: unknown;
+  readonly questions: Record<string, DecisionQuestion>;
+  readonly temperature?: number;
+  readonly signal?: AbortSignal;
+}
+
+export interface Decisions {
+  /** Pi's catalog models whose provider is signed in (`<provider>/<id>`), then each extension's (`<extension>__<id>`).
+   * A provider's throw rejects the list. */
+  list(options?: { readonly signal?: AbortSignal }): Promise<DecisionModel[]>;
+  /** Answers every question, checked against the questions whoever answered; a provider's error throws. */
+  classify(options: DecisionsClassifyOptions): Promise<DecisionResult & { model: string }>;
+  /** One per extension: a second throws while the first is registered. */
+  registerProvider(provider: DecisionsProvider): Disposer;
 }
 
 // ---------------------------------------------------------------------------

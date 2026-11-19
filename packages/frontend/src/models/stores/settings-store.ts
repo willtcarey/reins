@@ -12,6 +12,7 @@ import type { OAuthProviderInfo } from "@backend/routes/oauth.js";
 import type { ModelSetting, ModelSettingsKey as ModelSettingKey, SettingEntry } from "@backend/settings-store.js";
 import { api } from "../api.js";
 import { ModelRegistryStore } from "./model-registry-store.js";
+import { DecisionModelStore } from "./decision-model-store.js";
 import type { NodesStore } from "./nodes-store.js";
 import { ExtensionsStore } from "./extensions-store.js";
 import type { ExtensionHost } from "../../extension-system/host.js";
@@ -61,6 +62,7 @@ export class SettingsStore {
   oauthInstructions = "";
 
   readonly registryStore = new ModelRegistryStore();
+  readonly decisionModelStore = new DecisionModelStore();
   readonly nodesStore: NodesStore;
   readonly extensionsStore: ExtensionsStore;
   /** The sidebar's sections, which the Sidebar section orders and turns on or off. */
@@ -144,7 +146,7 @@ export class SettingsStore {
         api.oauth.providers(),
       ]);
 
-      this._applyLoadedSettings(settings.filter((entry): entry is LoadedSettingEntry => entry.key !== "sidebar_sections"), settingKeys);
+      this._applyLoadedSettings(settings.filter((entry): entry is LoadedSettingEntry => MODEL_SETTING_KEYS.some(key => key === entry.key)), settingKeys);
       this.oauthProviders = oauthProviders;
 
       this._resetOAuthLoginState();
