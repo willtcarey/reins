@@ -150,8 +150,13 @@ export class SettingsApiKeysSection extends LitElement {
 
     return html`
       <div class="flex items-center gap-2 py-1.5">
-        ${statusDot("success", { label: "Key configured" })}
+        ${keyState.isAvailable
+          ? statusDot("success", { label: "Key configured" })
+          : statusDot("warning", { label: "Saved, but the provider cannot be used yet" })}
         <span class="text-xs font-medium text-zinc-200">${keyState.label}</span>
+        ${keyState.isAvailable
+          ? nothing
+          : html`<span class="text-[10px] text-amber-400/80" title="The key is saved. The provider needs more setup before Reins can use it, such as an environment variable on the server (CLOUDFLARE_ACCOUNT_ID for Cloudflare Workers AI).">not usable yet</span>`}
         ${hasEnv
           ? html`<span class="text-[10px] text-zinc-500 bg-zinc-700/50 px-1.5 py-0.5 rounded">env</span>`
           : nothing}

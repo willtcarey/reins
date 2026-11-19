@@ -23,6 +23,7 @@ import {
   schemaConst,
   schemaField,
   schemaName,
+  schemaRecordValue,
 } from "./schema-utils.js";
 
 /**
@@ -214,6 +215,9 @@ function renderType(schema: TSchema, names?: SchemaNameMap): string {
   if (schema.type === "object" && schemaProperties(schema)) {
     return renderObjectInline(schema, names);
   }
+
+  const recordValue = schemaRecordValue(schema);
+  if (schema.type === "object" && recordValue) return `Record<string, ${renderType(recordValue, names)}>`;
 
   // Empty object (no properties)
   if (schema.type === "object") return "{}";

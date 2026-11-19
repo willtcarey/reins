@@ -5,7 +5,7 @@
  */
 
 import type {
-  BeforeRunHook, Disposer, ImagesProvider, PageHandler, ProcessOptions, SystemPromptSection, ScriptNamespace, SecretStorage, ServerSdk, Service, SessionKind, SessionSettlement, ToolProvider,
+  BeforeRunHook, DecisionsProvider, Disposer, ImagesProvider, PageHandler, ProcessOptions, SystemPromptSection, ScriptNamespace, SecretStorage, ServerSdk, Service, SessionKind, SessionSettlement, ToolProvider,
 } from "@reins/sdk/server";
 import type { ExtensionStorage } from "../database.js";
 import type { AppState } from "../state.js";
@@ -19,6 +19,7 @@ import { SESSIONS } from "../sdk-host/sessions.js";
 import { PROJECTS, TASKS } from "../sdk-host/projects.js";
 import { NODES } from "../sdk-host/nodes.js";
 import { IMAGES } from "../sdk-host/images.js";
+import { DECISIONS } from "../sdk-host/decisions.js";
 import { UI } from "../sdk-host/ui.js";
 import { MODELS } from "../sdk-host/models.js";
 import { REVIEWS } from "../sdk-host/reviews.js";
@@ -65,6 +66,10 @@ export function createExtensionSdk({ name, storage: { dataDir, db }, host, app, 
     images: Object.freeze({
       ...bind(IMAGES.methods, context),
       registerProvider: (provider: ImagesProvider) => own(host.addImageProvider(name, provider)),
+    }),
+    decisions: Object.freeze({
+      ...bind(DECISIONS.methods, context),
+      registerProvider: (provider: DecisionsProvider) => own(host.addDecisionProvider(name, provider)),
     }),
     services: Object.freeze({ register: (service: Service) => own(host.addService(name, service, started())) }),
     sessions: Object.freeze({

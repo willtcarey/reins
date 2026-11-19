@@ -4,7 +4,7 @@ REINS stores global configuration in its SQLite database.
 
 Open settings with the gear in the sidebar. Settings is a full page with sections:
 
-- **Models**: the default and utility models, and the providers that supply them.
+- **Models**: the default, utility and decision models, and the providers that supply them.
 - **Nodes**: the machines where sessions work, on projects' files.
 - **Sidebar**: the sidebar's sections, their order and which are shown ([sidebar.md](sidebar.md) *Settings → Sidebar*).
 - **Extensions**: every extension, where it came from, whether it loaded, what it registered and what it stores, with Turn off and Turn on for each, and Reload and Remove for those you added ([extensions.md](extensions.md)).
@@ -35,6 +35,10 @@ The **Utility Model** setting controls which model REINS uses for lightweight in
 - If neither is configured, task generation skips the model and uses your text as the task's title and description.
 
 You can configure it under **Settings → Models**, below the default model.
+
+## Decision model
+
+The **Decision Model** setting is the model `reins.decisions.classify` uses when a script or an extension names none ([decisions.md](decisions.md)). Choose it from the decision models of the providers you are signed in to and your extensions, or choose **None**: a call without a model then throws. A chosen model that is no longer listed stays chosen, shown as unavailable.
 
 ## Auth credentials
 

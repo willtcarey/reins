@@ -200,3 +200,17 @@ describe("GET /api/models", () => {
     expect(localEntries).toEqual([]);
   });
 });
+
+describe("GET /api/decisions/models", () => {
+  useTestDb();
+
+  test("gives reins.decisions.list(): an extension's models among them", async () => {
+    const state = createAppState(undefined, { extensions: [{ name: "clef", register: reins => reins.decisions.registerProvider({
+      list: async () => [{ id: "clef-flash", name: "Clef Flash", input: ["text", "image"] }],
+      classify: async () => ({ answers: {} }),
+    }) }] });
+    const res = await buildRouter().handle(makeRequest("/api/decisions/models"), state);
+    expect(res!.status).toBe(200);
+    expect(await res!.json()).toContainEqual({ id: "clef__clef-flash", name: "Clef Flash", input: ["text", "image"] });
+  });
+});

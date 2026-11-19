@@ -24,6 +24,7 @@ import { chevronLeftIcon, chevronRightIcon } from "../../ui/icons.js";
 import { showToast } from "../../ui/toast.js";
 import "./api-keys-section.js";
 import "./model-setting-section.js";
+import "./decision-model-section.js";
 import "./nodes-section.js";
 import "./extensions-section.js";
 import "./sidebar-section.js";
@@ -57,12 +58,14 @@ const MODELS_SECTION: SectionDefinition = {
   label: "Models",
   description: "The models new sessions and background work use, and the providers that supply them.",
   load: async (store) => {
-    const [settings, registry] = await Promise.all([
+    const [settings, registry, decisions] = await Promise.all([
       store.loadSettings(MODEL_SETTING_KEYS),
       store.loadModelRegistry(),
+      store.decisionModelStore.load(),
     ]);
     if ("error" in settings) showToast(`Failed to load settings: ${settings.error}`, "error");
     if ("error" in registry) showToast(`Failed to load models: ${registry.error}`, "error");
+    if ("error" in decisions) showToast(`Failed to load decision models: ${decisions.error}`, "error");
   },
   render: (store) => store.loading
     ? html`<div class="text-xs text-zinc-500 py-4">Loading settings...</div>`
@@ -83,6 +86,9 @@ const MODELS_SECTION: SectionDefinition = {
             emptyMessage="Add a provider under Providers to choose a utility model."
             currentLabel="Utility model"
           ></settings-model-setting-section>
+        `)}
+        ${renderSubsection("Decision model", "Answers scripts' and extensions' questions (reins.decisions.classify) when they name no model.", html`
+          <settings-decision-model-section .store=${store.decisionModelStore}></settings-decision-model-section>
         `)}
         <settings-api-keys-section .store=${store}></settings-api-keys-section>
       </div>

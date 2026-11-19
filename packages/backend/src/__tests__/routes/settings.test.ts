@@ -145,6 +145,13 @@ describe("settings routes", () => {
       expect(await getRes!.json()).toEqual({ key: "default_model", value: model });
     });
 
+    test("stores the decision model, an ID of reins.decisions.list()", async () => {
+      const { router, state } = setup();
+      expect((await router.handle(makeRequest("PUT", "/api/settings/decision_model", "openrouter/~liquid/d1-latest"), state))!.status).toBe(200);
+      expect(getSetting("decision_model")).toBe("openrouter/~liquid/d1-latest");
+      expect((await router.handle(makeRequest("PUT", "/api/settings/decision_model", ""), state))!.status).toBe(400);
+    });
+
     test("returns 400 for unknown key", async () => {
       const { router, state } = setup();
       const res = await router.handle(

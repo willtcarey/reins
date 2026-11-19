@@ -44,6 +44,12 @@ describe("formatSchema", () => {
     expect(result).toContain("tags: string[]");
   });
 
+  test("formats records", () => {
+    const schema = Type.Object({ scores: Type.Record(Type.String(), Type.Number()), extra: Type.Record(Type.String(), Type.Unknown()) });
+    expect(formatSchema(schema, "Item")).toContain("scores: Record<string, number>");
+    expect(formatSchema(schema, "Item")).toContain("extra: Record<string, unknown>");
+  });
+
   test("formats optional fields", () => {
     const schema = Type.Object({
       title: Type.String(),

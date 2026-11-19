@@ -28,6 +28,7 @@ import type { SessionDetailView, SessionListView, SessionPlacementView, SessionV
 import type { TaskWithDiffStats } from "@reins/backend/models/tasks.js";
 import type { SessionContextSnapshot } from "@reins/backend/models/session-context.js";
 import type { RuntimeProviderInfo } from "@reins/backend/pi/model-catalog.js";
+import type { DecisionModelView } from "@reins/backend/sdk-host/decisions.js";
 import type { TelemetryEvent } from "@reins/telemetry";
 import type { SessionAttachmentInfo } from "@reins/backend/session-attachments-store.js";
 import type { AnySettingEntry } from "@reins/backend/settings-store.js";
@@ -256,6 +257,11 @@ export class ReinsClient {
 
   readonly models = {
     list: (options?: RequestOptions) => this.json<RuntimeProviderInfo[]>("GET", "/api/models", undefined, options),
+  };
+
+  readonly decisions = {
+    /** `reins.decisions.list()`: what Settings offers as the default decision model. */
+    models: (options?: RequestOptions) => this.json<DecisionModelView[]>("GET", "/api/decisions/models", undefined, options),
   };
 
   readonly telemetry = {

@@ -69,6 +69,14 @@ export function schemaProperties(schema: TSchema): Record<string, TSchema> | und
   return isTSchemaRecord(props) ? props : undefined;
 }
 
+/** Get the value schema of a record schema (`patternProperties`, as `Type.Record` makes it). */
+export function schemaRecordValue(schema: TSchema): TSchema | undefined {
+  const pattern = schemaField(schema, "patternProperties");
+  if (!isTSchemaRecord(pattern)) return undefined;
+  const [value] = Object.values(pattern);
+  return value;
+}
+
 /** Get `properties` as [key, schema] entries. */
 export function schemaPropertiesEntries(schema: TSchema): [string, TSchema][] {
   const props = schemaProperties(schema);
