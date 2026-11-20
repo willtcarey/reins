@@ -203,10 +203,12 @@ fn main() {
             // the Tauri window gains or loses focus. This supplements the Page
             // Visibility API which doesn't fire reliably on all webview backends.
             let webview_window = app.get_webview_window("main").unwrap();
+            // The handler owns a clone: on_window_event borrows the window it is registered on.
+            let handler_window = webview_window.clone();
             webview_window.on_window_event(move |event| {
                 if let WindowEvent::Focused(focused) = event {
                     let state = if *focused { "visible" } else { "hidden" };
-                    let _ = webview_window.eval(&format!(
+                    let _ = handler_window.eval(&format!(
                         r#"document.visibilityState = "{state}";
                          document.dispatchEvent(new Event("visibilitychange"));"#,
                     ));
